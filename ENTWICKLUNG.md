@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.3.1 | 19.2 | Vollbild von selbst nur mit frischer Berührung (keine Konsolenfehler) |
 | 1.3.0 | 19.1 | Bild-in-Bild auf allen Seiten: Regel `ext/rules.json` hängt an jede Seite „Permissions-Policy: picture-in-picture=*“ an (Facebook verbietet es sonst für die ganze Seite – kein Knopf, kein automatisches kleines Fenster); andere Verbote der Seite bleiben. Test `test_pipall.py` |
 | 1.2.0 | 19.1 | Ohne Helfer auch keine Lautstärke-Geste; Bild-in-Bild-Knopf immer da (ohne Browser-Bild-in-Bild: Hinweis); Diagnose zeigt Bild-in-Bild- und Vorschau-Zustand |
 | 1.1.0 | 19.0 | Facebook eigener Player (wenn sicher), Bild-in-Bild auch beim Spiegeln (Schild) und auf Facebook/Instagram, Streams am Content-Type erkennen (auch aus Workern), Menü im Puzzle-Symbol, Einstellungsseite mit Seitenlisten |
