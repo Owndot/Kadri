@@ -42,7 +42,7 @@ with sync_playwright() as p:
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.srcObject; }' % R, timeout=20000); time.sleep(0.6)
     check('Facebook: Player spiegelt das Video der Seite', pg.evaluate('() => !!%s.querySelector(".vv").srcObject' % R))
     pp = pg.evaluate('() => { const r = %s, b = r.querySelector("button[aria-label=\'Bild-in-Bild\']"); return [b ? getComputedStyle(b).display : "fehlt", r.querySelector(".vv").disablePictureInPicture, document.getElementById("v").disablePictureInPicture]; }' % R)
-    check('… kein Bild-in-Bild (kein Knopf, weder Player noch Seitenvideo)', pp[0] in ('none', 'fehlt') and pp[1] is True and pp[2] is True, pp)
+    check('… Bild-in-Bild auch beim Spiegeln (Schild von page.js, 1.1)', pp[0] not in ('none', 'fehlt') and pp[1] is False, pp)
     # Teilen: laufendes Reel (ID aus dem Kasten), nicht die Seitenadresse
     ctx.grant_permissions(['clipboard-read', 'clipboard-write'], origin='https://www.facebook.com')
     has_share = pg.evaluate('() => typeof navigator.share === "function"')

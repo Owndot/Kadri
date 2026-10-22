@@ -77,6 +77,13 @@
         },
       };
     }
+    // ---------- Meldungen des Hintergrunds an das Skript (ohne die Seite) ----------
+    const KADRI_HOOKS = { onSrc: null };
+    try {
+      api.runtime.onMessage.addListener((m) => {
+        if (m && m.t === 'kadri-src' && typeof KADRI_HOOKS.onSrc === 'function') { try { KADRI_HOOKS.onSrc(m.u, m.k); } catch (e) {} }
+      });
+    } catch (e) {}
     // ---------- Menü ----------
     const menu = [];
     function GM_registerMenuCommand(name, fn) { menu.push({ name, fn }); return menu.length; }

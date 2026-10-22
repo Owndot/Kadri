@@ -24,6 +24,21 @@ class Q(http.server.SimpleHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         super().end_headers()
     def send_head(self):
+        # /stream/…: dieselben Dateien wie hls/, aber die Haupt-Liste OHNE Endung (nur am Content-Type erkennbar)
+        p0 = self.path.split('?')[0]
+        if p0.startswith('/stream/'):
+            # (auch die Unter-Liste ohne Endung: „index“ statt „index.m3u8“)
+            name = p0[len('/stream/'):] or 'master'
+            lists = {'master': 'master.m3u8', 'index': 'index.m3u8'}
+            fn = os.path.join(WEB, 'hls', lists.get(name, name))
+            if not os.path.isfile(fn): self.send_error(404); return None
+            body = open(fn, 'rb').read()
+            if name in lists: body = body.replace(b'index.m3u8', b'index?q=1')
+            ct = 'application/vnd.apple.mpegurl' if name in lists else self.guess_type(fn)
+            self.send_response(200)
+            self.send_header('Content-Type', ct); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            import io
+            return io.BytesIO(body)
         path = self.translate_path(self.path.split('?')[0])
         rng = self.headers.get('Range')
         if not rng or not os.path.isfile(path): return super().send_head()

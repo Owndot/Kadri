@@ -99,6 +99,33 @@ api.runtime.onConnect.addListener((port) => {
   });
 });
 
+// ---------- 3. Streams erkennen, die die Seite lädt – auch aus Hintergrund-Skripten (Worker) und ohne .m3u8 im Namen ----------
+// Der Server sagt mit „Content-Type“, was er liefert. Nur Stream-Listen (HLS/DASH) werden gemeldet – keine Stücke,
+// keine Bilder. Die Seite bekommt davon nichts mit; die Adresse geht nur an Kadri im selben Tab/Fenster.
+const PL_CT = /mpegurl|dash\+xml/i;
+const seenPl = new Map();   // Tab → Set(Adressen)
+if (api.webRequest && api.webRequest.onHeadersReceived) {
+  try {
+    api.webRequest.onHeadersReceived.addListener((d) => {
+      if (d.tabId < 0 || d.statusCode >= 400) return;
+      const h = (d.responseHeaders || []).find((x) => x.name && x.name.toLowerCase() === 'content-type');
+      const ct = h ? String(h.value || '') : '';
+      if (!PL_CT.test(ct)) return;
+      let set = seenPl.get(d.tabId);
+      if (!set) { set = new Set(); seenPl.set(d.tabId, set); }
+      if (set.has(d.url)) return;
+      set.add(d.url);
+      if (set.size > 300) set.delete(set.values().next().value);
+      const k = /dash/i.test(ct) ? 'mpd' : 'm3u8';
+      try {
+        const p = api.tabs.sendMessage(d.tabId, { t: 'kadri-src', u: d.url, k }, { frameId: d.frameId >= 0 ? d.frameId : 0 });
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) {}
+    }, { urls: ['<all_urls>'], types: ['xmlhttprequest', 'media', 'other'] }, ['responseHeaders']);
+  } catch (e) {}
+  if (api.tabs && api.tabs.onRemoved) api.tabs.onRemoved.addListener((id) => seenPl.delete(id));
+}
+
 // ---------- 2. Menü: Tipp auf das Kadri-Symbol = Diagnose der Seite ----------
 const action = api.action || api.browserAction;
 if (action && action.onClicked) {

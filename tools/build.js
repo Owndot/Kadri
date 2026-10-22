@@ -36,6 +36,19 @@ body = swap(body, /^\/\/ ==UserScript==[\s\S]*?\/\/ ==\/UserScript==\n/m, '', 'K
 body = swap(body, "'Video-Assistent · Diagnose'", "'Kadri · Diagnose'", 'Titel der Diagnose');
 body = swap(body, "'Video-Assistent " + base + "'", "'Kadri ' + KADRI_VERSION + ' (Basis " + base + ")'", 'Version in der Diagnose');
 
+// ---------- Standardwerte für Menü und Einstellungsseite (aus dem Skript gelesen, damit nichts auseinanderläuft) ----------
+function defaults() {
+  const src = fs.readFileSync(path.join(ROOT, 'src', '020-einstellungen-sprache.js'), 'utf8');
+  const a = src.indexOf('const CONFIG = {'), b = src.indexOf('\n  };', a);
+  const keysM = /const SETTING_KEYS = \[([\s\S]*?)\];/.exec(src);
+  if (a < 0 || b < 0 || !keysM) { console.error('Bau abgebrochen: CONFIG/SETTING_KEYS in src/020 nicht gefunden'); process.exit(1); }
+  const cfg = require('vm').runInNewContext('(' + src.slice(a + 'const CONFIG = '.length, b + 4).replace(/;\s*$/, '') + ')', {});
+  const keys = (keysM[1].match(/'([A-Za-z]+)'/g) || []).map((x) => x.slice(1, -1));
+  const out = {};
+  keys.forEach((k) => { if (!(k in cfg)) { console.error('Bau abgebrochen: Einstellung ' + k + ' ohne Standardwert'); process.exit(1); } out[k] = cfg[k]; });
+  return '// beim Bau aus src/020-einstellungen-sprache.js erzeugt\nconst KADRI_DEFAULTS = ' + JSON.stringify(out, null, 1) + ';\n';
+}
+
 function content(test) {
   let b = body;
   if (test) {
@@ -55,9 +68,10 @@ const cs = [{ matches: ['<all_urls>'], js: ['hls.min.js', 'content.js'], run_at:
 const csChrome = [{ matches: ['<all_urls>'], js: ['page.js'], run_at: 'document_start', all_frames: true, world: 'MAIN' }].concat(cs);
 const chrome = {
   manifest_version: 3, name: 'Kadri', version: VERSION, description: desc, icons,
-  action: { default_title: 'Kadri – Diagnose', default_icon: icons },
+  action: { default_title: 'Kadri', default_icon: icons, default_popup: 'popup.html' },
+  options_ui: { page: 'options.html', open_in_tab: true },
   background: { service_worker: 'background.js' },
-  permissions: ['storage', 'declarativeNetRequestWithHostAccess'],
+  permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest'],
   host_permissions: ['<all_urls>'],
   content_scripts: csChrome,
   minimum_chrome_version: '116',
@@ -66,9 +80,10 @@ const chrome = {
 // erst von Hand erlauben)
 const firefox = {
   manifest_version: 2, name: 'Kadri', version: VERSION, description: desc, icons,
-  browser_action: { default_title: 'Kadri – Diagnose', default_icon: icons },
+  browser_action: { default_title: 'Kadri', default_icon: icons, default_popup: 'popup.html' },
+  options_ui: { page: 'options.html', open_in_tab: true },
   background: { scripts: ['background.js'] },
-  permissions: ['storage', 'declarativeNetRequestWithHostAccess', '<all_urls>'],
+  permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest', '<all_urls>'],
   content_scripts: cs,
   browser_specific_settings: { gecko: { id: 'kadri@owndot', strict_min_version: '128.0' }, gecko_android: { strict_min_version: '128.0' } },
 };
@@ -81,12 +96,14 @@ function write(dir, manifest, test) {
   fs.writeFileSync(path.join(dir, 'content.js'), content(test));
   fs.copyFileSync(path.join(ROOT, 'ext', 'background.js'), path.join(dir, 'background.js'));
   if (manifest.manifest_version === 3) fs.copyFileSync(path.join(ROOT, 'ext', 'page.js'), path.join(dir, 'page.js'));
+  for (const f of ['popup.html', 'popup.js', 'options.html', 'options.js', 'common-ui.js', 'ui.css']) fs.copyFileSync(path.join(ROOT, 'ext', f), path.join(dir, f));
+  fs.writeFileSync(path.join(dir, 'defaults.js'), DEFAULTS);
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.min.js'), path.join(dir, 'hls.min.js'));
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.LICENSE'), path.join(dir, 'hls.LICENSE'));
   fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(dir, 'LICENSE'));
   for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(ROOT, 'ext', 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
   // Syntax prüfen
-  for (const f of ['content.js', 'background.js'].concat(manifest.manifest_version === 3 ? ['page.js'] : [])) {
+  for (const f of ['content.js', 'background.js', 'popup.js', 'options.js', 'common-ui.js', 'defaults.js'].concat(manifest.manifest_version === 3 ? ['page.js'] : [])) {
     try { execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'pipe' }); }
     catch (e) { console.error('Syntaxfehler in ' + f + ':\n' + String(e.stderr || e.message)); process.exit(1); }
   }
@@ -95,6 +112,7 @@ function zip(dir, out) {
   rmrf(out);
   execFileSync('zip', ['-qr9X', out, '.'], { cwd: dir });
 }
+const DEFAULTS = defaults();
 fs.mkdirSync(DIST, { recursive: true });
 write(path.join(DIST, 'chrome'), chrome, false);
 write(path.join(DIST, 'firefox'), firefox, false);

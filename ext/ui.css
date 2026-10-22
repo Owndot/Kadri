@@ -1,0 +1,41 @@
+/* Kadri – Menü (Puzzle-Symbol) und Einstellungsseite. Hell/dunkel nach dem Handy. */
+:root {
+  --bg: #f4f4f7; --card: #ffffff; --text: #16161d; --muted: #6b6b78; --line: #e3e3ea;
+  --accent: #5b3fd6; --accent-text: #ffffff; --ok: #1f9d55; --warn: #c26a00;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #101016; --card: #1b1b24; --text: #f1f1f6; --muted: #9a9aab; --line: #2c2c39; --accent: #8a72ff; --accent-text: #0d0b1a; --ok: #43c97f; --warn: #f0a33a; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+body { padding: 16px; }
+h1 { font-size: 20px; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
+h1 img { width: 28px; height: 28px; border-radius: 7px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 22px 4px 8px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; min-height: 52px; }
+.row + .row { border-top: 1px solid var(--line); }
+.row .lab { flex: 1; min-width: 0; }
+.row .lab small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+select, textarea, button { font: inherit; color: inherit; }
+select { background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 7px 10px; max-width: 48%; }
+textarea { width: 100%; min-height: 120px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; font-size: 13.5px; resize: vertical; }
+.listrow { display: block; }
+.listrow .lab { margin-bottom: 8px; }
+button { border: 0; border-radius: 12px; padding: 12px 14px; font-weight: 600; cursor: pointer; background: var(--card); border: 1px solid var(--line); }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: transparent; }
+button.wide { width: 100%; }
+.btns { display: grid; gap: 8px; margin-top: 12px; }
+/* Schalter */
+.sw { position: relative; width: 50px; height: 30px; flex: none; }
+.sw input { opacity: 0; width: 0; height: 0; position: absolute; }
+.sw span { position: absolute; inset: 0; background: var(--line); border-radius: 30px; transition: background .15s; }
+.sw span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.25); transition: transform .15s; }
+.sw input:checked + span { background: var(--accent); }
+.sw input:checked + span::after { transform: translateX(20px); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--muted); vertical-align: 1px; }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); }
+.note { color: var(--muted); font-size: 12.5px; margin: 10px 4px 0; }
+.saved { color: var(--ok); font-size: 13px; min-height: 18px; margin: 8px 4px 0; }

@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Stream ohne Endung</title>
+<script src="hls.min.js"></script></head>
+<body style="margin:0"><video id=v muted autoplay playsinline style="width:100%;display:block"></video>
+<script>
+// Stream-Adresse ohne .m3u8 – nur der Server sagt (Content-Type), dass es eine HLS-Liste ist
+const v = document.getElementById('v'); const h = new Hls(); h.loadSource('/stream/master?token=abc'); h.attachMedia(v);
+h.on(Hls.Events.MANIFEST_PARSED, () => v.play());
+</script></body></html>

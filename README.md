@@ -28,9 +28,16 @@ oder den alten Ordner ersetzen. Kadri aktualisiert sich nie von selbst.
 - **Richtiger Stream:** Kadri liest die Stream-Listen mit, die die Seite lädt, und erkennt so den Stream, der wirklich
   läuft. Das gilt auch, wenn die Seite schon das nächste Video vorlädt oder das Video wechselt, ohne neu zu laden
   (z. B. ARD-Mediathek).
+- **Facebook und Instagram:** Ist sicher, welches Video läuft, spielt Kadri die fertige Datei mit Ton selbst ab. Dann
+  gehen Bild-in-Bild, Hintergrund und Spulen wie auf jeder anderen Seite. Sonst spiegelt Kadri das Video der Seite.
+  Auch dann geht Bild-in-Bild, weil Kadri vor der Seite verbirgt, dass sie im Hintergrund ist.
 - **Reels:** Am Ende hält Kadri an und bricht den Countdown „Nächstes Reel“ ab. Teilen nimmt das laufende Reel.
+- **Mehr Seiten:** Kadri erkennt Streams auch dann, wenn ihre Adresse nicht danach aussieht oder die Seite sie im
+  Hintergrund lädt.
 - **Download und Teilen:** Download über YTDLnis oder das Teilen-Menü, Speichern im Browser.
-- **Diagnose:** Puzzle-Symbol, dann **Kadri** antippen.
+- **Menü im Puzzle-Symbol:** Kadri für die Seite an- oder ausschalten, Zustand der Helfer-App, Diagnose.
+- **Einstellungsseite:** alle Einstellungen des Players an einem Ort, dazu die Seitenlisten: wo Kadri aus ist, wo nur
+  der Download erscheint, welche Seiten YTDLnis kennt.
 
 ## Mit und ohne Helfer-App
 
