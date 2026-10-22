@@ -1,0 +1,38 @@
+name: Bauen und testen
+
+# Baut die Erweiterung (Vivaldi/Chrome + Firefox) und testet sie in Chromium mit geladener Erweiterung.
+# Die fertigen ZIPs liegen danach unter „Artifacts“ des Laufs.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Werkzeuge
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb zip
+      - name: Bauen
+        run: node tools/build.js --test
+      - name: Tests (Chromium mit Erweiterung)
+        run: |
+          tests/run_all.sh | tee ergebnis.txt; status=${PIPESTATUS[0]}
+          echo '### Ergebnis' >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat ergebnis.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kadri
+          path: |
+            dist/kadri-*.zip
+            tests/out/*.log

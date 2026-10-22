@@ -1,0 +1,8 @@
+{
+  "name": "kadri",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Kadri – Vollbild-Video-Player als Browser-Erweiterung",
+  "license": "GPL-3.0",
+  "scripts": { "build": "node tools/build.js", "test": "node tools/build.js --test && bash tests/run_all.sh" }
+}
