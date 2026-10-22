@@ -75,7 +75,7 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_helper.py` | ohne Helfer: keine Helligkeit, kein „Helper-App“, keine Helfer-Downloads. Mit Helfer: alles da, Anfragen mit Schlüssel. Koppeln speichert den Schlüssel |
 | `test_streams.py` | Stream-Nachweis über `page.js` (vorgeladenes nächstes Video), Videowechsel ohne Neuladen, A → B → A |
 | `test_facebook.py` | Spiegeln (mit Bild-in-Bild), Teilen des laufenden Reels, Reel-Ende, Countdown „Next reel“ abbrechen |
-| `test_fbown.py` | Facebook-Feed nachgebaut (4 Reels vorgeladen): sicher erkannt → eigener Player mit Bild-in-Bild; falsche Länge oder unklar → spiegeln |
+| `test_fbown.py` | Facebook-Feed nachgebaut (4 Reels vorgeladen): sicher erkannt → eigener Player mit Bild-in-Bild; falsche Länge oder unklar → spiegeln; beim Spiegeln Vorschaubild aus der passenden MP4, nie aus einer falschen |
 | `test_fbpip.py` | Schild: beim Spiegeln bekommt die Seite „verdeckt“ nicht mit (ihr Video läuft weiter), Kadri schon; nach dem Schließen wieder normal |
 | `test_detect.py` | Stream ohne .m3u8 im Namen (nur Content-Type) → vom Hintergrund gemeldet → eigener Player (ohne: nur Spiegeln) |
 | `test_pipall.py` | Seite verbietet Bild-in-Bild (Permissions-Policy wie Facebook) → mit Kadri erlaubt, Knopf öffnet das kleine Fenster; andere Verbote bleiben |
@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.6.0 | 19.5 | Feines Spulen nach dem Finger-Tempo (langsam = fein, schnell = grob), Abstand zur alten Stelle („+18 s“), alte Stelle rastet ein (Vibrieren, „± 0“); Facebook beim Spiegeln: Vorschaubild aus der MP4 desselben Videos (auch wenn sie unschärfer ist), falsche Länge → nur die Zeit |
 | 1.5.0 | 19.4 | Spulen auf der Leiste neu (dick, von der aktuellen Stelle, fein, Abbrechen nach oben), Vorschaubild wieder Standard |
 | 1.4.0 | 19.3 | Spulen im Bild (wie Samsung Internet) auch beim Spiegeln, Einstellung „Spul-Vorschau“; Facebook: eigener Player nur bei mindestens gleicher Schärfe, sonst spiegeln (Facebook-Qualität) |
 | 1.3.1 | 19.2 | Vollbild von selbst nur mit frischer Berührung (keine Konsolenfehler) |

@@ -71,6 +71,20 @@ def run(pg):
     return pg.evaluate('''() => { const r = %s, v = r.querySelector(".vv"), b = r.querySelector("button[aria-label='Bild-in-Bild']");
         return { mirror: !!v.srcObject, src: v.currentSrc || "", dur: Math.round(v.duration), pip: b ? getComputedStyle(b).display !== "none" : false, vnopip: v.disablePictureInPicture }; }''' % R)
 
+# Spulen auf der Leiste: Leiste festhalten und ziehen, dann schauen, ob die Vorschau ein Bild hat (oder nur die Zeit)
+def scrub_img(pg):
+    pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
+    x, y, w = pg.evaluate('() => { const r = %s.querySelector(".vbar").getBoundingClientRect(); return [r.left, r.top + r.height / 2, r.width]; }' % R)
+    pg.mouse.move(x + 0.1 * w, y); pg.mouse.down(); pg.mouse.move(x + 0.5 * w, y, steps=4)
+    img = False
+    for i in range(30):
+        time.sleep(0.2); pg.mouse.move(x + (0.5 + 0.004 * (i % 2)) * w, y)
+        img = pg.evaluate('() => { const p = %s.querySelector(".vprev"); return p.classList.contains("on") && p.classList.contains("img"); }' % R)
+        if img: break
+    noimg = pg.evaluate('() => %s.querySelector(".vprev").classList.contains("noimg")' % R)
+    pg.mouse.move(x + 0.5 * w, y - 200, steps=4); pg.mouse.up(); time.sleep(0.4)   # nach oben weg = abbrechen
+    return img, noimg
+
 with sync_playwright() as p:
     ctx, sw, udir = launch(p)
     ctx.route('https://m.facebook.com/**', fb)
@@ -87,11 +101,15 @@ with sync_playwright() as p:
     s2 = run(pg)
     check('… MP4 mit anderer Länge → spiegeln statt falsches Video', s2['mirror'], s2)
     check('… auch beim Spiegeln Bild-in-Bild (Schild)', s2['pip'], s2)
+    i2 = scrub_img(pg)
+    check('… Vorschau beim Spulen: kein Bild aus der falschen MP4 (nur die Zeit)', not i2[0] and i2[1], i2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
     # 2b) MP4 unschärfer als das, was Facebook gerade zeigt (144p < 180p) → spiegeln (Qualität zuerst)
-    Q['res'] = 144
+    Q['res'] = 144; state['clip'] = CLIP30   # (richtige Länge – gespiegelt wird nur wegen der Schärfe)
     s2b = run(pg)
     check('… MP4 unschärfer als das laufende Video → spiegeln (Qualität zuerst)', s2b['mirror'], s2b)
+    i2b = scrub_img(pg)
+    check('… beim Spiegeln trotzdem Vorschaubild beim Spulen (aus der MP4 desselben Videos)', i2b[0] and not i2b[1], i2b)
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
     Q['res'] = 720
     # 3) nur Vorgeladenes, unklar was läuft → spiegeln
