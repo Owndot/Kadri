@@ -26,6 +26,8 @@ const T = {
   'Alles zurücksetzen': 'Reset everything', 'Wirklich alle Einstellungen zurücksetzen?': 'Really reset all settings?',
   'Wird im Player auch unter ⋮ → Einstellungen geändert.': 'Can also be changed in the player under ⋮ → Settings.',
   'wenn die Helfer-App läuft': 'when the helper app is running',
+  'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail',
+  'Im Bild: das Video springt beim Ziehen mit (geht überall)': 'In video: the video follows your finger (works everywhere)',
 };
 const t = (s) => (EN && T[s]) || s;
 function applyLang(s) { const l = eff(s, 'language'); EN = l === 'en' ? true : l === 'de' ? false : !/^de\b/i.test(navigator.language || ''); }

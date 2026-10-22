@@ -9,7 +9,8 @@ CLIP60 = open(WEB + '/clip.webm', 'rb').read()       # anderes Video (60 s)
 R4 = ['4492197337662979', '2124988348408949', '1589423489311856', '1021815134245564']
 A = R4[0]
 def efg(d): return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip('=')
-def prog(a): return 'https://scontent-ber1-1.xx.fbcdn.net/o1/v/t2/f2/m367/' + a + '.mp4?efg=' + efg({'vencode_tag': 'xpv_progressive.FACEBOOK..C3.720.progressive_h264-basic-gen2_720p', 'xpv_asset_id': a})
+Q = {'res': 720}   # Qualität der fertigen MP4 (laut Facebook-Kennung); das laufende Video ist 320×180
+def prog(a): return 'https://scontent-ber1-1.xx.fbcdn.net/o1/v/t2/f2/m367/' + a + '.mp4?efg=' + efg({'vencode_tag': 'xpv_progressive.FACEBOOK..C3.%d.progressive_h264-basic-gen2_%dp' % (Q['res'], Q['res']), 'xpv_asset_id': a})
 def seg(a, n): return 'https://scontent-ber1-1.xx.fbcdn.net/o1/v/t2/f2/m69/' + a + '_%d.mp4?bytestart=%d&efg=' % (n, n * 1000) + efg({'vencode_tag': 'dash_h264_' + ('video' if n % 2 else 'audio'), 'xpv_asset_id': a})
 def page(order):
     reels = ''.join('<div class="reel" data-video-url="%s" data-store=\'{"videoID":"%s"}\'></div>' % (prog(a).replace('&', '&amp;'), a) for a in R4)
@@ -87,6 +88,12 @@ with sync_playwright() as p:
     check('… MP4 mit anderer Länge → spiegeln statt falsches Video', s2['mirror'], s2)
     check('… auch beim Spiegeln Bild-in-Bild (Schild)', s2['pip'], s2)
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    # 2b) MP4 unschärfer als das, was Facebook gerade zeigt (144p < 180p) → spiegeln (Qualität zuerst)
+    Q['res'] = 144
+    s2b = run(pg)
+    check('… MP4 unschärfer als das laufende Video → spiegeln (Qualität zuerst)', s2b['mirror'], s2b)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    Q['res'] = 720
     # 3) nur Vorgeladenes, unklar was läuft → spiegeln
     state['clip'] = CLIP30; state['order'] = PRELOAD_ONLY
     s3 = run(pg)
