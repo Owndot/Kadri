@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.7.0 | 19.6 | Spulen: Punkt genau unter dem Finger (Anfang/Ende an den Enden der Leiste – der Finger läuft nie aus dem Bild); fein nur beim bewussten Kriechen, danach gleitet die Stelle wieder unter den Finger |
 | 1.6.0 | 19.5 | Feines Spulen nach dem Finger-Tempo (langsam = fein, schnell = grob), Abstand zur alten Stelle („+18 s“), alte Stelle rastet ein (Vibrieren, „± 0“); Facebook beim Spiegeln: Vorschaubild aus der MP4 desselben Videos (auch wenn sie unschärfer ist), falsche Länge → nur die Zeit |
 | 1.5.0 | 19.4 | Spulen auf der Leiste neu (dick, von der aktuellen Stelle, fein, Abbrechen nach oben), Vorschaubild wieder Standard |
 | 1.4.0 | 19.3 | Spulen im Bild (wie Samsung Internet) auch beim Spiegeln, Einstellung „Spul-Vorschau“; Facebook: eigener Player nur bei mindestens gleicher Schärfe, sonst spiegeln (Facebook-Qualität) |
