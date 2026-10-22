@@ -24,7 +24,7 @@ oder den alten Ordner ersetzen. Kadri aktualisiert sich nie von selbst.
 
 - **Player:** Datei-Videos und Streams (HLS über das mitgelieferte hls.js), Vollbild, Drehen, Zoom per Doppeltipp.
   - Wischen spult und regelt die Lautstärke.
-  - Seiten wie Facebook spiegelt Kadri, statt das Video selbst zu laden.
+  - Wo Kadri das Video nicht selbst laden kann, spiegelt es das Video der Seite.
 - **Richtiger Stream:** Kadri liest die Stream-Listen mit, die die Seite lädt, und erkennt so den Stream, der wirklich
   läuft. Das gilt auch, wenn die Seite schon das nächste Video vorlädt oder das Video wechselt, ohne neu zu laden
   (z. B. ARD-Mediathek).
