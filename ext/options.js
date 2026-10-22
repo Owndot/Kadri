@@ -52,7 +52,7 @@
       pick('language', 'Sprache', [['auto', 'Auto'], ['de', 'Deutsch'], ['en', 'English']])),
     el('h2', {}, t('Gesten')),
     el('div', { class: 'card' },
-      pick('seekPreview', 'Spul-Vorschau', [['live', 'Im Bild'], ['thumb', 'Kleines Bild']], 'Im Bild: das Video springt beim Ziehen mit (geht überall)'),
+      pick('seekPreview', 'Spul-Vorschau', [['thumb', 'Kleines Bild'], ['live', 'Im Bild']], 'Im Bild: das Video springt beim Ziehen mit (geht überall)'),
       pick('skipSeconds', 'Sprungweite', [[5, '5 s'], [10, '10 s'], [15, '15 s'], [30, '30 s']]),
       pick('holdSpeed', 'Halten', [[1.5, '1,5×'], [2, '2×'], [3, '3×']]),
       pick('topGuard', 'Wischsperre oben', ZONES),

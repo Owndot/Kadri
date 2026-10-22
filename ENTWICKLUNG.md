@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.5.0 | 19.4 | Spulen auf der Leiste neu (dick, von der aktuellen Stelle, fein, Abbrechen nach oben), Vorschaubild wieder Standard |
 | 1.4.0 | 19.3 | Spulen im Bild (wie Samsung Internet) auch beim Spiegeln, Einstellung „Spul-Vorschau“; Facebook: eigener Player nur bei mindestens gleicher Schärfe, sonst spiegeln (Facebook-Qualität) |
 | 1.3.1 | 19.2 | Vollbild von selbst nur mit frischer Berührung (keine Konsolenfehler) |
 | 1.3.0 | 19.1 | Bild-in-Bild auf allen Seiten: Regel `ext/rules.json` hängt an jede Seite „Permissions-Policy: picture-in-picture=*“ an (Facebook verbietet es sonst für die ganze Seite – kein Knopf, kein automatisches kleines Fenster); andere Verbote der Seite bleiben. Test `test_pipall.py` |
