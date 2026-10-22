@@ -10,6 +10,7 @@ ext/background.js  Anfragen an andere Server (ohne CORS-Sperre, Referer per Sitz
 ext/page.js     (nur Chrome/Vivaldi, „MAIN world“) liest Stream-Listen und Facebook/Instagram-API-Antworten mit;
                 „Schild“: verbirgt „verdeckt“ vor der Seite, solange Kadri spiegelt (Bild-in-Bild/Hintergrund)
 ext/popup.*     Menü hinter dem Puzzle-Symbol (Seite an/aus, Helfer-Zustand, Diagnose, Einstellungen)
+ext/rules.json  Regel: Bild-in-Bild erlauben, auch wo die Seite es per Permissions-Policy verbietet
 ext/options.*   Einstellungsseite (alle Einstellungen + Seitenlisten), ext/common-ui.js, ext/ui.css
 defaults.js     (beim Bau erzeugt) Standardwerte aus src/020-einstellungen-sprache.js
 vendor/         hls.js 1.7.3
@@ -77,12 +78,14 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_fbown.py` | Facebook-Feed nachgebaut (4 Reels vorgeladen): sicher erkannt → eigener Player mit Bild-in-Bild; falsche Länge oder unklar → spiegeln |
 | `test_fbpip.py` | Schild: beim Spiegeln bekommt die Seite „verdeckt“ nicht mit (ihr Video läuft weiter), Kadri schon; nach dem Schließen wieder normal |
 | `test_detect.py` | Stream ohne .m3u8 im Namen (nur Content-Type) → vom Hintergrund gemeldet → eigener Player (ohne: nur Spiegeln) |
+| `test_pipall.py` | Seite verbietet Bild-in-Bild (Permissions-Policy wie Facebook) → mit Kadri erlaubt, Knopf öffnet das kleine Fenster; andere Verbote bleiben |
 | `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player, Seitenliste gespeichert |
 
 ## Versionen
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.3.0 | 19.1 | Bild-in-Bild auf allen Seiten: Regel `ext/rules.json` hängt an jede Seite „Permissions-Policy: picture-in-picture=*“ an (Facebook verbietet es sonst für die ganze Seite – kein Knopf, kein automatisches kleines Fenster); andere Verbote der Seite bleiben. Test `test_pipall.py` |
 | 1.2.0 | 19.1 | Ohne Helfer auch keine Lautstärke-Geste; Bild-in-Bild-Knopf immer da (ohne Browser-Bild-in-Bild: Hinweis); Diagnose zeigt Bild-in-Bild- und Vorschau-Zustand |
 | 1.1.0 | 19.0 | Facebook eigener Player (wenn sicher), Bild-in-Bild auch beim Spiegeln (Schild) und auf Facebook/Instagram, Streams am Content-Type erkennen (auch aus Workern), Menü im Puzzle-Symbol, Einstellungsseite mit Seitenlisten |
 | 1.0.0 | 18.8 | Erste Fassung: alle Funktionen des Skripts. Ohne Helfer ist ausgeblendet, was nur mit Helfer geht. Stream-Listen werden in der Seite mitgelesen (`page.js`). Diagnose über das Kadri-Symbol |

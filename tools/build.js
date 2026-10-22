@@ -66,6 +66,9 @@ const icons = { 16: 'icons/16.png', 32: 'icons/32.png', 48: 'icons/48.png', 128:
 const cs = [{ matches: ['<all_urls>'], js: ['hls.min.js', 'content.js'], run_at: 'document_start', all_frames: true }];
 // Chrome/Vivaldi: zusätzlich ein winziges Skript IN der Seite, das Stream-Listen und API-Antworten mitliest (ext/page.js)
 const csChrome = [{ matches: ['<all_urls>'], js: ['page.js'], run_at: 'document_start', all_frames: true, world: 'MAIN' }].concat(cs);
+// Bild-in-Bild auf allen Seiten: Manche Seiten (z. B. Facebook) verbieten es per „Permissions-Policy“ für die ganze
+// Seite. Die Regel hängt „picture-in-picture=*“ an – bei doppelten Angaben gilt die letzte, alle anderen Verbote bleiben.
+const dnr = { rule_resources: [{ id: 'pip', enabled: true, path: 'rules.json' }] };
 const chrome = {
   manifest_version: 3, name: 'Kadri', version: VERSION, description: desc, icons,
   action: { default_title: 'Kadri', default_icon: icons, default_popup: 'popup.html' },
@@ -74,6 +77,7 @@ const chrome = {
   permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest'],
   host_permissions: ['<all_urls>'],
   content_scripts: csChrome,
+  declarative_net_request: dnr,
   minimum_chrome_version: '116',
 };
 // Firefox: Manifest V2 – dort gelten die Rechte für alle Seiten gleich bei der Installation (bei V3 müsste man sie
@@ -85,6 +89,7 @@ const firefox = {
   background: { scripts: ['background.js'] },
   permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest', '<all_urls>'],
   content_scripts: cs,
+  declarative_net_request: dnr,
   browser_specific_settings: { gecko: { id: 'kadri@owndot', strict_min_version: '128.0' }, gecko_android: { strict_min_version: '128.0' } },
 };
 
@@ -96,7 +101,7 @@ function write(dir, manifest, test) {
   fs.writeFileSync(path.join(dir, 'content.js'), content(test));
   fs.copyFileSync(path.join(ROOT, 'ext', 'background.js'), path.join(dir, 'background.js'));
   if (manifest.manifest_version === 3) fs.copyFileSync(path.join(ROOT, 'ext', 'page.js'), path.join(dir, 'page.js'));
-  for (const f of ['popup.html', 'popup.js', 'options.html', 'options.js', 'common-ui.js', 'ui.css']) fs.copyFileSync(path.join(ROOT, 'ext', f), path.join(dir, f));
+  for (const f of ['popup.html', 'popup.js', 'options.html', 'options.js', 'common-ui.js', 'ui.css', 'rules.json']) fs.copyFileSync(path.join(ROOT, 'ext', f), path.join(dir, f));
   fs.writeFileSync(path.join(dir, 'defaults.js'), DEFAULTS);
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.min.js'), path.join(dir, 'hls.min.js'));
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.LICENSE'), path.join(dir, 'hls.LICENSE'));

@@ -22,6 +22,8 @@ class Q(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a): pass
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
+        if 'nopip' in self.path:   # wie Facebook: Bild-in-Bild für die ganze Seite verboten (andere Verbote bleiben)
+            self.send_header('Permissions-Policy', 'picture-in-picture=(), camera=()')
         super().end_headers()
     def send_head(self):
         # /stream/…: dieselben Dateien wie hls/, aber die Haupt-Liste OHNE Endung (nur am Content-Type erkennbar)
