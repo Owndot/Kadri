@@ -83,5 +83,6 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.2.0 | 19.1 | Ohne Helfer auch keine Lautstärke-Geste; Bild-in-Bild-Knopf immer da (ohne Browser-Bild-in-Bild: Hinweis); Diagnose zeigt Bild-in-Bild- und Vorschau-Zustand |
 | 1.1.0 | 19.0 | Facebook eigener Player (wenn sicher), Bild-in-Bild auch beim Spiegeln (Schild) und auf Facebook/Instagram, Streams am Content-Type erkennen (auch aus Workern), Menü im Puzzle-Symbol, Einstellungsseite mit Seitenlisten |
 | 1.0.0 | 18.8 | Erste Fassung: alle Funktionen des Skripts. Ohne Helfer ist ausgeblendet, was nur mit Helfer geht. Stream-Listen werden in der Seite mitgelesen (`page.js`). Diagnose über das Kadri-Symbol |

@@ -45,7 +45,7 @@ Kadri funktioniert ohne die Helfer-App. Was nur mit ihr geht, ist dann ausgeblen
 
 | | ohne Helfer | mit Helfer |
 |---|---|---|
-| Lautstärke (rechts wischen) | Lautstärke des Videos | echte Lautstärke des Handys, fein abgestuft |
+| Lautstärke (rechts wischen) | – (ausgeblendet) | echte Lautstärke des Handys, fein abgestuft |
 | Helligkeit (links wischen) | – (ausgeblendet) | echte Bildschirmhelligkeit, ganz unten „Auto“ |
 | Download-Menü | YTDLnis, Teilen, Browser | zusätzlich „Mit dem Helper“ und „Über den Browser laden“ |
 | Einstellung „Helper-App“ | – | an/aus |

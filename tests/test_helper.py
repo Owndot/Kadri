@@ -16,9 +16,9 @@ with sync_playwright() as p:
     s_l = side(pg)
     check('ohne Helfer: links wischen zeigt KEINE Helligkeit', not s_l or ' on' not in s_l[0] or ' l' not in s_l[0], s_l)
     time.sleep(1.5)
-    swipe(pg, 330, 600, 450)         # rechts hoch = Lautstärke (geht auch ohne Helfer)
+    swipe(pg, 330, 600, 450)         # rechts hoch = Lautstärke – ohne Helfer ebenfalls aus (1.2)
     s_r = side(pg)
-    check('… rechts wischen: Lautstärke geht', s_r and ' on' in s_r[0] and ' r' in s_r[0], s_r)
+    check('… rechts wischen zeigt KEINE Lautstärke', not s_r or ' on' not in s_r[0], s_r)
     names = [n for n, _ in settings(pg)]
     check('… Einstellungen ohne „Helper-App“', 'Helper-App' not in names and 'Sprache' in names, names)
     close_menu(pg)
@@ -36,6 +36,10 @@ with sync_playwright() as p:
     s_l2 = side(pg)
     br = hcalls('/bright')
     check('… links wischen: Helligkeit sichtbar und geht ans Handy', s_l2 and ' on' in s_l2[0] and ' l' in s_l2[0] and len(br) >= 1, [s_l2, br[:3]])
+    time.sleep(1.5)
+    swipe(pg, 330, 600, 450)
+    s_r2 = side(pg)
+    check('… rechts wischen: Lautstärke sichtbar und geht ans Handy', s_r2 and ' on' in s_r2[0] and ' r' in s_r2[0] and len(hcalls('/vol')) >= 1, [s_r2, hcalls('/vol')[:2]])
     names2 = [n for n, _ in settings(pg)]
     check('… Einstellungen mit „Helper-App“', 'Helper-App' in names2, names2)
     close_menu(pg)
