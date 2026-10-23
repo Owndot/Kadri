@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.10.1 | 19.12 | Lupe/Fein bei Live aus; Vorschau kann nicht mehr „hängen“ (nur Zeit), Ladefehler → laufende Quelle; Diagnose zeigt Grund für Vorschau und Lupe |
 | 1.10.0 | 19.11 | Spulen ohne Einrasten (Abbrechen nur nach oben); robuster (Finger verloren, App-Wechsel, anderes Video → sauber abbrechen; flüssiger; Lade-Kreis nach dem Sprung); Vorschau abgedunkelt, solange sie lädt; Live-Streams mit Zurückspulen („LIVE“/„−5:30“); Einstellungen „Spul-Lupe“ und „Vibration“ (auch auf der Einstellungsseite) |
 | 1.9.2 | 19.10 | Abbrechen an der laufenden Stelle: sie wandert mit dem Video mit, eingerastet läuft sie unter dem Finger mit, dort keine kleine Vorschau; loslassen = Video läuft einfach weiter |
 | 1.9.1 | 19.9 | Großer Punkt nur beim Ziehen (stand sonst links über der Zeit); kein Punkt mehr für die alte Stelle – zurück dorthin: Vibrieren und „Loslassen = abbrechen“ wie bei YouTube |
