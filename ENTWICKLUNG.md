@@ -111,6 +111,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.3 | 19.18 | Facebook-Startseite: Vorschaubild beim Spiegeln aus der MP4 des Beitrags, wenn dort genau ein Video steckt und die Länge passt |
 | 1.12.2 | 19.17 | Ruhiger Start: „Beim Öffnen: Nur Bild / Mit Bedienung“ (Player-Menü und Einstellungsseite), Bedienung blendet weicher ein |
 | 1.12.1 | 19.16 | Vorschau robuster (nach einem Ladefehler einmal neu, kein Vorholen des ganzen Rasters mehr – nur 8 Bilder im WLAN), Diagnose: „erstes Bild nach … s“ |
 | 1.12.0 | 19.15 | Wischen übers Video wie Samsung (Pause, Bild springt mit, Zahlen stimmen, kleine Leiste); schneller öffnen (Sofortbild, große Seiten viel schneller) und schließen; Vorschau-Raster im WLAN gleich; Shadow-DOM-Suche sparsamer; kein sichtbares Merkmal mehr an der Seite (`kadri-ping`/`kadri-pong`); hls.js 1.7.3 ist aktuell |

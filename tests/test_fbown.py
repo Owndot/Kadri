@@ -12,7 +12,10 @@ def efg(d): return base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rst
 Q = {'res': 720}   # Qualität der fertigen MP4 (laut Facebook-Kennung); das laufende Video ist 320×180
 def prog(a): return 'https://scontent-ber1-1.xx.fbcdn.net/o1/v/t2/f2/m367/' + a + '.mp4?efg=' + efg({'vencode_tag': 'xpv_progressive.FACEBOOK..C3.%d.progressive_h264-basic-gen2_%dp' % (Q['res'], Q['res']), 'xpv_asset_id': a})
 def seg(a, n): return 'https://scontent-ber1-1.xx.fbcdn.net/o1/v/t2/f2/m69/' + a + '_%d.mp4?bytestart=%d&efg=' % (n, n * 1000) + efg({'vencode_tag': 'dash_h264_' + ('video' if n % 2 else 'audio'), 'xpv_asset_id': a})
-def page(order):
+def page(order, plain=False):
+    if state.get('feed') and not plain:   # Startseite: ein Beitrag mit genau einem Video, seine Stücke wurden schon vor dem Öffnen geladen
+        return page(order, True).replace('<div id="list">', '<div id="list" hidden>').replace(
+            '<div id="player">', '<div id="player" data-video-url="%s" data-store=\'{"videoID":"%s"}\'>' % (prog(A).replace('&', '&amp;'), A))
     reels = ''.join('<div class="reel" data-video-url="%s" data-store=\'{"videoID":"%s"}\'></div>' % (prog(a).replace('&', '&amp;'), a) for a in R4)
     return '''<!doctype html><html><head><title>Reels</title></head><body style="margin:0">
 <div id="list">%s</div>
@@ -116,6 +119,22 @@ with sync_playwright() as p:
     state['clip'] = CLIP30; state['order'] = PRELOAD_ONLY
     s3 = run(pg)
     check('… unklar, welches Video läuft → spiegeln', s3['mirror'], s3)
+    i3 = scrub_img(pg)
+    check('… und kein Vorschaubild geraten (vier Reels rundherum)', not i3[0], i3)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    # 4) Startseite: Beitrag mit genau einem Video, nichts mehr im Netz (schon vorher geladen) → gespiegelt, aber
+    #    Vorschaubild aus der MP4 des Beitrags (Länge passt)
+    state['feed'] = True; state['order'] = [['wait', 300]]
+    s4 = run(pg)
+    check('Startseite: unsicher → spiegeln', s4['mirror'], s4)
+    i4 = scrub_img(pg)
+    check('… Vorschaubild aus der MP4 des Beitrags', i4[0] and not i4[1], i4)
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.8)
+    # 4b) dieselbe Lage, aber die MP4 ist ein anderes Video (andere Länge) → nur die Zeit
+    state['clip'] = CLIP60
+    s4b = run(pg)
+    i4b = scrub_img(pg)
+    check('… MP4 des Beitrags mit anderer Länge → kein Bild, nur die Zeit', s4b['mirror'] and not i4b[0] and i4b[1], [s4b, i4b])
     check('keine Fehler der Seite', not errs, errs)
     ctx.close()
 shutdown()
