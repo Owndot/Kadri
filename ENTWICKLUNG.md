@@ -85,6 +85,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.9.1 | 19.9 | Großer Punkt nur beim Ziehen (stand sonst links über der Zeit); kein Punkt mehr für die alte Stelle – zurück dorthin: Vibrieren und „Loslassen = abbrechen“ wie bei YouTube |
 | 1.9.0 | 19.8 | Spulen: großer Punkt unter dem Finger (Glas/Milchglas), alte Stelle als kleiner Punkt; Lupe in Stufen wie beim iPhone – Finger unter die Leiste = „Lupe“, tiefer = „Fein“, wieder hoch = zurück |
 | 1.8.0 | 19.7 | Spulen mit Lupe (wie YouTubes „präzises Spulen“): beim Ziehen kurz stillhalten oder Leiste gedrückt halten → Leiste zeigt einen Ausschnitt von 20–60 s, Grenzen links/rechts, am Ende der Leiste wandert er mit; Zeit über der Vorschau im Glas bzw. Milchglas des Designs |
 | 1.7.0 | 19.6 | Spulen: Punkt genau unter dem Finger (Anfang/Ende an den Enden der Leiste – der Finger läuft nie aus dem Bild); fein nur beim bewussten Kriechen, danach gleitet die Stelle wieder unter den Finger |
