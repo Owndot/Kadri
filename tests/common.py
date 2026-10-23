@@ -97,7 +97,15 @@ def launch(p, user_dir=None):
         user_dir, headless=False,
         args=['--disable-extensions-except=' + EXT, '--load-extension=' + EXT, '--autoplay-policy=no-user-gesture-required'],
         viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale='de-DE')
-    sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event('serviceworker', timeout=15000)
+    # Hintergrund der Erweiterung abwarten (startet manchmal erst spät – dann einmal eine Seite öffnen und weiter warten)
+    sw = ctx.service_workers[0] if ctx.service_workers else None
+    for i in range(2):
+        if sw: break
+        try: sw = ctx.wait_for_event('serviceworker', timeout=15000)
+        except Exception:
+            if i: raise
+            pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+            pg.goto(B + 'direct.html'); sw = ctx.service_workers[0] if ctx.service_workers else None
     return ctx, sw, user_dir
 
 def open_player(pg, url):
