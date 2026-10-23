@@ -111,7 +111,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
-| 1.12.4 | 19.19 | Untertitel der Seite nur für das laufende Video (Video-ID, Länge), Spul-Vorschau „Im Bild“ ohne Kasten, nach Download an YTDLnis bleibt der Player offen (Vollbild per Antippen zurück) |
+| 1.12.4 | 19.19 | Untertitel der Seite nur für das laufende Video (Video-ID, Länge), Spul-Vorschau „Im Bild“ ohne Kasten, nach Download an YTDLnis bleibt der Player offen (Vollbild per Antippen zurück). Firefox: `data_collection_permissions: none` im Manifest (Pflicht für neue Erweiterungen beim Signieren über AMO) |
 | 1.12.3 | 19.18 | Facebook-Startseite: Vorschaubild beim Spiegeln aus der MP4 des Beitrags, wenn dort genau ein Video steckt und die Länge passt |
 | 1.12.2 | 19.17 | Ruhiger Start: „Beim Öffnen: Nur Bild / Mit Bedienung“ (Player-Menü und Einstellungsseite), Bedienung blendet weicher ein |
 | 1.12.1 | 19.16 | Vorschau robuster (nach einem Ladefehler einmal neu, kein Vorholen des ganzen Rasters mehr – nur 8 Bilder im WLAN), Diagnose: „erstes Bild nach … s“ |
