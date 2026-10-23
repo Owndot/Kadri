@@ -79,12 +79,13 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_fbpip.py` | Schild: beim Spiegeln bekommt die Seite „verdeckt“ nicht mit (ihr Video läuft weiter), Kadri schon; nach dem Schließen wieder normal |
 | `test_detect.py` | Stream ohne .m3u8 im Namen (nur Content-Type) → vom Hintergrund gemeldet → eigener Player (ohne: nur Spiegeln) |
 | `test_pipall.py` | Seite verbietet Bild-in-Bild (Permissions-Policy wie Facebook) → mit Kadri erlaubt, Knopf öffnet das kleine Fenster; andere Verbote bleiben |
-| `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player, Seitenliste gespeichert |
+| `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player (auch „Spul-Lupe“), Seitenliste gespeichert |
 
 ## Versionen
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.10.0 | 19.11 | Spulen ohne Einrasten (Abbrechen nur nach oben); robuster (Finger verloren, App-Wechsel, anderes Video → sauber abbrechen; flüssiger; Lade-Kreis nach dem Sprung); Vorschau abgedunkelt, solange sie lädt; Live-Streams mit Zurückspulen („LIVE“/„−5:30“); Einstellungen „Spul-Lupe“ und „Vibration“ (auch auf der Einstellungsseite) |
 | 1.9.2 | 19.10 | Abbrechen an der laufenden Stelle: sie wandert mit dem Video mit, eingerastet läuft sie unter dem Finger mit, dort keine kleine Vorschau; loslassen = Video läuft einfach weiter |
 | 1.9.1 | 19.9 | Großer Punkt nur beim Ziehen (stand sonst links über der Zeit); kein Punkt mehr für die alte Stelle – zurück dorthin: Vibrieren und „Loslassen = abbrechen“ wie bei YouTube |
 | 1.9.0 | 19.8 | Spulen: großer Punkt unter dem Finger (Glas/Milchglas), alte Stelle als kleiner Punkt; Lupe in Stufen wie beim iPhone – Finger unter die Leiste = „Lupe“, tiefer = „Fein“, wieder hoch = zurück |

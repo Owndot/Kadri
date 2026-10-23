@@ -28,6 +28,8 @@ const T = {
   'wenn die Helfer-App läuft': 'when the helper app is running',
   'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail',
   'Im Bild: das Video springt beim Ziehen mit (geht überall)': 'In video: the video follows your finger (works everywhere)',
+  'Spul-Lupe': 'Seek zoom', 'beim Spulen Finger unter die Leiste = feiner': 'while seeking, finger below the bar = finer',
+  'Vibration': 'Vibration', 'kurz beim Wechsel der Lupen-Stufe': 'briefly when the zoom level changes',
 };
 const t = (s) => (EN && T[s]) || s;
 function applyLang(s) { const l = eff(s, 'language'); EN = l === 'en' ? true : l === 'de' ? false : !/^de\b/i.test(navigator.language || ''); }
