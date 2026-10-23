@@ -1,0 +1,2 @@
+<!doctype html><html><body style="margin:0;background:#000"><div id=box></div>
+<script>setTimeout(() => { const v = document.createElement('video'); v.id = 'v'; v.src = 'clip.webm'; v.muted = true; v.autoplay = true; v.loop = true; v.playsInline = true; v.style.cssText = 'width:100%;display:block'; document.getElementById('box').append(v); v.play().catch(() => {}); }, 2500);</script></body></html>

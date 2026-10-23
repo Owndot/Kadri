@@ -1,4 +1,4 @@
-# Facebook gespiegelt + Bild-in-Bild (Kadri 1.1): Solange gespiegelt wird, erfährt die Seite nicht, dass sie verdeckt
+# Facebook gespiegelt + Bild-in-Bild: Solange gespiegelt wird, erfährt die Seite nicht, dass sie verdeckt
 # ist (page.js, „Schild“) – ihr Video und damit der Spiegel laufen im Hintergrund weiter. Kadri selbst bekommt die
 # Meldung trotzdem („Beim Verlassen: Anhalten“ greift). Nach dem Schließen gilt wieder alles wie gewohnt.
 # „Verdeckt“ nachgestellt: Playwright hält jeden Tab „sichtbar“. Darum ersetzt der Test die Abfrage des Browsers

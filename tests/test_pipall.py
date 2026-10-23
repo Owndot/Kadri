@@ -1,4 +1,4 @@
-# Bild-in-Bild auf allen Seiten (Kadri 1.3): Seiten wie Facebook verbieten es per „Permissions-Policy“ für die ganze
+# Bild-in-Bild auf allen Seiten: Seiten wie Facebook verbieten es per „Permissions-Policy“ für die ganze
 # Seite (dann gibt es weder Knopf noch automatisches kleines Fenster). Kadri hängt „picture-in-picture=*“ an –
 # andere Verbote der Seite (hier: Kamera) bleiben bestehen.
 import time

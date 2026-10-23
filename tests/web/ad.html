@@ -1,0 +1,9 @@
+<!doctype html><html><body style="margin:0;background:#fc0;font:20px sans-serif">WERBUNG – hier tippen
+<script>
+// Angriff: so tun, als wäre hier der Player, der sich groß machen will (mit Tipp, mit geratenen Schlüsseln)
+document.addEventListener('pointerdown', () => {
+  for (const k of [undefined, '', 'x', '0'.repeat(36)]) parent.postMessage({ __evpFrame1: 1, t: 'take', fs: true, k: k }, '*');
+  parent.postMessage({ __evpFrame1: 1, t: 'hello' }, '*');
+});
+window.addEventListener('message', (e) => { if (e.data && e.data.__evpFrame1) window.__got = (window.__got || []).concat([e.data]); });
+</script></body></html>

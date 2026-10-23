@@ -1,0 +1,68 @@
+{
+  "manifest_version": 2,
+  "name": "Kadri",
+  "version": "__VERSION__",
+  "description": "Eingebauter Vollbild-Player mit Wischgesten für Videos auf Webseiten – mit Download (YTDLnis), Untertiteln, Ambient-Licht.",
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "browser_action": {
+    "default_title": "Kadri",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    },
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "permissions": [
+    "storage",
+    "declarativeNetRequestWithHostAccess",
+    "webRequest",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "hls.min.js",
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "pip",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "kadri@owndot",
+      "strict_min_version": "128.0"
+    },
+    "gecko_android": {
+      "strict_min_version": "128.0"
+    }
+  }
+}

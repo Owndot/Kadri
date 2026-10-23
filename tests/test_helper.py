@@ -16,7 +16,7 @@ with sync_playwright() as p:
     s_l = side(pg)
     check('ohne Helfer: links wischen zeigt KEINE Helligkeit', not s_l or ' on' not in s_l[0] or ' l' not in s_l[0], s_l)
     time.sleep(1.5)
-    swipe(pg, 330, 600, 450)         # rechts hoch = Lautstärke – ohne Helfer ebenfalls aus (1.2)
+    swipe(pg, 330, 600, 450)         # rechts hoch = Lautstärke – ohne Helfer ebenfalls aus
     s_r = side(pg)
     check('… rechts wischen zeigt KEINE Lautstärke', not s_r or ' on' not in s_r[0], s_r)
     names = [n for n, _ in settings(pg)]

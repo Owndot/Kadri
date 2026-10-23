@@ -1,4 +1,4 @@
-# Facebook mit EIGENEM Player (Kadri 1.1): Die fertige MP4 wird nur genommen, wenn sie sicher zum laufenden Video
+# Facebook mit EIGENEM Player: Die fertige MP4 wird nur genommen, wenn sie sicher zum laufenden Video
 # gehört (gleiche Video-ID wie die gerade geladenen Stücke). Sonst – und wenn ihre Länge nicht passt – wird gespiegelt.
 # Nachgebaut wie der Reels-Feed: vier Reels werden vorgeladen, eines (A) läuft und lädt Stück für Stück nach.
 import time, json, base64

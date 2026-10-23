@@ -1,4 +1,4 @@
-# Kadri-Menü (Puzzle-Symbol) und Einstellungsseite (Kadri 1.1):
+# Kadri-Menü (Puzzle-Symbol) und Einstellungsseite:
 #  - Kadri auf einer Seite aus- und wieder einschalten (nach dem Neuladen)
 #  - Zustand der Helfer-App
 #  - Einstellungsseite: Wert ändern → gilt im Player; Seitenliste ändern → gespeichert

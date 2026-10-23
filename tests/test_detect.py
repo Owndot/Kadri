@@ -1,4 +1,4 @@
-# Stream erkennen, den man an der Adresse nicht erkennt (Kadri 1.1): Die Haupt-Liste heißt „/stream/master?token=…“
+# Stream erkennen, den man an der Adresse nicht erkennt: Die Haupt-Liste heißt „/stream/master?token=…“
 # (ohne .m3u8) – nur der Server sagt per Content-Type, dass es HLS ist. Der Hintergrund der Erweiterung sieht das und
 # meldet sie → eigener Player (vorher: nichts gefunden → nur Spiegeln).
 import time

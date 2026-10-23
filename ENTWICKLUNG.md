@@ -2,25 +2,47 @@
 
 ## Aufbau
 
+Je Browser eine eigene, vollständige Erweiterung – doppelte Dateien sind gewollt (jeder Browser für sich, robuster):
+
 ```
-src/            das Skript – dieselben Teile wie im Userscript (Owndot/video-assistent-helper, Ordner src/)
-ext/prelude.js  Ersatz für den Userscript-Manager: GM_xmlhttpRequest, GM_getValue/SetValue, GM_registerMenuCommand
-ext/epilogue.js lädt die gespeicherten Werte, dann startet das Skript
-ext/background.js  Anfragen an andere Server (ohne CORS-Sperre, Referer per Sitzungsregel), Kadri-Symbol → Diagnose
-ext/page.js     (nur Chrome/Vivaldi, „MAIN world“) liest Stream-Listen und Facebook/Instagram-API-Antworten mit;
-                „Schild“: verbirgt „verdeckt“ vor der Seite, solange Kadri spiegelt (Bild-in-Bild/Hintergrund)
-ext/popup.*     Menü hinter dem Puzzle-Symbol (Seite an/aus, Helfer-Zustand, Diagnose, Einstellungen)
-ext/rules.json  Regel: Bild-in-Bild erlauben, auch wo die Seite es per Permissions-Policy verbietet
-ext/options.*   Einstellungsseite (alle Einstellungen + Seitenlisten), ext/common-ui.js, ext/ui.css
-defaults.js     (beim Bau erzeugt) Standardwerte aus src/020-einstellungen-sprache.js
-vendor/         hls.js 1.7.3
-tools/build.js  baut dist/chrome (Manifest V3), dist/firefox (Manifest V2) und die ZIPs; --test zusätzlich dist/test
-tools/sync-src.sh  übernimmt src/ aus dem Userscript-Repository
-tests/          Chromium mit geladener Erweiterung (Playwright), Testseiten in tests/web, nachgebaute Helfer-App
+src/              das Skript – dieselben Teile wie im Userscript (Owndot/video-assistent-helper, Ordner src/)
+chrome/           Chrome/Vivaldi/Edge (Manifest V3)
+  manifest.json   Rechte: storage, declarativeNetRequestWithHostAccess, scripting (kein webRequest)
+  prelude.js      Ersatz für den Userscript-Manager: GM_xmlhttpRequest, GM_getValue/SetValue, GM_registerMenuCommand,
+                  hls.js bei Bedarf (KADRI_HOOKS.loadHls)
+  epilogue.js     lädt die gespeicherten Werte, dann startet das Skript
+  background.js   Anfragen an andere Server (Schutzregeln, Referer per Sitzungsregel), Nachladen (hls.js, Kadri in
+                  eingebetteten Fenstern), Kadri-Symbol → Diagnose
+  page.js         („MAIN world“) liest Stream-Listen (auch am Content-Type) und Facebook/Instagram-API-Antworten mit;
+                  „Schild“: verbirgt „verdeckt“ vor der Seite, solange Kadri spiegelt
+  sub.js          winziger Wächter in eingebetteten Fenstern: Kadri erst laden, wenn dort ein Video auftaucht
+  popup.*, options.*, common-ui.js, ui.css, rules.json, icons/
+firefox/          Firefox (Manifest V2): wie chrome/, aber ohne page.js/sub.js; hls.js gleich mit dabei, Streams am
+                  Content-Type erkennt der Hintergrund (webRequest)
+defaults.js       (beim Bau erzeugt) Standardwerte aus src/020-einstellungen-sprache.js
+vendor/           hls.js 1.7.3
+tools/build.js    baut dist/chrome, dist/firefox und die ZIPs; --test zusätzlich dist/test (aus chrome/)
+tools/sync-src.sh übernimmt src/ aus dem Userscript-Repository
+tests/            Chromium mit geladener Erweiterung (Playwright), Testseiten in tests/web, nachgebaute Helfer-App
 ```
 
+**Sparsam (Chrome/Vivaldi):** Auf jeder Seite laufen nur page.js (klein) und Kadri im Hauptfenster. hls.js (620 KB) lädt
+der Hintergrund erst, wenn ein Stream abgespielt wird (`scripting.executeScript` in genau dieses Fenster). In
+eingebetteten Fenstern (Werbung, Zähler …) wartet nur sub.js; erst wenn dort ein Video auftaucht (auch im Shadow DOM,
+nach einem Tipp oder beim Abspielen), lädt der Hintergrund Kadri dorthin. page.js hebt seine letzten 40 Meldungen auf
+und schickt sie noch einmal, wenn Kadri später startet (`kadri-hello`). Streams ohne Endung erkennt page.js am
+Content-Type der Antwort – der Hintergrund wird dafür nicht bei jeder Anfrage aller Seiten geweckt.
+
+**Schutzregeln für Anfragen (`guard` in background.js, beide Browser):** nur http(s); nichts im eigenen Netz (Router,
+NAS, localhost – auch versteckt als `0x7f.1`, `2130706433`, `[::ffff:…]`), außer der Helfer-App auf 127.0.0.1:47811
+oder wenn die Seite selbst dort liegt; Weiterleitungen ins eigene Netz → Antwort wird nicht herausgegeben; nur GET/HEAD
+(POST nur an die Helfer-App); Anmeldung (Cookies) nur an dieselbe Domain wie das Fenster, aus dem die Anfrage kommt.
+Test `test_guard.py`. Nachrichten eingebetteter Fenster an die Hauptseite tragen einen Schlüssel (`frameKey`, siehe
+Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
+
 **Woran gearbeitet wird:** Am Skript wird im Userscript-Repository gearbeitet, danach übernimmt
-`tools/sync-src.sh` den neuen Stand nach `src/`. Hier gibt es nur, was die Erweiterung anders macht:
+`tools/sync-src.sh` den neuen Stand nach `src/`. Hier gibt es nur, was die Erweiterung anders macht (in `chrome/` und
+`firefox/` jeweils für sich):
 
 - **Wenige Stellen, die das Bau-Skript ersetzt:** der Kopf des Userscripts, der Titel und die Version in der Diagnose.
   Jede dieser Stellen muss genau einmal vorkommen, sonst bricht der Bau ab.
@@ -50,8 +72,8 @@ zum Hintergrund, der sie mit `fetch` ausführt.
 `visibilitychange` an, bevor die Seite sie bekommt. Kadri selbst erhält sie als `kadri-vis`. Nach dem Schließen
 gilt wieder alles wie gewohnt. In Firefox fehlt page.js, dort gibt es beim Spiegeln kein Bild-in-Bild.
 
-**Streams erkennen (Hintergrund):** `webRequest.onHeadersReceived` (nur xmlhttprequest/media/other) meldet jede
-Antwort mit dem Content-Type einer HLS- oder DASH-Liste an Kadri im selben Tab/Fenster. Das erfasst auch Anfragen
+**Streams erkennen (nur Firefox, Hintergrund):** `webRequest.onHeadersReceived` (nur xmlhttprequest/media/other) meldet jede
+Antwort mit dem Content-Type einer HLS- oder DASH-Liste an Kadri im selben Tab/Fenster. In Chrome/Vivaldi macht das page.js. Das erfasst auch Anfragen
 aus Workern und Adressen ohne Endung. Ohne Endung bekommt die Adresse ein Kennzeichen hinter `#`, zum Beispiel
 `#kadri.m3u8`. Dieser Teil geht nicht an den Server.
 
@@ -79,12 +101,16 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_fbpip.py` | Schild: beim Spiegeln bekommt die Seite „verdeckt“ nicht mit (ihr Video läuft weiter), Kadri schon; nach dem Schließen wieder normal |
 | `test_detect.py` | Stream ohne .m3u8 im Namen (nur Content-Type) → vom Hintergrund gemeldet → eigener Player (ohne: nur Spiegeln) |
 | `test_pipall.py` | Seite verbietet Bild-in-Bild (Permissions-Policy wie Facebook) → mit Kadri erlaubt, Knopf öffnet das kleine Fenster; andere Verbote bleiben |
+| `test_lazy.py` | hls.js nicht auf jeder Seite, kein webRequest; eingebettete Fenster: ohne Video kein Kadri, mit Video sofort, später auftauchendes Video → dann; Player im Fenster füllt den Bildschirm |
+| `test_guard.py` | Schutzregeln für Anfragen (beide Browser, ohne Browser geprüft) |
+| `test_attack.py` | Angriffe einer bösen Seite: Werbung will sich als Player groß machen, Programmcode im Titel, gefälschte Mitlese-Meldungen (30 MB …), falsche Koppel-Seite |
 | `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player (auch „Spul-Lupe“), Seitenliste gespeichert |
 
 ## Versionen
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.11.0 | 19.14 | Eigene Ordner `chrome/` und `firefox/`. Sparsamer: hls.js erst bei Bedarf, Kadri in eingebetteten Fenstern erst mit Video (sub.js), Streams am Content-Type über page.js statt webRequest (Chrome), Facebook-Prüfung seltener. Sicherer: Schutzregeln für Anfragen (kein eigenes Netz, Cookies nur an die Seite selbst, nur GET), Fenster-Nachrichten mit Schlüssel (Werbung kann sich nicht mehr als Player ins Vollbild legen). Tests `test_lazy.py`, `test_guard.py`, `test_attack.py` |
 | 1.10.2 | 19.13 | Nur noch eine Lupen-Stufe (kein „Fein“), Lupe auch bei Live; nicht bei kurzen Videos |
 | 1.10.1 | 19.12 | Lupe/Fein bei Live aus; Vorschau kann nicht mehr „hängen“ (nur Zeit), Ladefehler → laufende Quelle; Diagnose zeigt Grund für Vorschau und Lupe |
 | 1.10.0 | 19.11 | Spulen ohne Einrasten (Abbrechen nur nach oben); robuster (Finger verloren, App-Wechsel, anderes Video → sauber abbrechen; flüssiger; Lade-Kreis nach dem Sprung); Vorschau abgedunkelt, solange sie lädt; Live-Streams mit Zurückspulen („LIVE“/„−5:30“); Einstellungen „Spul-Lupe“ und „Vibration“ (auch auf der Einstellungsseite) |

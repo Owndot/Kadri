@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Übernimmt das Skript (src/*.js) aus dem Repository des Userscripts „Video-Assistent“ (Owndot/video-assistent-helper).
-# Dort wird am Skript gearbeitet; Kadri baut aus genau denselben Teilen (plus ext/ für die Erweiterung).
+# Dort wird am Skript gearbeitet; Kadri baut aus genau denselben Teilen (plus chrome/ bzw. firefox/ für die Erweiterung).
 #   tools/sync-src.sh [Pfad zum anderen Repository]   (Standard: ../video-assistent-helper bzw. ../helfer)
 set -e
 cd "$(dirname "$0")/.."

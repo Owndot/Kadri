@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Baut die Erweiterung Kadri aus
 //   src/*.js        – das Skript (dieselben Teile wie im Userscript „Video-Assistent“, siehe tools/sync-src.sh)
-//   ext/prelude.js  – Ersatz für die Werkzeuge des Userscript-Managers (GM_…), ext/epilogue.js – Start
-//   ext/background.js, vendor/hls.min.js, ext/icons/
+//   chrome/, firefox/ – je Browser eine eigene, vollständige Erweiterung (manifest.json, background.js, prelude.js =
+//                       Ersatz für die Werkzeuge des Userscript-Managers, epilogue.js = Start, Menü, Einstellungsseite …)
+//   vendor/hls.min.js
 // nach
 //   dist/chrome/   (Vivaldi, Chrome, Edge … – Manifest V3)   + dist/kadri-chrome-<version>.zip
 //   dist/firefox/  (Firefox, auch Android – Manifest V2)      + dist/kadri-firefox-<version>.zip
@@ -49,66 +50,41 @@ function defaults() {
   return '// beim Bau aus src/020-einstellungen-sprache.js erzeugt\nconst KADRI_DEFAULTS = ' + JSON.stringify(out, null, 1) + ';\n';
 }
 
-function content(test) {
+function content(target, test) {
   let b = body;
   if (test) {
     // nur für die Tests: Oberfläche von außen erreichbar (wie PRE im Userscript-Test) und markiert
     b = swap(b, "root = hostEl.attachShadow({ mode: 'closed' });", "root = hostEl.attachShadow({ mode: 'open' }); hostEl.setAttribute('data-kadri-test', '');", 'Shadow-DOM (Test)');
   }
-  const pre = fs.readFileSync(path.join(ROOT, 'ext', 'prelude.js'), 'utf8').replace("(function () {\n  'use strict';", "(function () {\n  'use strict';\n  const KADRI_VERSION = " + JSON.stringify(VERSION) + ';');
-  const epi = fs.readFileSync(path.join(ROOT, 'ext', 'epilogue.js'), 'utf8');
+  const pre = fs.readFileSync(path.join(ROOT, target, 'prelude.js'), 'utf8').replace("(function () {\n  'use strict';", "(function () {\n  'use strict';\n  const KADRI_VERSION = " + JSON.stringify(VERSION) + ';');
+  const epi = fs.readFileSync(path.join(ROOT, target, 'epilogue.js'), 'utf8');
   return '// Kadri ' + VERSION + ' – gebaut aus dem Skript ' + base + ' (siehe Repository). Lizenz: GPL-3.0\n' + pre + b + epi;
 }
 
-// ---------- Manifeste ----------
-const desc = 'Eingebauter Vollbild-Player mit Wischgesten für Videos auf Webseiten – mit Download (YTDLnis), Untertiteln, Ambient-Licht.';
-const icons = { 16: 'icons/16.png', 32: 'icons/32.png', 48: 'icons/48.png', 128: 'icons/128.png' };
-const cs = [{ matches: ['<all_urls>'], js: ['hls.min.js', 'content.js'], run_at: 'document_start', all_frames: true }];
-// Chrome/Vivaldi: zusätzlich ein winziges Skript IN der Seite, das Stream-Listen und API-Antworten mitliest (ext/page.js)
-const csChrome = [{ matches: ['<all_urls>'], js: ['page.js'], run_at: 'document_start', all_frames: true, world: 'MAIN' }].concat(cs);
-// Bild-in-Bild auf allen Seiten: Manche Seiten (z. B. Facebook) verbieten es per „Permissions-Policy“ für die ganze
-// Seite. Die Regel hängt „picture-in-picture=*“ an – bei doppelten Angaben gilt die letzte, alle anderen Verbote bleiben.
-const dnr = { rule_resources: [{ id: 'pip', enabled: true, path: 'rules.json' }] };
-const chrome = {
-  manifest_version: 3, name: 'Kadri', version: VERSION, description: desc, icons,
-  action: { default_title: 'Kadri', default_icon: icons, default_popup: 'popup.html' },
-  options_ui: { page: 'options.html', open_in_tab: true },
-  background: { service_worker: 'background.js' },
-  permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest'],
-  host_permissions: ['<all_urls>'],
-  content_scripts: csChrome,
-  declarative_net_request: dnr,
-  minimum_chrome_version: '116',
-};
-// Firefox: Manifest V2 – dort gelten die Rechte für alle Seiten gleich bei der Installation (bei V3 müsste man sie
-// erst von Hand erlauben)
-const firefox = {
-  manifest_version: 2, name: 'Kadri', version: VERSION, description: desc, icons,
-  browser_action: { default_title: 'Kadri', default_icon: icons, default_popup: 'popup.html' },
-  options_ui: { page: 'options.html', open_in_tab: true },
-  background: { scripts: ['background.js'] },
-  permissions: ['storage', 'declarativeNetRequestWithHostAccess', 'webRequest', '<all_urls>'],
-  content_scripts: cs,
-  declarative_net_request: dnr,
-  browser_specific_settings: { gecko: { id: 'kadri@owndot', strict_min_version: '128.0' }, gecko_android: { strict_min_version: '128.0' } },
-};
+// ---------- Manifeste: je Browser ein eigener Ordner mit eigener manifest.json (Version wird beim Bau eingesetzt) ----------
+function manifestOf(target) {
+  const t = fs.readFileSync(path.join(ROOT, target, 'manifest.json'), 'utf8');
+  if (t.split('__VERSION__').length !== 2) { console.error('Bau abgebrochen: ' + target + '/manifest.json braucht genau einmal __VERSION__'); process.exit(1); }
+  return JSON.parse(t.replace('__VERSION__', VERSION));
+}
 
 // ---------- schreiben ----------
 function rmrf(p) { fs.rmSync(p, { recursive: true, force: true }); }
-function write(dir, manifest, test) {
+// target: Quell-Ordner (chrome/ oder firefox/) – alles darin kommt mit, außer prelude.js/epilogue.js (→ content.js)
+function write(dir, target, test) {
+  const SRC = path.join(ROOT, target);
   rmrf(dir); fs.mkdirSync(path.join(dir, 'icons'), { recursive: true });
-  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
-  fs.writeFileSync(path.join(dir, 'content.js'), content(test));
-  fs.copyFileSync(path.join(ROOT, 'ext', 'background.js'), path.join(dir, 'background.js'));
-  if (manifest.manifest_version === 3) fs.copyFileSync(path.join(ROOT, 'ext', 'page.js'), path.join(dir, 'page.js'));
-  for (const f of ['popup.html', 'popup.js', 'options.html', 'options.js', 'common-ui.js', 'ui.css', 'rules.json']) fs.copyFileSync(path.join(ROOT, 'ext', f), path.join(dir, f));
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(manifestOf(target), null, 2) + '\n');
+  fs.writeFileSync(path.join(dir, 'content.js'), content(target, test));
+  const own = fs.readdirSync(SRC).filter((f) => !['manifest.json', 'prelude.js', 'epilogue.js', 'icons'].includes(f));
+  for (const f of own) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   fs.writeFileSync(path.join(dir, 'defaults.js'), DEFAULTS);
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.min.js'), path.join(dir, 'hls.min.js'));
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.LICENSE'), path.join(dir, 'hls.LICENSE'));
   fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(dir, 'LICENSE'));
-  for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(ROOT, 'ext', 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
-  // Syntax prüfen
-  for (const f of ['content.js', 'background.js', 'popup.js', 'options.js', 'common-ui.js', 'defaults.js'].concat(manifest.manifest_version === 3 ? ['page.js'] : [])) {
+  for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(SRC, 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
+  // Syntax prüfen (alle Skripte)
+  for (const f of fs.readdirSync(dir).filter((x) => /\.js$/.test(x) && x !== 'hls.min.js')) {
     try { execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'pipe' }); }
     catch (e) { console.error('Syntaxfehler in ' + f + ':\n' + String(e.stderr || e.message)); process.exit(1); }
   }
@@ -119,9 +95,9 @@ function zip(dir, out) {
 }
 const DEFAULTS = defaults();
 fs.mkdirSync(DIST, { recursive: true });
-write(path.join(DIST, 'chrome'), chrome, false);
-write(path.join(DIST, 'firefox'), firefox, false);
+write(path.join(DIST, 'chrome'), 'chrome', false);
+write(path.join(DIST, 'firefox'), 'firefox', false);
 zip(path.join(DIST, 'chrome'), path.join(DIST, 'kadri-chrome-' + VERSION + '.zip'));
 zip(path.join(DIST, 'firefox'), path.join(DIST, 'kadri-firefox-' + VERSION + '.zip'));
-if (process.argv.includes('--test')) write(path.join(DIST, 'test'), chrome, true);
+if (process.argv.includes('--test')) write(path.join(DIST, 'test'), 'chrome', true);
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));
