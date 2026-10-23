@@ -44,6 +44,7 @@
       yes('ambient', 'Ambient'),
       yes('progressLine', 'Fortschrittslinie'),
       yes('startFullscreen', 'Vollbild'),
+      pick('openUi', 'Beim Öffnen', [['quiet', 'Nur Bild'], ['controls', 'Mit Bedienung']], 'Nur Bild: Bedienung erst nach dem ersten Antippen'),
       yes('autoRotate', 'Auto-Drehen'),
       pick('leaveAction', 'Beim Verlassen', [['play', 'Weiter'], ['pause', 'Anhalten']]),
       pick('subSize', 'Untertitel-Größe', [['s', 'klein'], ['m', 'mittel'], ['l', 'groß']]),

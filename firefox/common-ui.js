@@ -28,6 +28,7 @@ const T = {
   'wenn die Helfer-App läuft': 'when the helper app is running',
   'Spul-Vorschau': 'Seek preview', 'Im Bild': 'In video', 'Kleines Bild': 'Thumbnail',
   'Im Bild: das Video springt beim Ziehen mit (geht überall)': 'In video: the video follows your finger (works everywhere)',
+  'Beim Öffnen': 'On open', 'Nur Bild': 'Picture only', 'Mit Bedienung': 'With controls', 'Nur Bild: Bedienung erst nach dem ersten Antippen': 'Picture only: controls after the first tap',
   'Spul-Lupe': 'Seek zoom', 'beim Spulen Finger unter die Leiste = feiner': 'while seeking, finger below the bar = finer',
   'Vibration': 'Vibration', 'kurz beim Wechsel der Lupen-Stufe': 'briefly when the zoom level changes',
 };
