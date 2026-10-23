@@ -111,6 +111,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.7 | 19.21 | Nahtloser Start ohne Ladekreis |
 | 1.12.6 | 19.20 | Nahtloser Start auf allen Seiten (laufendes Bild der Seite, bis die eigene Kopie aufgeholt hat), Zeitmessung „Öffnen (zuletzt)“ in der Diagnose, Design „Schlicht“ (Milchglas) als Standard |
 | 1.12.5 | 19.19 | Nur Versionsnummer: Firefox-Paket mit `data_collection_permissions` eindeutig benennen (1.12.4 gab es mit und ohne) |
 | 1.12.4 | 19.19 | Untertitel der Seite nur für das laufende Video (Video-ID, Länge), Spul-Vorschau „Im Bild“ ohne Kasten, nach Download an YTDLnis bleibt der Player offen (Vollbild per Antippen zurück). Firefox: `data_collection_permissions: none` im Manifest (Pflicht für neue Erweiterungen beim Signieren über AMO) |
