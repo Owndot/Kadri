@@ -11,7 +11,8 @@
   'use strict';
   if (window.__kadriNet) return;
   try { Object.defineProperty(window, '__kadriNet', { value: true }); } catch (e) { return; }
-  try { document.documentElement.setAttribute('data-kadri-page', ''); } catch (e) {}
+  // Kadri fragt „bist du da?“ (kein sichtbares Merkmal an der Seite)
+  document.addEventListener('kadri-ping', () => { try { document.dispatchEvent(new Event('kadri-pong')); } catch (e) {} });
   const keepName = (wrap, orig) => {
     try { Object.defineProperty(wrap, 'toString', { value: () => Function.prototype.toString.call(orig), configurable: true }); } catch (e) {}
     try { Object.defineProperty(wrap, 'name', { value: orig.name, configurable: true }); } catch (e) {}
