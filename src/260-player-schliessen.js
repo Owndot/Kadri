@@ -95,7 +95,7 @@
     try {
       const t = st.vid.currentTime, vd = st.vid.duration, od = o.duration;
       const sameLen = !isFinite(od) || !isFinite(vd) || Math.abs(od - vd) < 3;
-      if (st.mode === 'own' && t > 0 && sameLen) {
+      if (st.mode === 'own' && !st.bridge && t > 0 && sameLen) {   // (nahtloser Start noch nicht fertig: die Seite steht schon richtig)
         target = t;
         // am Ende: kurz VOR das Ende stellen und angehalten lassen – sonst springt eine Reels-Seite zum nächsten Video
         if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
@@ -122,6 +122,8 @@
     removeCover();
     if (st.mode !== 'own') return;
     try { st.orig.muted = true; st.orig.pause(); } catch (e) {}
+    // (der nahtlose Start war beim Übergeben noch nicht fertig: die eigene Kopie war stumm – jetzt hat sie den Ton)
+    if (st.bridgeMuted) { st.bridgeMuted = false; try { st.vid.muted = false; st.vid.play().catch(() => {}); } catch (e) {} }
   }
   let coverEl = null;
   function coverOver(o, src) {
@@ -222,6 +224,7 @@
 
   // Tipp auf "Player": eingebauter Player (Standard) oder externe App
   function onPlayerTap() {
+    tapAt = performance.now();
     const v = active;
     if (!v) return;
     if (CONFIG.defaultPlayer === 'external' && !DOWNLOAD_ONLY) { onPillMain(); return; }
