@@ -49,6 +49,17 @@ with sync_playwright() as p:
     pg.goto(B + 'pair.html#evil-key-123'); time.sleep(1.5)
     key = sw.evaluate('async () => (await chrome.storage.local.get("gm:helperKey"))["gm:helperKey"] || ""')
     check('falsche Koppel-Seite (andere Adresse): Schlüssel wird nicht übernommen', key != 'evil-key-123', key)
+    # 5) Schlüssel-Diebstahl: Seite A liest den Schlüssel ihres Kadri-Fensters mit – Werbung auf Seite B benutzt ihn
+    pg.goto(B + 'steal.html'); time.sleep(3.0)
+    keys = pg.evaluate('() => window.__keys')
+    pg.goto(B.replace('127.0.0.1', 'localhost') + 'victim.html?k=' + (keys[0] if keys else ''))
+    time.sleep(2.0)
+    vb = pg.evaluate('() => { const r = document.getElementById("ad").getBoundingClientRect(); return [r.left, r.top]; }')
+    pg.mouse.click(vb[0] + 50, vb[1] + 40); time.sleep(1.0)
+    ad2 = [f for f in pg.frames if 'ad_key.html' in f.url][0]
+    st5 = pg.evaluate('() => { const f = document.getElementById("ad"), r = f.getBoundingClientRect(); return [Math.round(r.height), getComputedStyle(f).position, !!document.fullscreenElement]; }')
+    got5 = ad2.evaluate('() => (window.__got || []).filter((d) => d.t === "pageurl" || d.t === "state")')
+    check('gestohlener Schlüssel von Seite A hilft auf Seite B nicht (kein Vergrößern, keine Adresse)', keys and st5[0] == 120 and st5[1] != 'fixed' and not st5[2] and not got5, [len(keys), st5, got5])
     check('keine Fehler der Seite', not errs, errs)
     ctx.close()
 shutdown()

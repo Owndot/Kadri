@@ -1,0 +1,10 @@
+<!doctype html><html><body style="margin:0;background:#fc0;font:20px sans-serif">WERBUNG mit gestohlenem Schlüssel
+<script>
+// Angriff, Teil 2: auf einer ANDEREN Seite mit dem dort abgegriffenen Schlüssel „mach mich groß“ verlangen
+const k = new URLSearchParams(location.search).get('k');
+document.addEventListener('pointerdown', () => {
+  parent.postMessage({ __evpFrame1: 1, t: 'take', fs: true, k: k }, '*');
+  parent.postMessage({ __evpFrame1: 1, t: 'askurl', k: k }, '*');
+});
+window.addEventListener('message', (e) => { if (e.data && e.data.__evpFrame1) window.__got = (window.__got || []).concat([e.data]); });
+</script></body></html>

