@@ -39,7 +39,9 @@ class Q(http.server.SimpleHTTPRequestHandler):
         if p0 in ('/hdr', '/redir', '/setc', '/slow'):
             if p0 == '/hdr':
                 HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
-            if p0 == '/slow': time.sleep(int(q.get('ms', '1000')) / 1000)
+            if p0 == '/slow':
+                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
+                time.sleep(int(q.get('ms', '1000')) / 1000)
             if p0 == '/redir':
                 self.send_response(302); self.send_header('Location', q.get('to', '/')); self.send_header('Content-Length', '0'); self.end_headers()
                 return None

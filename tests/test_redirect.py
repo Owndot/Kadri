@@ -83,6 +83,31 @@ with sync_playwright() as p:
     r = xhr(lan, {'method': 'GET', 'url': LAN + 'redir?to=' + urllib.parse.quote(LAN + 'hdr?tag=l2')})
     check('Weiterleitung des Medienservers (unerwartet): gesperrt', 'error' in r and not hits('l2'), [r, hits('l2')])
     lan.close()
+    # Exact SAME local URL: only the legitimate request may reach the server.
+    lan = ctx.new_page(); lan.goto(LAN + 'direct.html'); time.sleep(1.0)
+    exact = LAN + 'slow?ms=1200&tag=exact-grant'
+    lan.evaluate('(o) => { window.__slow = (%s)(o); return 1; }' % XHR, {'url': exact})
+    for _ in range(100):
+        if hits('exact-grant'): break
+        time.sleep(0.02)
+    check('exact URL: legitimate request reached server', len(hits('exact-grant')) == 1, hits('exact-grant'))
+    r = xhr(pg, {'url': A + 'redir?to=' + urllib.parse.quote(exact)})
+    legitimate = lan.evaluate('() => window.__slow')
+    check('exact URL: concurrent foreign redirect blocked', 'error' in r and legitimate.get('status') == 200 and len(hits('exact-grant')) == 1, [r, hits('exact-grant')])
+    lan.close()
+    # B has an authenticated request in flight while A redirects to B.
+    bp = ctx.new_page(); bp.goto(Bb + 'direct.html'); time.sleep(1.0)
+    bp.evaluate('(o) => { window.__slow = (%s)(o); return 1; }' % XHR,
+                {'url': Bb + 'slow?ms=1200&tag=b-active'})
+    for _ in range(100):
+        if hits('b-active'): break
+        time.sleep(0.02)
+    check('B credential request is active', len(hits('b-active')) == 1, hits('b-active'))
+    r = xhr(pg, {'url': A + 'redir?to=' + urllib.parse.quote(Bb + 'hdr?tag=b-parallel'), 'headers': AUTH})
+    bp.evaluate('() => window.__slow')
+    h = hits('b-parallel')
+    check('parallel B request does not authorize A redirect', r.get('status') == 200 and h and not h[0]['cookie'] and not h[0]['auth'], [r,h])
+    bp.close()
     # ---- 4. Schutzregeln lassen sich nicht setzen ----
     sw.evaluate('''() => { const d = chrome.declarativeNetRequest; globalThis.__upd = d.updateSessionRules;
         d.updateSessionRules = () => Promise.reject(new Error('Test')); netReady = null; }''')

@@ -8,6 +8,52 @@
 importScripts('psl.js');   // pslBase(): Public Suffix List (welche Adressen zur selben Seite gehören)
 const api = globalThis.browser || globalThis.chrome;
 
+// Only the redirect/header phase owns global DNR exceptions. Bodies remain parallel.
+// No other non-helper fetch may start until exception removal has completed.
+function createHeaderGate(limit = 128) {
+  let busy = false, broken = false;
+  const queue = [];
+  const pump = () => {
+    if (busy || broken || !queue.length) return;
+    const item = queue.shift();
+    item.signal.removeEventListener('abort', item.cancel);
+    if (item.signal.aborted) { item.reject(new Error('abgebrochen')); pump(); return; }
+    busy = true;
+    let released = false;
+    item.resolve((safe = true) => {
+      if (released) return;
+      released = true; busy = false;
+      if (!safe) {
+        broken = true;
+        for (const q of queue.splice(0)) {
+          q.signal.removeEventListener('abort', q.cancel);
+          q.reject(new Error('Schutzregeln konnten nicht zurückgesetzt werden'));
+        }
+      } else pump();
+    });
+  };
+  return {
+    acquire(signal) {
+      if (broken) return Promise.reject(new Error('Schutzregeln konnten nicht zurückgesetzt werden'));
+      if (signal.aborted) return Promise.reject(new Error('abgebrochen'));
+      if (queue.length >= limit) return Promise.reject(new Error('zu viele offene Anfragen'));
+      return new Promise((resolve, reject) => {
+        const item = { signal, resolve, reject, cancel: null };
+        item.cancel = () => {
+          const i = queue.indexOf(item);
+          if (i >= 0) queue.splice(i, 1);
+          signal.removeEventListener('abort', item.cancel);
+          reject(new Error('abgebrochen'));
+        };
+        signal.addEventListener('abort', item.cancel, { once: true });
+        queue.push(item); pump();
+      });
+    },
+  };
+}
+const headerGate = createHeaderGate();
+
+
 // ---------- Referer setzen (fetch darf das nicht – dafür eine kurze Regel, nur für genau diese Anfrage) ----------
 let nextRule = 1000;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -90,7 +136,12 @@ function netGuard() {
   if (!dnr || !dnr.updateSessionRules || !dnr.getSessionRules) return Promise.resolve(false);
   if (!netReady) {
     const want = NET_RULES.map((r) => r.id).concat(STRIP);
-    netReady = dnr.updateSessionRules({ removeRuleIds: want, addRules: NET_RULES.concat(stripRule()) })
+    // Session rules survive service-worker restarts; remove orphaned temporary grants first.
+    netReady = dnr.getSessionRules()
+      .then((old) => dnr.updateSessionRules({
+        removeRuleIds: Array.from(new Set(want.concat(old.filter((r) => r.id >= 1000 && r.id <= 900000).map((r) => r.id)))),
+        addRules: NET_RULES.concat(stripRule()),
+      }))
       .then(() => dnr.getSessionRules())
       .then((have) => { const ids = new Set(have.map((r) => r.id)); return want.every((id) => ids.has(id)); })
       .catch(() => false)
@@ -110,15 +161,6 @@ async function allowExact(u) {
       condition: { regexFilter: '^' + esc(noHash(u)) + '$', tabIds: [-1] } }] });
     return id;
   } catch (e) { return 0; }
-}
-async function credOn(site) {
-  credSites.set(site, (credSites.get(site) || 0) + 1);
-  if (credSites.get(site) === 1) await stripUpdate();
-}
-function credOff(site) {
-  const n = (credSites.get(site) || 1) - 1;
-  if (n > 0) { credSites.set(site, n); return; }
-  credSites.delete(site); stripUpdate().catch(() => {});
 }
 // → Grund (Text), wenn die Anfrage nicht erlaubt ist; sonst ''. Setzt o.anonymous, wenn die Seite fremd ist.
 function guard(m, fromUrl) {
@@ -149,33 +191,47 @@ function b64(u8) {
 api.runtime.onConnect.addListener((port) => {
   if (port.name !== 'kadri-xhr') return;
   const ac = new AbortController();
-  let rule = 0, gone = false, timedOut = false, tm = 0;
+  let rule = 0, gone = false, timedOut = false, tm = 0, started = false;
   const post = (m) => { if (gone) return; try { port.postMessage(m); } catch (e) { gone = true; } };
   port.onDisconnect.addListener(() => { gone = true; ac.abort(); dropRule(rule); clearTimeout(tm); });
   port.onMessage.addListener(async (m) => {
     if (!m) return;
     if (m.t === 'abort') { ac.abort(); return; }
-    if (m.t !== 'req') return;
+    if (m.t !== 'req' || started) return;
+    started = true;
     const no = guard(m, (port.sender && (port.sender.url || (port.sender.tab && port.sender.tab.url))) || '');
     if (no) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: ' + no }); return; }
     const headers = Object.assign({}, m.headers || {});
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
-    let cred = '';
+    let release = null, allowId = 0;
+    const resetHeaders = async () => {
+      if (!release) return;
+      const unlock = release; release = null;
+      try {
+        const removeRuleIds = [rule, allowId].filter(Boolean);
+        if (removeRuleIds.length) await api.declarativeNetRequest.updateSessionRules({ removeRuleIds });
+        rule = 0; allowId = 0;
+        credSites.clear();
+        await stripUpdate();
+        unlock(true);
+      } catch (e) { ac.abort(); unlock(false); throw e; }
+    };
     try {
       const helper = new URL(m.url).origin === HELPER_ORIGIN;
+      if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
+      if (!helper) release = await headerGate.acquire(ac.signal);
+      if (ac.signal.aborted) throw new Error('abgebrochen');
       if (!(await netGuard()) && !helper) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
-      let allowId = 0;
       // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort) – nur genau diese Adresse, ohne Weiterleitung
       try { if (!helper && privateHost(new URL(m.url).hostname)) { allowId = await allowExact(m.url); if (!allowId) throw new Error('Freigabe'); } } catch (e) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Freigabe fehlt' }); return; }
-      m.allowId = allowId;
-      if (!helper && !m.anonymous && m.site) { cred = m.site; await credOn(cred); }
-      if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
-      if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
+      if (!helper && !m.anonymous && m.site) { credSites.set(m.site, 1); await stripUpdate(); }
+      if (!helper && ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
         credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store',
       });
+      await resetHeaders();   // fetch resolved at final headers, before consuming the response body
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
       const hdr = [];
@@ -213,9 +269,9 @@ api.runtime.onConnect.addListener((port) => {
       post({ t: 'error', timeout: timedOut, msg: String((e && e.message) || e) });
     } finally {
       clearTimeout(tm);
-      dropRule(rule); rule = 0;
-      if (m.allowId) dropRule(m.allowId);
-      if (cred) credOff(cred);
+      try { await resetHeaders(); } catch (e) {
+        post({ t: 'error', timeout: false, msg: 'Schutzregeln konnten nicht zurückgesetzt werden' });
+      }
     }
   });
 });
