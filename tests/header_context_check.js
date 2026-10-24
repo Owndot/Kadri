@@ -142,7 +142,7 @@ async function runHeaderTests(source, runtime) {
   {
     const h=setup(), d=deferred(); h.setHold(d); await tick();
     const a=h.req('http://127.0.0.1:8790/page','http://127.0.0.1:8790/hold');
-    await tick(); h.failCleanup(); d.resolve(); await a.done; await tick();
+    await tick(); h.failCleanup(); d.resolve(); await a.settled; // await the listener including failed cleanup/finally
     h.restoreCleanup();
     const r=await h.req('https://a.test/page','https://a.test/check').done;
     assert(r.t==='done','cleanup recovery failed');
