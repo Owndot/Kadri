@@ -111,6 +111,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.11 | 19.25 | Ambient-Licht gleich beim Öffnen (schneller eingeblendet), Zurück-Geste blendet den Player sofort aus |
 | 1.12.10 | 19.24 | Nahtloses Zurück und Vorwärmen wieder entfernt (Schließen wie in 1.12.7), eingebettete Player: beim Schließen kein fremder Player mehr kurz im Vollbild |
 | 1.12.9 | 19.23 | Nahtlos zurück: eigenes Video in der Seite an deren Platz (abgeschnitten wie dort, Knöpfe der Seite darüber) |
 | 1.12.8 | 19.22 | Nahtlos zurück zur Seite (dein Video läuft kurz über der Seite weiter, bis sie bereit ist), Seite vorwärmen, Bild-Ebene beim Spulen im Bild (kein kleines Bild in der Mitte) |
