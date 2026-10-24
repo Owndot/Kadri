@@ -26,6 +26,24 @@ jobs:
           sudo apt-get install -y xvfb zip
       - name: Bauen
         run: node tools/build.js --test
+      - name: Prove recovery regression against the broken predecessor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh api 'repos/Owndot/Kadri/contents/chrome/background.js?ref=af294d1' --jq .content | base64 --decode > "$RUNNER_TEMP/previous-background.js"
+          if timeout 60 node - "$RUNNER_TEMP/previous-background.js" > "$RUNNER_TEMP/previous-recovery.log" 2>&1 <<'JS'
+          const fs=require('fs'), run=require('./tests/header_context_check.js');
+          run(fs.readFileSync(process.argv[2],'utf8'),{URL,AbortController,setTimeout,clearTimeout})
+            .then(()=>{},error=>{console.error(error);process.exitCode=1;});
+          JS
+          then
+            echo 'Broken predecessor unexpectedly passed'; exit 1
+          fi
+          cat "$RUNNER_TEMP/previous-recovery.log"
+          grep -q 'setup failure never recovered' "$RUNNER_TEMP/previous-recovery.log"
+          node tests/header_context_check.js
+          echo 'PASS: predecessor fails the recovery assertion; current source passes'
       - name: Security lifecycle tests first
         run: TESTS="test_abort.py test_guard.py test_redirect.py test_worker_restart.py" tests/run_all.sh
       - name: Remaining Chromium tests
