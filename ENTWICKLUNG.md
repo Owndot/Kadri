@@ -111,6 +111,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.12 | 19.26 | Vibration funktioniert ohne frisches Antippen (Lupe, Anfang/Ende), neu beim Abbrechen; Hinweis kurz „Abbrechen“ |
 | 1.12.11 | 19.25 | Ambient-Licht gleich beim Öffnen (schneller eingeblendet), Zurück-Geste blendet den Player sofort aus |
 | 1.12.10 | 19.24 | Nahtloses Zurück und Vorwärmen wieder entfernt (Schließen wie in 1.12.7), eingebettete Player: beim Schließen kein fremder Player mehr kurz im Vollbild |
 | 1.12.9 | 19.23 | Nahtlos zurück: eigenes Video in der Seite an deren Platz (abgeschnitten wie dort, Knöpfe der Seite darüber) |
