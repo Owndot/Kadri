@@ -40,8 +40,17 @@ function dropRule(id) {
 //  - Anmeldung (Cookies) nur an die Seite selbst (gleiche Domain wie das Fenster, aus dem die Anfrage kommt) –
 //    Video-Server, Untertitel-Server usw. bekommen sie nicht
 const HELPER_ORIGIN = 'http://127.0.0.1:47811';
-const baseDomain = (h) => {
-  const p = String(h || '').toLowerCase().split('.');
+// angreifer.github.io und opfer.github.io sind verschiedene Seiten: Adressen, unter denen viele FREMDE Betreiber eigene
+// Seiten haben, zählen als eigene Endung (wie co.uk)
+const SHARED_SUFFIX = ['github.io', 'gitlab.io', 'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
+  'herokuapp.com', 'appspot.com', 'blogspot.com', 'azurewebsites.net', 'cloudfront.net', 's3.amazonaws.com', 'onrender.com', 'fly.dev',
+  'glitch.me', 'repl.co', 'surge.sh', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'myshopify.com', 'wixsite.com', 'wordpress.com',
+  'tumblr.com', 'neocities.org', 'r2.dev', 'b-cdn.net', 'translate.goog', 'carrd.co', 'webflow.io', 'framer.app', 'notion.site'];
+const baseDomain = (host) => {
+  const h = String(host || '').toLowerCase().replace(/\.$/, '');
+  if (/^[\d.]+$/.test(h) || h.indexOf(':') >= 0) return h;   // IP-Adresse: nur sie selbst
+  const p = h.split('.');
+  for (const s of SHARED_SUFFIX) if (h === s || h.endsWith('.' + s)) return p.slice(-(s.split('.').length + 1)).join('.');
   // co.uk, com.au, … (zweite Stufe kurz, Land zweistellig)
   return p.length > 2 && p[p.length - 1].length === 2 && p[p.length - 2].length <= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
 };

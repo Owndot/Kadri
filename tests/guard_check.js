@@ -32,6 +32,8 @@ function req(from, m) {
   };
   await t('gleiche Seite: mit Anmeldung', 'https://www.ardmediathek.de/video/1', { url: 'https://api.ardmediathek.de/x' }, (f, c) => f && c.cred === 'include');
   await t('fremder Server (Video-CDN): ohne Anmeldung', 'https://www.facebook.com/reel/1', { url: 'https://evil.example/steal' }, (f, c) => f && c.cred === 'omit');
+  await t('github.io: fremde Unterseite bekommt keine Anmeldung', 'https://opfer.github.io/video', { url: 'https://angreifer.github.io/x.vtt' }, (f, c) => f && c.cred === 'omit');
+  await t('github.io: dieselbe Unterseite behält die Anmeldung', 'https://opfer.github.io/video', { url: 'https://opfer.github.io/x.vtt' }, (f, c) => f && c.cred === 'include');
   await t('co.uk wird richtig als eine Seite erkannt', 'https://www.bbc.co.uk/iplayer', { url: 'https://other.co.uk/x' }, (f, c) => f && c.cred === 'omit');
   await t('Router im eigenen Netz: abgelehnt', 'https://www.example.com/', { url: 'http://192.168.0.1/admin' }, (f, c, e) => !f && /eigenen Netz/.test(e));
   await t('localhost (andere Dienste): abgelehnt', 'https://www.example.com/', { url: 'http://127.0.0.1:8080/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
