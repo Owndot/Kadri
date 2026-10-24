@@ -15,6 +15,8 @@ with sync_playwright() as p:
     cdp=ctx.new_cdp_session(public)
     versions=[]
     cdp.on('ServiceWorker.workerVersionUpdated', lambda event: versions.extend(event.get('versions',[])))
+    root_cdp=ctx.browser.new_browser_cdp_session()
+    old_targets={t['targetId'] for t in root_cdp.send('Target.getTargets')['targetInfos'] if t.get('type')=='service_worker' and t.get('url')==sw.url}
     cdp.send('ServiceWorker.enable')
     for _ in range(100):
         if any(v.get('scriptURL')==sw.url and v.get('status')=='activated' for v in versions): break
@@ -35,7 +37,9 @@ with sync_playwright() as p:
     result=public.evaluate(XHR,{'url':'http://a.test:%d/redir?to=' % PORT + urllib.parse.quote(url)})
     check('foreign redirect after worker restart is blocked','error' in result,result)
     check('foreign request did not reach former grant',sum(x['tag']=='worker-restart' for x in HDR_HITS)==1,HDR_HITS)
-    sw2=next((w for w in ctx.service_workers if w.url==sw.url and w!=sw),None)
+    new_targets={t['targetId'] for t in root_cdp.send('Target.getTargets')['targetInfos'] if t.get('type')=='service_worker' and t.get('url')==sw.url}
+    check('worker target replaced by real restart',bool(new_targets) and not (old_targets & new_targets),[list(old_targets),list(new_targets)])
+    sw2=next((w for w in ctx.service_workers if w.url==sw.url),None)
     if sw2 is None:
         sw2=ctx.wait_for_event('serviceworker',timeout=10000)
     rules=sw2.evaluate('()=>chrome.declarativeNetRequest.getSessionRules()')
@@ -44,6 +48,6 @@ with sync_playwright() as p:
     check('credential exemptions absent after real restart',not strip['condition'].get('excludedRequestDomains'),strip)
     r=public.evaluate(XHR,{'url':'http://a.test:%d/hdr?tag=after-restart' % PORT})
     check('normal requests work after restart',r.get('status')==200,r)
-    cdp.detach(); ctx.close()
+    root_cdp.detach(); cdp.detach(); ctx.close()
 shutdown()
 done()
