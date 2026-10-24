@@ -57,8 +57,8 @@ async function runHeaderTests(source, runtime) {
       const end=deferred(),messages=[];let listener,disconnect;
       connect({name:'kadri-xhr',sender:{url:from},onMessage:{addListener(f){listener=f;}},onDisconnect:{addListener(f){disconnect=f;}},
         postMessage(m){messages.push(m.t==='chunk'?{t:m.t,bytes:m.b.length*3/4-(m.b.endsWith('==')?2:m.b.endsWith('=')?1:0)}:m);if(m.t==='done'||m.t==='error')end.resolve(m);}});
-      listener({t:'req',url,headers:{Authorization:'test-auth'},...extra});
-      return {done:end.promise,messages,abort(){listener({t:'abort'});},disconnect(){disconnect();}};
+      const settled=listener({t:'req',url,headers:{Authorization:'test-auth'},...extra});
+      return {done:end.promise,settled,messages,abort(){listener({t:'abort'});},disconnect(){disconnect();}};
     }
     return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},setBinary(n){binary=n;},corruptBaseline(v){corrupt=v;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
   }
@@ -132,7 +132,8 @@ async function runHeaderTests(source, runtime) {
   }
   {
     const h=setup([],true); await tick();
-    await h.req('https://a.test/page','https://a.test/check').done;
+    const failed=h.req('https://a.test/page','https://a.test/check');
+    await failed.settled; // includes finally/resetHeaders, not merely the first error message
     h.setFailure(false);
     const r=await h.req('https://a.test/page','https://a.test/check').done;
     assert(r.t==='done' && h.calls.length===1,'setup failure never recovered');
