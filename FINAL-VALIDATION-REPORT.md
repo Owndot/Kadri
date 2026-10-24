@@ -1,7 +1,17 @@
 # Final technical validation — Kadri — 2026-10-24
 
 **Ready for owner device validation; NOT approved for final merge or publication.**
-Both security PRs remain drafts. This validation changed tests/measurement/documentation; it did not redesign or modify the working Chrome request manager.
+Both security PRs remain drafts. Validation also corrected a proven pre-existing player metadata/position defect. The working Chrome request manager was not redesigned or modified in this final validation.
+
+## Follow-up after repeated browser runs — 21:27 UTC
+A repeated helper userscript run exposed a pre-existing player bug in both projects: later loadedmetadata events reused the earlier opening position on an unrelated new source. Native event traces reproduced an explicit currentTime=10 assignment on stable and development player source.
+
+src/170-player-laden.js now consumes the opening seek once per intentional tryNext load. Quality/fallback loads re-arm that seek; an unrelated later metadata event does not. The bridge's first-load position logic is preserved.
+- Runtime fix: Kadri 3145e864; helper/userscript 7af974c0.
+- Kadri full existing 18-file suite with this runtime correction: PASS in run 40133376428.
+- Counterbalanced source-switch observations in helper run 40133593779: both stable samples fail the exact assertion (35/36), both corrected samples pass (36/36). The overall job was red because the newly added standalone test initially looked for a lazy player before video discovery; that harness error was corrected and is not counted as a product pass.
+- Added native event regression tests verify the opening position, then change source and inspect position at loadedmetadata rather than waiting an arbitrary number of seconds. They are present in both projects; a47e53ec / 0442866e correct fixture discovery before pausing.
+- A fresh full-suite run and counterbalanced performance rerun after the player correction are in progress. Earlier 198-check results below are historical, not a claim that the new 19-file suite has finished.
 
 ## Executed checklist
 PASS means executed with evidence. A prepared procedure is NOT TESTED.
