@@ -10,11 +10,11 @@ async function runHeaderTests(source, runtime) {
   const output=[];
   function setup(initial=[], failing=false, code=source) {
     const rules=new Map(initial.map(r=>[r.id,r])), calls=[];
-    let connect, hold=null, body=null, failCleanup=false, stalled=null, binary=0;
+    let connect, hold=null, body=null, failCleanup=false, stalled=null, binary=0, corrupt=false;
     const event=()=>({addListener(){}});
     const chrome={runtime:{id:'test',onConnect:{addListener(f){connect=f;}},onMessage:event()},
       action:{onClicked:event()},declarativeNetRequest:{
-        async getSessionRules(){return [...rules.values()];},
+        async getSessionRules(){return [...rules.values()].map(r=>corrupt && r.id===80?{...r,priority:1}:r);},
         async updateSessionRules(o){
           if(failing || (failCleanup && (o.removeRuleIds||[]).some(id=>id>=1000) && !(o.addRules||[]).length)) throw new Error('DNR failure');
           for(const id of o.removeRuleIds||[]) rules.delete(id);
@@ -60,7 +60,7 @@ async function runHeaderTests(source, runtime) {
       listener({t:'req',url,headers:{Authorization:'test-auth'},...extra});
       return {done:end.promise,messages,abort(){listener({t:'abort'});},disconnect(){disconnect();}};
     }
-    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},setBinary(n){binary=n;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
+    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},setBinary(n){binary=n;},corruptBaseline(v){corrupt=v;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
   }
   {
     const h=setup(),d=deferred();h.setHold(d);await tick();
@@ -183,6 +183,14 @@ async function runHeaderTests(source, runtime) {
     d.resolve();await Promise.all([a.done,b.done]);
     for(const r of [a,b])assert(r.messages.filter(m=>m.t==='chunk').reduce((n,m)=>n+m.bytes,0)===8*1024*1024,'binary bytes lost');
     output.push('two 8 MiB binary downloads stream concurrently');
+  }
+  {
+    const h=setup([],true); await tick(); h.setFailure(false); h.corruptBaseline(true);
+    await h.req('https://a.test/page','https://a.test/check').done;
+    assert(h.calls.length===0,'rule ID presence accepted a corrupted baseline');
+    h.corruptBaseline(false);
+    assert((await h.req('https://a.test/page','https://a.test/check').done).t==='done','verified retry failed');
+    output.push('baseline verification checks rule contents and retries');
   }
   return output;
 }
