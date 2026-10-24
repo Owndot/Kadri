@@ -30,7 +30,7 @@ const T = {
   'Im Bild: das Video springt beim Ziehen mit (geht überall)': 'In video: the video follows your finger (works everywhere)',
   'Beim Öffnen': 'On open', 'Nur Bild': 'Picture only', 'Mit Bedienung': 'With controls', 'Nur Bild: Bedienung erst nach dem ersten Antippen': 'Picture only: controls after the first tap',
   'Spul-Lupe': 'Seek zoom', 'beim Spulen Finger unter die Leiste = feiner': 'while seeking, finger below the bar = finer',
-  'Vibration': 'Vibration', 'kurz beim Wechsel der Lupen-Stufe': 'briefly when the zoom level changes',
+  'Vibration': 'Vibration', 'kurz beim Spulen: Lupe, Abbrechen, Anfang/Ende': 'briefly while seeking: zoom, cancel, start/end',
 };
 const t = (s) => (EN && T[s]) || s;
 function applyLang(s) { const l = eff(s, 'language'); EN = l === 'en' ? true : l === 'de' ? false : !/^de\b/i.test(navigator.language || ''); }
