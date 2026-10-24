@@ -47,6 +47,25 @@
     if (typeof text === 'string' && text) send('pl', abs(u), finalU, text);
     return true;
   };
+  // Antwort mitlesen, aber höchstens max Zeichen: zu Große gar nicht erst ganz einlesen (Länge vorab, sonst Stück für
+  // Stück und abbrechen) – Stream-Listen sind klein, ein versehentlich mitgelesenes Video wäre riesig
+  const readCapped = (r, max) => {
+    try {
+      if (+(r.headers.get('content-length') || 0) > max) return Promise.resolve('');
+      const c = r.clone();
+      if (!c.body || !c.body.getReader || typeof TextDecoder !== 'function') return c.text().then((t) => (t.length > max ? '' : t));
+      const rd = c.body.getReader(), dec = new TextDecoder();
+      let out = '', n = 0;
+      const pump = () => rd.read().then(({ done, value }) => {
+        if (done) return out + dec.decode();
+        n += value.length;
+        if (n > max) { rd.cancel().catch(() => {}); return ''; }
+        out += dec.decode(value, { stream: true });
+        return pump();
+      });
+      return pump();
+    } catch (e) { return Promise.resolve(''); }
+  };
   const of = window.fetch;
   if (typeof of === 'function') {
     const wf = function (input) {
@@ -57,9 +76,9 @@
         p.then((r) => {
           try {
             if (!r || !r.ok) return;
-            if (k) { r.clone().text().then((t) => send(k, abs(u), r.url, t), () => {}); return; }
+            if (k) { readCapped(r, 4e6).then((t) => send(k, abs(u), r.url, t), () => {}); return; }
             const ct = r.headers.get('content-type');   // nur die Kopfzeile – kostet fast nichts
-            if (ctKind(ct)) r.clone().text().then((t) => byType(u, r.url, ct, t), () => byType(u, r.url, ct, ''));
+            if (ctKind(ct)) readCapped(r, 4e6).then((t) => byType(u, r.url, ct, t), () => byType(u, r.url, ct, ''));
           } catch (e) {}
         }, () => {});
       } catch (e) {}

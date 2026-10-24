@@ -41,6 +41,24 @@ oder wenn die Seite selbst dort liegt; Weiterleitungen ins eigene Netz → Antwo
 Test `test_guard.py`. Nachrichten eingebetteter Fenster an die Hauptseite tragen einen Schlüssel (`frameKey`, siehe
 Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
 
+**Seit 1.12.13 zusätzlich auf Netz-Ebene** (greift auch bei Weiterleitungen, bevor die Anfrage das Gerät verlässt):
+Chrome mit Sitzungsregeln (`declarativeNetRequest`, nur für Anfragen der Erweiterung selbst – `tabIds: [-1]`): Regel 50
+erlaubt die Helfer-App, 51–58 sperren je einen privaten Bereich (127/8, 10/8, 192.168/16, 172.16/12, 169.254/16, 0/8,
+100.64/10, IPv6 in Klammern), 70 sperrt `localhost`/`.local`/`.internal`/`.lan`. (Ein einziger großer Ausdruck war
+übersetzt über 2 KB – Chrome lehnt das ab.) Liegt die Seite selbst im eigenen Netz, gibt `allowHost` genau diesen Host
+für die Dauer der Anfrage frei (Priorität 20). Firefox: blockierender `webRequest.onBeforeRequest` nur für eigene
+Anfragen (`tabId -1`, Herkunft die Erweiterung) plus `dns.resolve` – fängt auch Namen ab, die auf private Adressen
+zeigen. Dafür braucht Firefox die Rechte `webRequestBlocking` und `dns`. Bleibt offen: In Chrome kann ein Name, der erst
+beim Laden auf eine private Adresse zeigt (DNS-Rebinding), nicht vorab erkannt werden; Cookies werden bei
+Weiterleitungen auf fremde Seiten vom Browser selbst behandelt.
+
+Weitere Punkte aus der Prüfung (1.12.13): Schlüssel der eingebetteten Fenster gilt **je Seite** (aus dem Grundschlüssel
+und der Herkunft der Hauptseite – ein auf Seite A gestohlener Schlüssel nützt Werbung auf Seite B nichts);
+`baseDomain` kennt geteilte Endungen (`github.io` …) und `co.uk`-artige Länderendungen (Cookies nicht an fremde
+Unterseiten derselben Endung); binäre Daten an den Helfer kommen als Base64 an (`dataB64`, vorher
+„[object ArrayBuffer]“); Diagnose blendet Werte in Adressen aus (`maskUrls`); `page.js` liest höchstens 4 MB einer
+Antwort mit (Länge vorab, sonst Stück für Stück mit Abbruch); Blob-Downloads ohne zweite Kopie im Speicher.
+
 **Woran gearbeitet wird:** Am Skript wird im Userscript-Repository gearbeitet, danach übernimmt
 `tools/sync-src.sh` den neuen Stand nach `src/`. Hier gibt es nur, was die Erweiterung anders macht (in `chrome/` und
 `firefox/` jeweils für sich):
@@ -105,12 +123,15 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_lazy.py` | hls.js nicht auf jeder Seite, kein webRequest; eingebettete Fenster: ohne Video kein Kadri, mit Video sofort, später auftauchendes Video → dann; Player im Fenster füllt den Bildschirm |
 | `test_guard.py` | Schutzregeln für Anfragen (beide Browser, ohne Browser geprüft) |
 | `test_attack.py` | Angriffe einer bösen Seite: Werbung will sich als Player groß machen, Programmcode im Titel, gefälschte Mitlese-Meldungen (30 MB …), falsche Koppel-Seite |
+| `test_lan.py` | Netz-Ebene: Regeln aktiv, öffentliche Seite erreichbar, Weiterleitung und direkte Anfrage ins eigene Netz gesperrt (kein Treffer auf dem Server), Untertitel einer Seite im eigenen Netz laden trotzdem |
+| `test_proxy.py` | „Über den Browser laden“ und Download ohne Helfer: Byte für Byte die Datei |
 | `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player (auch „Spul-Lupe“), Seitenliste gespeichert |
 
 ## Versionen
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.13 | 19.27 | Sicherheit und Speicher nach einer Prüfung: Sperre fürs eigene Netz auf Netz-Ebene (auch Weiterleitungen; Firefox braucht dafür `webRequestBlocking` und `dns`), Fenster-Schlüssel je Seite, `baseDomain` mit geteilten Endungen, Binärdaten an den Helfer korrekt, Diagnose ohne Werte in Adressen, Mitlesen höchstens 4 MB, Blob ohne Doppel-Kopie, Vorschaubilder nach Größe begrenzt, Stream-Raster nicht im Datensparmodus. Tests `test_lan.py`, `test_proxy.py`, `test_attack.py` (gestohlener Schlüssel) |
 | 1.12.12 | 19.26 | Vibration funktioniert ohne frisches Antippen (Lupe, Anfang/Ende), neu beim Abbrechen; Hinweis kurz „Abbrechen“ |
 | 1.12.11 | 19.25 | Ambient-Licht gleich beim Öffnen (schneller eingeblendet), Zurück-Geste blendet den Player sofort aus |
 | 1.12.10 | 19.24 | Nahtloses Zurück und Vorwärmen wieder entfernt (Schließen wie in 1.12.7), eingebettete Player: beim Schließen kein fremder Player mehr kurz im Vollbild |

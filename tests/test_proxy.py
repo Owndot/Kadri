@@ -22,6 +22,18 @@ with sync_playwright() as p:
     a, b = got.get('1'), got.get('2')
     check('Stück 1 (70 000 Bytes ab 0): genau die Bytes der Datei', a and a[1] == '206' and a[2] == data[0:70000], [a and a[1], a and len(a[2]), a and a[2][:20]])
     check('Stück 2 (50 000 Bytes ab 100 000): genau die Bytes der Datei', b and b[2] == data[100000:150000], [b and b[1], b and len(b[2])])
+    # Download ohne Helfer-App: Kadri lädt die Datei als Blob (aus den Stücken zusammengesetzt) – genau die Bytes?
+    pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(1.0)
+    helper['on'] = False
+    open_player(pg, B + 'direct.html')
+    pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R); time.sleep(0.3)
+    got = None
+    try:
+        with pg.expect_download(timeout=20000) as dl:
+            pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").click()' % R)
+        got = open(dl.value.path(), 'rb').read()
+    except Exception as e: got = str(e)[:200]
+    check('Download ohne Helfer: genau die Datei (Blob)', got == data, [len(got) if isinstance(got, bytes) else got, len(data)])
     ctx.close()
 shutdown()
 done()

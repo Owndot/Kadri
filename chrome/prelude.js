@@ -47,11 +47,16 @@
           done = true;
           const r = { status: m.status, statusText: m.statusText, readyState: 4, finalUrl: m.finalUrl, responseHeaders: m.headers };
           const rt = o.responseType || '';
-          if (rt === 'arraybuffer' || rt === 'blob') {
+          if (rt === 'blob') {
+            r.response = new Blob(chunks, { type: m.type || '' });   // direkt aus den Stücken: keine zweite Kopie im Speicher
+            chunks.length = 0;
+            r.responseText = '';
+          } else if (rt === 'arraybuffer') {
             const all = new Uint8Array(size);
             let at = 0;
             chunks.forEach((c) => { all.set(c, at); at += c.length; });
-            r.response = rt === 'blob' ? new Blob([all], { type: m.type || '' }) : all.buffer;
+            chunks.length = 0;
+            r.response = all.buffer;
             r.responseText = '';
           } else {
             r.responseText = m.text || '';
