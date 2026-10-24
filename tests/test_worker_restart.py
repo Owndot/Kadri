@@ -12,7 +12,7 @@ with sync_playwright() as p:
     ctx, sw, _ = launch(p, extra_args=['--host-resolver-rules=MAP *.test 127.0.0.1','--no-proxy-server'])
     public=ctx.new_page(); public.goto('http://a.test:%d/direct.html' % PORT)
     local=ctx.new_page(); local.goto(B+'direct.html'); time.sleep(1)
-    cdp=ctx.browser.new_browser_cdp_session()
+    cdp=ctx.new_cdp_session(public)
     versions=[]
     cdp.on('ServiceWorker.workerVersionUpdated', lambda event: versions.extend(event.get('versions',[])))
     cdp.send('ServiceWorker.enable')
