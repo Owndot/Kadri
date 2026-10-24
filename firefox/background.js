@@ -26,6 +26,7 @@ async function refererRule(url, ref) {
     return id;
   } catch (e) { return 0; }
 }
+function dropAllow(host) { const n = (allowedHosts.get(host) || 1) - 1; if (n > 0) allowedHosts.set(host, n); else allowedHosts.delete(host); }
 function dropRule(id) {
   if (!id) return;
   try { api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch (e) {}
@@ -52,6 +53,34 @@ function privateHost(h) {
   if (!m) return false;
   const a = +m[1], b = +m[2];
   return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+// ---------- Schutz auf Netzwerk-Ebene: Kadris eigene Anfragen kommen nie ins eigene Netz ----------
+// Die Prüfung oben sieht nur die erste Adresse. Leitet ein Server weiter (öffentliche Adresse → Router), hätte die
+// Anfrage das Ziel schon erreicht, bevor Kadri es merkt. Darum wird JEDE Anfrage von Kadri selbst (auch nach jeder
+// Weiterleitung) vor dem Absenden geprüft – in Firefox zusätzlich, wohin der Name wirklich zeigt (eine öffentliche
+// Adresse, die auf ein Gerät zu Hause zeigt, fällt so auch auf). Ausnahmen: die Helfer-App, und für die Dauer einer
+// Anfrage die Adresse einer Seite, die selbst im eigenen Netz liegt.
+const allowedHosts = new Map();   // Adresse → Zahl laufender Anfragen
+let netReady = Promise.resolve();
+const netGuard = () => netReady;
+function allowHost(host) { allowedHosts.set(host, (allowedHosts.get(host) || 0) + 1); return Promise.resolve(host); }
+function privateIp(ip) {
+  ip = String(ip || '').toLowerCase();
+  return privateHost(ip) || /^::ffff:/.test(ip);
+}
+if (api.webRequest && api.webRequest.onBeforeRequest) {
+  try {
+    const own = (d) => d.tabId === -1 && String(d.originUrl || d.documentUrl || '').startsWith(api.runtime.getURL(''));
+    api.webRequest.onBeforeRequest.addListener((d) => {
+      if (!own(d)) return {};
+      let u;
+      try { u = new URL(d.url); } catch (e) { return { cancel: true }; }
+      if (u.origin === HELPER_ORIGIN || allowedHosts.has(u.hostname)) return {};
+      if (privateHost(u.hostname)) return { cancel: true };
+      if (!api.dns || !api.dns.resolve || /^[\d.]+$/.test(u.hostname) || u.hostname.includes(':')) return {};
+      return api.dns.resolve(u.hostname).then((r) => ({ cancel: (r.addresses || []).some(privateIp) }), () => ({}));
+    }, { urls: ['http://*/*', 'https://*/*'] }, ['blocking']);
+  } catch (e) {}
 }
 // → Grund (Text), wenn die Anfrage nicht erlaubt ist; sonst ''. Setzt o.anonymous, wenn die Seite fremd ist.
 function guard(m, fromUrl) {
@@ -93,6 +122,10 @@ api.runtime.onConnect.addListener((port) => {
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
     try {
+      await netGuard();
+      let allowId = 0;
+      try { const h = new URL(m.url).hostname; if (privateHost(h)) allowId = await allowHost(h); } catch (e) {}   // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort)
+      m.allowId = allowId;
       if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
@@ -137,6 +170,7 @@ api.runtime.onConnect.addListener((port) => {
     } finally {
       clearTimeout(tm);
       dropRule(rule); rule = 0;
+      if (m.allowId) dropAllow(m.allowId);
     }
   });
 });

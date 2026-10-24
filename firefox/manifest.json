@@ -32,6 +32,8 @@
     "storage",
     "declarativeNetRequestWithHostAccess",
     "webRequest",
+    "webRequestBlocking",
+    "dns",
     "<all_urls>"
   ],
   "content_scripts": [

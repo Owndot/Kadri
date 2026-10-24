@@ -11,6 +11,7 @@ B = 'http://127.0.0.1:%d/' % PORT
 R = 'document.querySelector("[data-kadri-test]").shadowRoot'   # Oberfläche des Players (nur im Test-Bau offen)
 
 results = []
+SECRET_HITS = []   # Anfragen an /secret (darf Kadri über eine Weiterleitung nie erreichen)
 def check(name, ok, info=''):
     results.append(bool(ok))
     print(('OK   ' if ok else 'FAIL ') + name + ('  – ' + str(info) if info != '' else ''), flush=True)
@@ -26,6 +27,13 @@ class Q(http.server.SimpleHTTPRequestHandler):
             self.send_header('Permissions-Policy', 'picture-in-picture=(), camera=()')
         super().end_headers()
     def send_head(self):
+        # Weiterleitung ins eigene Netz (für den Schutz-Test): öffentliche Adresse → 127.0.0.1
+        p0 = self.path.split('?')[0]
+        if p0 == '/redir-lan':
+            self.send_response(302); self.send_header('Location', 'http://127.0.0.1:%d/secret' % PORT); self.send_header('Content-Length', '0'); self.end_headers()
+            return None
+        if p0 == '/secret':
+            SECRET_HITS.append(self.headers.get('Host', ''))
         # /stream/…: dieselben Dateien wie hls/, aber die Haupt-Liste OHNE Endung (nur am Content-Type erkennbar)
         p0 = self.path.split('?')[0]
         if p0.startswith('/stream/'):
@@ -91,11 +99,11 @@ threading.Thread(target=hsrv.serve_forever, daemon=True).start()
 def hcalls(path): return [c for c in helper['calls'] if c[0] == path]
 
 # ---------- Chromium mit der Erweiterung ----------
-def launch(p, user_dir=None):
+def launch(p, user_dir=None, extra_args=None):
     user_dir = user_dir or tempfile.mkdtemp(prefix='kadri-')
     ctx = p.chromium.launch_persistent_context(
         user_dir, headless=False,
-        args=['--disable-extensions-except=' + EXT, '--load-extension=' + EXT, '--autoplay-policy=no-user-gesture-required'],
+        args=['--disable-extensions-except=' + EXT, '--load-extension=' + EXT, '--autoplay-policy=no-user-gesture-required'] + (extra_args or []),
         viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale='de-DE')
     # Hintergrund der Erweiterung abwarten (startet manchmal erst spät – dann einmal eine Seite öffnen und weiter warten)
     sw = ctx.service_workers[0] if ctx.service_workers else None

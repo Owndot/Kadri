@@ -27,6 +27,7 @@ async function refererRule(url, ref) {
     return id;
   } catch (e) { return 0; }
 }
+function dropAllow(id) { dropRule(id); }
 function dropRule(id) {
   if (!id) return;
   try { api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch (e) {}
@@ -53,6 +54,40 @@ function privateHost(h) {
   if (!m) return false;
   const a = +m[1], b = +m[2];
   return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+}
+// ---------- Schutz auf Netzwerk-Ebene: Kadris eigene Anfragen kommen nie ins eigene Netz ----------
+// Die Prüfung oben sieht nur die erste Adresse. Leitet ein Server weiter (öffentliche Adresse → Router), hätte die
+// Anfrage das Ziel schon erreicht, bevor Kadri es merkt. Darum eine Regel des Browsers: Anfragen, die nicht aus einem
+// Tab kommen (= Kadris eigene), dürfen keine Adresse im eigenen Netz erreichen – auch nicht nach einer Weiterleitung.
+// Ausnahmen: die Helfer-App, und für die Dauer einer Anfrage die Adresse einer Seite, die selbst im eigenen Netz liegt.
+// (Chrome erlaubt pro Regel nur einfache Muster – darum je Adressbereich eine Regel)
+const UI = '^https?://(?:[^/@]+@)?';
+const O = '[0-9]{1,3}', E = '(?:[:/?#]|$)';
+const PRIVATE_RES = ['127\\.' + O + '\\.' + O + '\\.' + O + E, '10\\.' + O + '\\.' + O + '\\.' + O + E, '192\\.168\\.' + O + '\\.' + O + E,
+  '172\\.(?:1[6-9]|2[0-9]|3[01])\\.' + O + '\\.' + O + E, '169\\.254\\.' + O + '\\.' + O + E, '0\\.' + O + '\\.' + O + '\\.' + O + E,
+  '100\\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.' + O + '\\.' + O + E, '\\[(?:::1|::|::ffff:[^\\]]*|f[cd][0-9a-f]{2}:[^\\]]*|fe80:[^\\]]*)\\]' + E];
+const NET_RULES = [{ id: 50, priority: 10, action: { type: 'allow' }, condition: { regexFilter: '^http://127\\.0\\.0\\.1:47811/', tabIds: [-1] } }]
+  .concat(PRIVATE_RES.map((re, i) => ({ id: 51 + i, priority: 5, action: { type: 'block' }, condition: { regexFilter: UI + re, tabIds: [-1] } })))
+  .concat([{ id: 70, priority: 5, action: { type: 'block' }, condition: { requestDomains: ['localhost', 'local', 'internal', 'lan'], tabIds: [-1] } }]);
+let netReady = null;
+function netGuard() {
+  const dnr = api.declarativeNetRequest;
+  if (!dnr || !dnr.updateSessionRules) return Promise.resolve();
+  if (!netReady) netReady = dnr.updateSessionRules({ removeRuleIds: NET_RULES.map((r) => r.id), addRules: NET_RULES }).catch(() => {});
+  return netReady;
+}
+netGuard();
+// Seite liegt selbst im eigenen Netz (Medienserver zu Hause): diese eine Adresse für die Dauer der Anfrage erlauben
+async function allowHost(host) {
+  const dnr = api.declarativeNetRequest;
+  if (!dnr || !dnr.updateSessionRules) return 0;
+  const id = nextRule++;
+  if (nextRule > 900000) nextRule = 1000;
+  try {
+    await dnr.updateSessionRules({ removeRuleIds: [id], addRules: [{ id, priority: 20, action: { type: 'allow' },
+      condition: { regexFilter: '^https?://(?:[^/@]*@)?' + esc(host) + '(?:[:/?#]|$)', tabIds: [-1] } }] });
+    return id;
+  } catch (e) { return 0; }
 }
 // → Grund (Text), wenn die Anfrage nicht erlaubt ist; sonst ''. Setzt o.anonymous, wenn die Seite fremd ist.
 function guard(m, fromUrl) {
@@ -94,6 +129,10 @@ api.runtime.onConnect.addListener((port) => {
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
     try {
+      await netGuard();
+      let allowId = 0;
+      try { const h = new URL(m.url).hostname; if (privateHost(h)) allowId = await allowHost(h); } catch (e) {}   // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort)
+      m.allowId = allowId;
       if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
@@ -138,6 +177,7 @@ api.runtime.onConnect.addListener((port) => {
     } finally {
       clearTimeout(tm);
       dropRule(rule); rule = 0;
+      if (m.allowId) dropAllow(m.allowId);
     }
   });
 });
