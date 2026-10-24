@@ -9,6 +9,7 @@ with sync_playwright() as p:
     opening=pg.evaluate('''()=>{const v=document.getElementById("v");v.pause();v.muted=false;
       const t=Math.min(10,v.duration/2);v.currentTime=t;return t;}''')
     pg.wait_for_function('()=>!document.getElementById("v").seeking')
+    pg.wait_for_selector('[data-kadri-test]',state='attached')
     pg.wait_for_function('() => !!%s.querySelector("button[aria-label=\\"Im Videoplayer öffnen\\"]")'%R)
     pg.evaluate('() => %s.querySelector("button[aria-label=\\"Im Videoplayer öffnen\\"]").click()'%R)
     pg.wait_for_function('()=>{const v=%s.querySelector(".vv");return v&&v.readyState>=2&&v.currentTime>1;}'%R)
