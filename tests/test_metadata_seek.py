@@ -5,7 +5,10 @@ with sync_playwright() as p:
     ctx,sw,_=launch(p)
     pg=ctx.new_page();errors=[];pg.on('pageerror',lambda e:errors.append(str(e)))
     pg.goto(B+'direct.html')
-    pg.wait_for_function('document.getElementById("v").readyState>=2 && document.getElementById("v").duration>4')
+    pg.wait_for_function('document.getElementById("v").readyState>=2 && document.getElementById("v").duration>4 && document.getElementById("v").currentTime>0.8')
+    pg.evaluate("()=>{document.getElementById('v').muted=false;}")
+    pg.wait_for_selector('[data-kadri-test]',state='attached')
+    pg.wait_for_function('() => !!%s.querySelector("button[aria-label=\\"Im Videoplayer öffnen\\"]")'%R)
     opening=pg.evaluate('''()=>{const v=document.getElementById("v");v.pause();v.muted=false;
       const t=Math.min(10,v.duration/2);v.currentTime=t;return t;}''')
     pg.wait_for_function('()=>!document.getElementById("v").seeking')
