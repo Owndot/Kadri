@@ -3,13 +3,14 @@
 // This tests lifecycle isolation, not Chrome's implementation of DNR.
 async function runHeaderTests(source, runtime) {
   const { URL, AbortController, setTimeout, clearTimeout } = runtime;
+  const encode64 = (s) => { const abc='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'; let out=''; for(let i=0;i<s.length;i+=3){const a=s.charCodeAt(i),b=s.charCodeAt(i+1),c=s.charCodeAt(i+2);out+=abc[a>>2]+abc[((a&3)<<4)|(isNaN(b)?0:b>>4)]+(isNaN(b)?'=':abc[((b&15)<<2)|(isNaN(c)?0:c>>6)])+(isNaN(c)?'=':abc[c&63]);} return out; };
   const assert = (v, m) => { if (!v) throw new Error(m); };
   const tick = async () => { for (let i=0;i<60;i++) await Promise.resolve(); };
   const deferred = () => { let resolve; const promise = new Promise(r=>{resolve=r;}); return {promise,resolve}; };
   const output=[];
   function setup(initial=[], failing=false, code=source) {
     const rules=new Map(initial.map(r=>[r.id,r])), calls=[];
-    let connect, hold=null, body=null, failCleanup=false, stalled=null;
+    let connect, hold=null, body=null, failCleanup=false, stalled=null, binary=0;
     const event=()=>({addListener(){}});
     const chrome={runtime:{id:'test',onConnect:{addListener(f){connect=f;}},onMessage:event()},
       action:{onClicked:event()},declarativeNetRequest:{
@@ -39,19 +40,27 @@ async function runHeaderTests(source, runtime) {
       const exempt=strip?.condition.excludedRequestDomains?.some(d=>domain===d || domain.endsWith('.'+d));
       call.headers={cookie:o.credentials==='include' && exempt?'cookie':'',auth:exempt?(o.headers.Authorization||''):''};
       if(target.includes('127.0.0.1') && target!==u) call.localReached=true;
-      return {status:200,statusText:'OK',url:target,headers:new Map(),text:()=>body?body.promise:Promise.resolve('ok')};
+      let remaining=binary;
+      const stream=binary?{getReader(){return {async read(){
+        if(body)await body.promise;
+        if(o.signal.aborted)throw new Error('abort');
+        if(!remaining)return {done:true};
+        const value=new Uint8Array(Math.min(262144,remaining)); remaining-=value.length;
+        return {done:false,value};
+      }};}}:null;
+      return {status:200,statusText:'OK',url:target,headers:new Map(),body:stream,text:()=>body?body.promise:Promise.resolve('ok')};
     };
     const pslBase=h=>h;
-    new Function('chrome','fetch','URL','AbortController','setTimeout','clearTimeout','importScripts','pslBase','globalThis',code)
-      (chrome,fetch,URL,AbortController,setTimeout,clearTimeout,()=>{},pslBase,{chrome});
+    new Function('chrome','fetch','URL','AbortController','setTimeout','clearTimeout','importScripts','pslBase','globalThis','btoa',code)
+      (chrome,fetch,URL,AbortController,setTimeout,clearTimeout,()=>{},pslBase,{chrome},encode64);
     function req(from,url,extra={}) {
       const end=deferred(),messages=[];let listener,disconnect;
       connect({name:'kadri-xhr',sender:{url:from},onMessage:{addListener(f){listener=f;}},onDisconnect:{addListener(f){disconnect=f;}},
-        postMessage(m){messages.push(m);if(m.t==='done'||m.t==='error')end.resolve(m);}});
+        postMessage(m){messages.push(m.t==='chunk'?{t:m.t,bytes:m.b.length*3/4-(m.b.endsWith('==')?2:m.b.endsWith('=')?1:0)}:m);if(m.t==='done'||m.t==='error')end.resolve(m);}});
       listener({t:'req',url,headers:{Authorization:'test-auth'},...extra});
       return {done:end.promise,messages,abort(){listener({t:'abort'});},disconnect(){disconnect();}};
     }
-    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
+    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},setBinary(n){binary=n;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
   }
   {
     const h=setup(),d=deferred();h.setHold(d);await tick();
@@ -165,6 +174,15 @@ async function runHeaderTests(source, runtime) {
     const b=await h.req('https://b.test/page','https://b.test/check').done;
     assert(b.t==='done','header timeout retained gate');
     output.push('delayed headers time out without a body deadline');
+  }
+  {
+    const h=setup(),d=deferred(); h.setBinary(8*1024*1024);h.setBody(d);await tick();
+    const a=h.req('https://a.test/page','https://a.test/file',{responseType:'blob'});
+    const b=h.req('https://b.test/page','https://b.test/file',{responseType:'arraybuffer'});
+    await tick();assert(h.calls.length===2,'binary streams not parallel');
+    d.resolve();await Promise.all([a.done,b.done]);
+    for(const r of [a,b])assert(r.messages.filter(m=>m.t==='chunk').reduce((n,m)=>n+m.bytes,0)===8*1024*1024,'binary bytes lost');
+    output.push('two 8 MiB binary downloads stream concurrently');
   }
   return output;
 }

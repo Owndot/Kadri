@@ -12,6 +12,7 @@ R = 'document.querySelector("[data-kadri-test]").shadowRoot'   # Oberfläche des
 
 results = []
 SECRET_HITS = []   # Anfragen an /secret (darf Kadri über eine Weiterleitung nie erreichen)
+HEADER_BARRIERS = {}  # tag -> Event, explicit server-side header release
 HDR_HITS = []      # Anfragen an /hdr?tag=…: welche Header kamen tatsächlich beim Server an (Host, Cookie, Authorization)
 def check(name, ok, info=''):
     results.append(bool(ok))
@@ -41,7 +42,13 @@ class Q(http.server.SimpleHTTPRequestHandler):
                 HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
             if p0 == '/slow':
                 HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
-                time.sleep(int(q.get('ms', '1000')) / 1000)
+                barrier = HEADER_BARRIERS.get(q.get('tag', ''))
+                if barrier is not None:
+                    if not barrier.wait(10):
+                        self.send_error(504, 'test barrier not released')
+                        return None
+                else:
+                    time.sleep(int(q.get('ms', '1000')) / 1000)
             if p0 == '/redir':
                 self.send_response(302); self.send_header('Location', q.get('to', '/')); self.send_header('Content-Length', '0'); self.end_headers()
                 return None
