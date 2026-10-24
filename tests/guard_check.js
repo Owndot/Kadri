@@ -5,13 +5,22 @@ const file = process.argv[2];
 let onConnect = null;
 const calls = [];
 const ev = () => ({ addListener() {} });
-const chrome = { runtime: { id: 'x', onConnect: { addListener: (f) => { onConnect = f; } }, onMessage: ev() },
-  action: { onClicked: ev() }, tabs: { onRemoved: ev(), sendMessage() {} }, webRequest: { onHeadersReceived: ev() },
-  declarativeNetRequest: { updateSessionRules: async () => {} }, scripting: {} };
+const rules = new Map();   // nachgebaute Sitzungsregeln
+let failRules = false;
+const chrome = { runtime: { id: 'x', getURL: (p) => 'moz-extension://abc/' + p, onConnect: { addListener: (f) => { onConnect = f; } }, onMessage: ev() },
+  action: { onClicked: ev() }, tabs: { onRemoved: ev(), sendMessage() {} },
+  webRequest: { onHeadersReceived: ev(), onBeforeRequest: ev(), onBeforeSendHeaders: ev(), onCompleted: ev(), onErrorOccurred: ev() },
+  declarativeNetRequest: {
+    updateSessionRules: async (o) => { if (failRules) throw new Error('kaputt'); (o.removeRuleIds || []).forEach((id) => rules.delete(id)); (o.addRules || []).forEach((r) => rules.set(r.id, r)); },
+    getSessionRules: async () => Array.from(rules.values()) }, scripting: {} };
 const ctx = { chrome, globalThis: null, console, URL, AbortController, setTimeout, clearTimeout, btoa, atob, TextEncoder,
-  fetch: async (u, o) => { calls.push({ u, cred: o.credentials, method: o.method || 'GET' }); return { status: 200, statusText: 'OK', url: u, headers: new Map([['content-type', 'text/plain']]), text: async () => 'ok' }; } };
+  fetch: async (u, o) => { calls.push({ u, cred: o.credentials, method: o.method || 'GET', redirect: o.redirect }); return { status: 200, statusText: 'OK', url: u, headers: new Map([['content-type', 'text/plain']]), text: async () => 'ok' }; } };
 ctx.globalThis = ctx;
-vm.runInNewContext(fs.readFileSync(file, 'utf8'), ctx);
+vm.createContext(ctx);
+const PSL = path.join(path.dirname(file), '..', 'vendor', 'psl.js');
+ctx.importScripts = (f) => vm.runInContext(fs.readFileSync(f === 'psl.js' ? PSL : f, 'utf8'), ctx);
+if (/firefox/.test(file)) ctx.importScripts('psl.js');   // (Firefox lädt psl.js vor background.js)
+vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
 function req(from, m) {
   return new Promise((res) => {
     const msgs = [];
@@ -40,9 +49,32 @@ function req(from, m) {
   await t('versteckt: 0x7f.1 (= 127.0.0.1): abgelehnt', 'https://www.example.com/', { url: 'http://0x7f.1:8080/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
   await t('versteckt: 2130706433 (= 127.0.0.1): abgelehnt', 'https://www.example.com/', { url: 'http://2130706433/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
   await t('versteckt: [::ffff:192.168.0.1]: abgelehnt', 'https://www.example.com/', { url: 'http://[::ffff:192.168.0.1]/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
-  await t('Helfer-App 127.0.0.1:47811: erlaubt (auch POST)', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/vol?v=1', method: 'POST' }, (f, c) => f && c.method === 'POST');
+  await t('Helfer-App 127.0.0.1:47811: erlaubt (auch POST), ohne Cookies', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/vol?v=1', method: 'POST' }, (f, c) => f && c.method === 'POST' && c.cred === 'omit');
   await t('POST an fremde Server: abgelehnt', 'https://www.example.com/', { url: 'https://www.example.com/api', method: 'POST' }, (f, c, e) => !f && /nur GET/.test(e));
   await t('file:/data: abgelehnt', 'https://www.example.com/', { url: 'file:///etc/passwd' }, (f, c, e) => !f && /http/.test(e));
   await t('Seite selbst im eigenen Netz: dorthin erlaubt', 'http://192.168.0.5:8096/web', { url: 'http://192.168.0.5:8096/Videos/1' }, (f, c) => f && c.cred === 'include');
+  await t('eu.org (Public Suffix List): fremde Unterseite bekommt keine Anmeldung', 'https://alice.eu.org/video', { url: 'https://bob.eu.org/x.vtt' }, (f, c) => f && c.cred === 'omit');
+  await t('Helfer-App: folgt keiner Weiterleitung', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/version' }, (f, c) => f && c.redirect === 'error');
+  await t('andere Anfragen folgen Weiterleitungen (Video-CDNs)', 'https://www.example.com/', { url: 'https://cdn.example.net/a.vtt' }, (f, c) => f && c.redirect === 'follow');
+  if (!/firefox/.test(file)) {
+    const ids = Array.from(rules.keys());
+    out.push(['Schutzregeln stehen (50, 51–58, 70, 80)', [50, 51, 58, 70, 80].every((i) => ids.includes(i)), JSON.stringify(ids)]);
+    const strip = rules.get(80);
+    out.push(['Regel 80 entfernt Cookie und Authorization', strip && JSON.stringify(strip.action).includes('cookie') && JSON.stringify(strip.action).includes('authorization'), JSON.stringify(strip)]);
+    // Medienserver: nur GENAU die Adresse wird freigegeben (keine Freigabe für den ganzen Server oder Port)
+    let seen = null;
+    const upd = chrome.declarativeNetRequest.updateSessionRules;
+    chrome.declarativeNetRequest.updateSessionRules = async (o) => { (o.addRules || []).forEach((r) => { if (r.priority === 20) seen = r; }); return upd(o); };
+    await req('http://192.168.0.5:8096/web', { url: 'http://192.168.0.5:8096/Videos/1?x=1' });
+    chrome.declarativeNetRequest.updateSessionRules = upd;
+    const re = seen && new RegExp(seen.condition.regexFilter);
+    out.push(['Medienserver: Freigabe nur für genau diese Adresse', re && re.test('http://192.168.0.5:8096/Videos/1?x=1') && !re.test('http://192.168.0.5:8096/admin') && !re.test('http://192.168.0.5:8080/Videos/1?x=1'), JSON.stringify(seen && seen.condition)]);
+    // Schutzregeln lassen sich nicht setzen: keine Anfragen hinaus, außer an die Helfer-App
+    failRules = true; rules.clear(); ctx.eval && 0;
+    vm.runInContext('netReady = null;', ctx);
+    await t('Schutzregeln fehlen: Anfrage wird nicht gestellt', 'https://www.example.com/', { url: 'https://www.example.com/a.vtt' }, (f, c, e) => !f && /Schutzregeln/.test(e));
+    await t('… Helfer-App weiter erreichbar (ohne Weiterleitung)', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/version' }, (f, c) => f && c.redirect === 'error');
+    failRules = false;
+  }
   out.forEach((o) => console.log((o[1] ? 'OK   ' : 'FAIL ') + o[0] + (o[1] ? '' : '  – ' + o[2])));
 })();

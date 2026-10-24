@@ -41,21 +41,48 @@ oder wenn die Seite selbst dort liegt; Weiterleitungen ins eigene Netz → Antwo
 Test `test_guard.py`. Nachrichten eingebetteter Fenster an die Hauptseite tragen einen Schlüssel (`frameKey`, siehe
 Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
 
-**Seit 1.12.13 zusätzlich auf Netz-Ebene** (greift auch bei Weiterleitungen, bevor die Anfrage das Gerät verlässt):
-Chrome mit Sitzungsregeln (`declarativeNetRequest`, nur für Anfragen der Erweiterung selbst – `tabIds: [-1]`): Regel 50
-erlaubt die Helfer-App, 51–58 sperren je einen privaten Bereich (127/8, 10/8, 192.168/16, 172.16/12, 169.254/16, 0/8,
-100.64/10, IPv6 in Klammern), 70 sperrt `localhost`/`.local`/`.internal`/`.lan`. (Ein einziger großer Ausdruck war
-übersetzt über 2 KB – Chrome lehnt das ab.) Liegt die Seite selbst im eigenen Netz, gibt `allowHost` genau diesen Host
-für die Dauer der Anfrage frei (Priorität 20). Firefox: blockierender `webRequest.onBeforeRequest` nur für eigene
-Anfragen (`tabId -1`, Herkunft die Erweiterung) plus `dns.resolve` – fängt auch Namen ab, die auf private Adressen
-zeigen. Dafür braucht Firefox die Rechte `webRequestBlocking` und `dns`. Bleibt offen: In Chrome kann ein Name, der erst
-beim Laden auf eine private Adresse zeigt (DNS-Rebinding), nicht vorab erkannt werden; Cookies werden bei
-Weiterleitungen auf fremde Seiten vom Browser selbst behandelt.
+**Auf Netz-Ebene** (seit 1.12.13, in 1.12.14 nach einer zweiten Prüfung an die einzelne Anfrage gebunden – greift
+auch bei Weiterleitungen, bevor ein Schritt das Gerät verlässt):
 
-Weitere Punkte aus der Prüfung (1.12.13): Schlüssel der eingebetteten Fenster gilt **je Seite** (aus dem Grundschlüssel
-und der Herkunft der Hauptseite – ein auf Seite A gestohlener Schlüssel nützt Werbung auf Seite B nichts);
-`baseDomain` kennt geteilte Endungen (`github.io` …) und `co.uk`-artige Länderendungen (Cookies nicht an fremde
-Unterseiten derselben Endung); binäre Daten an den Helfer kommen als Base64 an (`dataB64`, vorher
+- Chrome (Sitzungsregeln `declarativeNetRequest`, nur für Kadris eigene Anfragen – `tabIds: [-1]`): Regel 50 erlaubt
+  genau `http://127.0.0.1:47811/` (Helfer-Anfragen selbst folgen keiner Weiterleitung, `redirect: 'error'`), 51–58
+  sperren je einen privaten Bereich (127/8, 10/8, 192.168/16, 172.16/12, 169.254/16, 0/8, 100.64/10, IPv6 in Klammern),
+  70 sperrt `localhost`/`.local`/`.internal`/`.lan`. (Ein einziger großer Ausdruck war übersetzt über 2 KB – Chrome
+  lehnt das ab.) Liegt die Seite selbst im eigenen Netz (Medienserver), gibt `allowExact` für die Dauer der Anfrage
+  **genau deren Adresse** frei (Priorität 20) – nicht den Server oder Port: Chrome kann eine Regel nicht an eine
+  einzelne Anfrage binden, eine breitere Freigabe gälte auch für gleichzeitige fremde Anfragen, die dorthin
+  weiterleiten. Folge: Leitet der Medienserver selbst weiter, wird das (als unerwartet) gesperrt. 1.12.13 gab noch
+  `127.0.0.1` ganz frei, sobald der Helfer gefragt wurde – fast ständig; ein Versuch mit 18 von 18 gleichzeitigen
+  Weiterleitungen am Ziel hat das bestätigt (mit 1.12.14: 0).
+- Regel 80 (Priorität 30): entfernt `Cookie`, `Authorization`, `Proxy-Authorization` aus allen eigenen Anfragen –
+  außer zu Seiten, für die gerade eine angemeldete Anfrage läuft (`credSites`, `excludedRequestDomains`). Eine
+  angemeldete Anfrage, die zu einer anderen Seite weiterleitet, verliert die Anmeldung dort vor dem Absenden. Die
+  Gegenprobe in `test_redirect.py` zeigt: ohne die Regel schickte Chrome einen `SameSite=None`-Cookie mit.
+  Rest: Läuft gleichzeitig eine angemeldete Anfrage für genau die Seite, auf die weitergeleitet wird, bleibt dort die
+  Anmeldung (Chrome kann es nicht unterscheiden).
+- Lassen sich die Regeln nicht setzen (oder stehen sie danach nicht wirklich, `getSessionRules`), geht **keine**
+  Anfrage hinaus – außer an die Helfer-App ohne Weiterleitung. Nächster Versuch bei der nächsten Anfrage.
+- Firefox: blockierende `webRequest`-Listener nur für eigene Anfragen (`tabId -1`, Herkunft die Erweiterung). Jede
+  Anfrage behält über alle Weiterleitungen ihre `requestId`: Helfer und Medienserver-Adresse sind nur als **erste**
+  Adresse der Anfrage erlaubt, für die sie gedacht sind; `onBeforeSendHeaders` entfernt Cookie/Authorization bei jedem
+  Schritt zu einer anderen Seite als der ersten Adresse. Lässt sich ein Listener nicht setzen: keine Anfragen (außer
+  Helfer). Dazu `dns.resolve` (Name zeigt auf eine private Adresse?) – das **verringert** das Risiko von
+  DNS-Rebinding, schließt es aber nicht aus: Die Prüfung ist eine eigene Abfrage, wechselt die Antwort bis zum
+  Verbindungsaufbau, merkt Kadri das nicht. Rechte dafür: `webRequestBlocking`, `dns`.
+- Welche Adressen zu einer Seite gehören, entscheidet die offizielle **Public Suffix List** (`vendor/psl.js`, aus
+  `vendor/public_suffix_list.dat` mit `tools/make-psl.js`; Prüfwert in `BUILD-FOR-REVIEWERS.md`): `alice.eu.org` und
+  `bob.eu.org` sind verschiedene Seiten, `www.bbc.co.uk` und `cdn.bbc.co.uk` dieselbe. (Das Userscript allein hat
+  die Liste nicht – dort weiter die kurze Liste geteilter Endungen; in Kadri entscheidet der Hintergrund.)
+- Bleibt offen: Chrome kann nicht vorab erkennen, ob ein öffentlicher Name auf eine private Adresse zeigt (keine
+  DNS-Schnittstelle für Erweiterungen); eine Weiterleitung von fremder Seite auf die Helfer-App (Regel 50) kann Chrome
+  nicht von einer echten Helfer-Anfrage unterscheiden – die Helfer-App beantwortet aber nichts ohne ihren Schlüssel
+  (`X-EVP-Key`), und eine Weiterleitung kann keine Header setzen.
+
+Weitere Punkte aus den Prüfungen (1.12.13/1.12.14): Schlüssel der eingebetteten Fenster gilt **je Seite** (aus dem
+Grundschlüssel und der Herkunft der Hauptseite, die nur der Browser kennt – `location.ancestorOrigins`; ein auf Seite A
+gestohlener Schlüssel nützt Werbung auf Seite B nichts). Browser ohne `ancestorOrigins` (Firefox vor 2026, ESR) bekommen
+seit 1.12.14 **keinen** Schlüssel mehr statt des gemeinsamen – der Player in eingebetteten Fenstern füllt dort nur
+deren Kasten; binäre Daten an den Helfer kommen als Base64 an (`dataB64`, vorher
 „[object ArrayBuffer]“); Diagnose blendet Werte in Adressen aus (`maskUrls`); `page.js` liest höchstens 4 MB einer
 Antwort mit (Länge vorab, sonst Stück für Stück mit Abbruch); Blob-Downloads ohne zweite Kopie im Speicher.
 
@@ -121,8 +148,9 @@ TESTS=test_helper.py tests/run_all.sh
 | `test_detect.py` | Stream ohne .m3u8 im Namen (nur Content-Type) → vom Hintergrund gemeldet → eigener Player (ohne: nur Spiegeln) |
 | `test_pipall.py` | Seite verbietet Bild-in-Bild (Permissions-Policy wie Facebook) → mit Kadri erlaubt, Knopf öffnet das kleine Fenster; andere Verbote bleiben |
 | `test_lazy.py` | hls.js nicht auf jeder Seite, kein webRequest; eingebettete Fenster: ohne Video kein Kadri, mit Video sofort, später auftauchendes Video → dann; Player im Fenster füllt den Bildschirm |
-| `test_guard.py` | Schutzregeln für Anfragen (beide Browser, ohne Browser geprüft) |
+| `test_guard.py` | Schutzregeln für Anfragen (beide Browser, ohne Browser geprüft; Firefox: Ausnahmen je Anfrage, Header bei Weiterleitung, ohne Listener nichts hinaus) |
 | `test_attack.py` | Angriffe einer bösen Seite: Werbung will sich als Player groß machen, Programmcode im Titel, gefälschte Mitlese-Meldungen (30 MB …), falsche Koppel-Seite |
+| `test_redirect.py` | echte Anfragen über Kadri mit zwei Test-Seiten (a.test, HTTPS-b.test): Cookie und Authorization nur an die eigene Seite, nie nach Weiterleitung an eine andere (mit Gegenprobe ohne Regel); Helfer-Abfrage + gleichzeitige Weiterleitung ins eigene Netz; Medienserver + gleichzeitige fremde Weiterleitung; Schutzregeln fehlen → nichts hinaus |
 | `test_lan.py` | Netz-Ebene: Regeln aktiv, öffentliche Seite erreichbar, Weiterleitung und direkte Anfrage ins eigene Netz gesperrt (kein Treffer auf dem Server), Untertitel einer Seite im eigenen Netz laden trotzdem |
 | `test_proxy.py` | „Über den Browser laden“ und Download ohne Helfer: Byte für Byte die Datei |
 | `test_menu.py` | Menü: Seite aus/an (nach Neuladen), Helfer-Zustand; Einstellungsseite: Werte gelten im Player (auch „Spul-Lupe“), Seitenliste gespeichert |
@@ -131,6 +159,7 @@ TESTS=test_helper.py tests/run_all.sh
 
 | Version | Skript | Was |
 |---|---|---|
+| 1.12.14 | 19.28 | Zweite Prüfung: Freigaben im eigenen Netz nur noch für genau die eine Anfrage (Helfer ohne Weiterleitung, Medienserver nur genau die Adresse; Firefox je `requestId`), Cookies/Authorization fallen bei Weiterleitung zu einer anderen Seite weg (Chrome Regel 80, Firefox `onBeforeSendHeaders`), Public Suffix List, fehlen die Schutzregeln → keine Anfragen, Fenster-Schlüssel ohne `ancestorOrigins` gar nicht statt gemeinsam, Diagnose maskiert vor dem Kürzen. Tests `test_redirect.py`, `test_guard.py` erweitert |
 | 1.12.13 | 19.27 | Sicherheit und Speicher nach einer Prüfung: Sperre fürs eigene Netz auf Netz-Ebene (auch Weiterleitungen; Firefox braucht dafür `webRequestBlocking` und `dns`), Fenster-Schlüssel je Seite, `baseDomain` mit geteilten Endungen, Binärdaten an den Helfer korrekt, Diagnose ohne Werte in Adressen, Mitlesen höchstens 4 MB, Blob ohne Doppel-Kopie, Vorschaubilder nach Größe begrenzt, Stream-Raster nicht im Datensparmodus. Tests `test_lan.py`, `test_proxy.py`, `test_attack.py` (gestohlener Schlüssel) |
 | 1.12.12 | 19.26 | Vibration funktioniert ohne frisches Antippen (Lupe, Anfang/Ende), neu beim Abbrechen; Hinweis kurz „Abbrechen“ |
 | 1.12.11 | 19.25 | Ambient-Licht gleich beim Öffnen (schneller eingeblendet), Zurück-Geste blendet den Player sofort aus |

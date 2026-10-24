@@ -21,3 +21,11 @@
   with the version from `package.json`.
 - `vendor/hls.min.js` is the unmodified official hls.js 1.7.3 release (Apache-2.0),
   SHA-256 a12e7ee1cd64a69dcdb314157e45dafcba705bfb0b1440b7935cb265d374423e.
+- `vendor/public_suffix_list.dat` is the unmodified official Public Suffix List (https://publicsuffix.org,
+  Mozilla Public License 2.0; from https://github.com/publicsuffix/list, commit
+  8437e5262f13305f94087abe699b4fe2be1d1de8),
+  SHA-256 d3e6243b51695327984abb3e2a5aa7077096867f75121e031e6a5a3840ca8bcd.
+  `vendor/psl.js` (copied unchanged into the package as `psl.js`) is generated from it by `node tools/make-psl.js`:
+  comments are dropped, rules are lowercased and converted to Punycode (`url.domainToASCII`), plus a small
+  readable lookup function. It is committed so the build does not depend on the Node.js ICU version; running
+  `node tools/make-psl.js` reproduces it.

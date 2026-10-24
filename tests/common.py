@@ -12,6 +12,7 @@ R = 'document.querySelector("[data-kadri-test]").shadowRoot'   # Oberfläche des
 
 results = []
 SECRET_HITS = []   # Anfragen an /secret (darf Kadri über eine Weiterleitung nie erreichen)
+HDR_HITS = []      # Anfragen an /hdr?tag=…: welche Header kamen tatsächlich beim Server an (Host, Cookie, Authorization)
 def check(name, ok, info=''):
     results.append(bool(ok))
     print(('OK   ' if ok else 'FAIL ') + name + ('  – ' + str(info) if info != '' else ''), flush=True)
@@ -34,6 +35,21 @@ class Q(http.server.SimpleHTTPRequestHandler):
             return None
         if p0 == '/secret':
             SECRET_HITS.append(self.headers.get('Host', ''))
+        q = dict(urllib.parse.parse_qsl(self.path.partition('?')[2]))
+        if p0 in ('/hdr', '/redir', '/setc', '/slow'):
+            if p0 == '/hdr':
+                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
+            if p0 == '/slow': time.sleep(int(q.get('ms', '1000')) / 1000)
+            if p0 == '/redir':
+                self.send_response(302); self.send_header('Location', q.get('to', '/')); self.send_header('Content-Length', '0'); self.end_headers()
+                return None
+            body = b'ok'
+            self.send_response(200); self.send_header('Content-Type', 'text/plain')
+            if p0 == '/setc':   # Cookie der Seite (für alle Unteradressen, wenn d= angegeben)
+                self.send_header('Set-Cookie', 'c=%s; Path=/%s%s' % (q.get('v', '1'), ('; Domain=' + q['d']) if q.get('d') else '', '; SameSite=None; Secure' if q.get('s') else ''))
+            self.send_header('Content-Length', str(len(body))); self.end_headers()
+            import io
+            return io.BytesIO(body)
         # /stream/…: dieselben Dateien wie hls/, aber die Haupt-Liste OHNE Endung (nur am Content-Type erkennbar)
         p0 = self.path.split('?')[0]
         if p0.startswith('/stream/'):

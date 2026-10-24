@@ -26,7 +26,6 @@ async function refererRule(url, ref) {
     return id;
   } catch (e) { return 0; }
 }
-function dropAllow(host) { const n = (allowedHosts.get(host) || 1) - 1; if (n > 0) allowedHosts.set(host, n); else allowedHosts.delete(host); }
 function dropRule(id) {
   if (!id) return;
   try { api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch (e) {}
@@ -40,20 +39,9 @@ function dropRule(id) {
 //  - Anmeldung (Cookies) nur an die Seite selbst (gleiche Domain wie das Fenster, aus dem die Anfrage kommt) –
 //    Video-Server, Untertitel-Server usw. bekommen sie nicht
 const HELPER_ORIGIN = 'http://127.0.0.1:47811';
-// angreifer.github.io und opfer.github.io sind verschiedene Seiten: Adressen, unter denen viele FREMDE Betreiber eigene
-// Seiten haben, zählen als eigene Endung (wie co.uk)
-const SHARED_SUFFIX = ['github.io', 'gitlab.io', 'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
-  'herokuapp.com', 'appspot.com', 'blogspot.com', 'azurewebsites.net', 'cloudfront.net', 's3.amazonaws.com', 'onrender.com', 'fly.dev',
-  'glitch.me', 'repl.co', 'surge.sh', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'myshopify.com', 'wixsite.com', 'wordpress.com',
-  'tumblr.com', 'neocities.org', 'r2.dev', 'b-cdn.net', 'translate.goog', 'carrd.co', 'webflow.io', 'framer.app', 'notion.site'];
-const baseDomain = (host) => {
-  const h = String(host || '').toLowerCase().replace(/\.$/, '');
-  if (/^[\d.]+$/.test(h) || h.indexOf(':') >= 0) return h;   // IP-Adresse: nur sie selbst
-  const p = h.split('.');
-  for (const s of SHARED_SUFFIX) if (h === s || h.endsWith('.' + s)) return p.slice(-(s.split('.').length + 1)).join('.');
-  // co.uk, com.au, … (zweite Stufe kurz, Land zweistellig)
-  return p.length > 2 && p[p.length - 1].length === 2 && p[p.length - 2].length <= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
-};
+// Welche Adressen gehören zur selben Seite? Nach der offiziellen Public Suffix List (psl.js, vor diesem Skript geladen):
+// www.bbc.co.uk und cdn.bbc.co.uk ja – angreifer.github.io und opfer.github.io, alice.eu.org und bob.eu.org nicht.
+const baseDomain = (host) => pslBase(host);
 function privateHost(h) {
   h = String(h || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.lan') || h === '0.0.0.0') return true;
@@ -69,27 +57,54 @@ function privateHost(h) {
 // Weiterleitung) vor dem Absenden geprüft – in Firefox zusätzlich, wohin der Name wirklich zeigt (eine öffentliche
 // Adresse, die auf ein Gerät zu Hause zeigt, fällt so auch auf). Ausnahmen: die Helfer-App, und für die Dauer einer
 // Anfrage die Adresse einer Seite, die selbst im eigenen Netz liegt.
-const allowedHosts = new Map();   // Adresse → Zahl laufender Anfragen
-let netReady = Promise.resolve();
-const netGuard = () => netReady;
-function allowHost(host) { allowedHosts.set(host, (allowedHosts.get(host) || 0) + 1); return Promise.resolve(host); }
+// Firefox kann jede einzelne Anfrage über alle Weiterleitungen verfolgen (gleiche requestId). So gilt jede Ausnahme nur
+// für die Anfrage, für die sie gedacht ist:
+//  - Helfer-App: nur als ERSTE Adresse einer Anfrage (eine fremde Anfrage, die dorthin weiterleitet, wird gesperrt)
+//  - Seite im eigenen Netz (Medienserver zu Hause): nur GENAU die angefragte Adresse als erste Adresse – gleichzeitige
+//    fremde Anfragen, die dorthin weiterleiten, bleiben gesperrt; Weiterleitungen des Medienservers selbst ebenso
+//  - Cookies/Authorization: nur an die Seite der ersten Adresse; ein Schritt zu einer anderen Seite verliert sie,
+//    bevor er abgeschickt wird
+// Die zusätzliche DNS-Prüfung (Name zeigt auf eine private Adresse?) VERRINGERT das Risiko von DNS-Rebinding nur: Sie ist
+// eine eigene Abfrage – wechselt die Antwort zwischen Prüfung und Verbindung, merkt Kadri das nicht.
+const allowedUrls = new Map();   // genaue Adresse → Zahl laufender Anfragen
+const firstUrl = new Map();      // requestId → erste Adresse der Anfrage
+const noHash = (u) => String(u).split('#')[0];
+let netOk = false;
+const netGuard = () => Promise.resolve(netOk);
+function allowExact(u) { u = noHash(u); allowedUrls.set(u, (allowedUrls.get(u) || 0) + 1); return Promise.resolve(u); }
+function dropExact(u) { const n = (allowedUrls.get(u) || 1) - 1; if (n > 0) allowedUrls.set(u, n); else allowedUrls.delete(u); }
 function privateIp(ip) {
   ip = String(ip || '').toLowerCase();
   return privateHost(ip) || /^::ffff:/.test(ip);
 }
-if (api.webRequest && api.webRequest.onBeforeRequest) {
+if (api.webRequest && api.webRequest.onBeforeRequest && api.webRequest.onBeforeSendHeaders) {
   try {
     const own = (d) => d.tabId === -1 && String(d.originUrl || d.documentUrl || '').startsWith(api.runtime.getURL(''));
+    const ALL = { urls: ['http://*/*', 'https://*/*'] };
     api.webRequest.onBeforeRequest.addListener((d) => {
       if (!own(d)) return {};
+      if (!firstUrl.has(d.requestId)) { if (firstUrl.size > 2000) firstUrl.clear(); firstUrl.set(d.requestId, d.url); }
+      const first = firstUrl.get(d.requestId) === d.url;
       let u;
       try { u = new URL(d.url); } catch (e) { return { cancel: true }; }
-      if (u.origin === HELPER_ORIGIN || allowedHosts.has(u.hostname)) return {};
+      if (u.origin === HELPER_ORIGIN) return first ? {} : { cancel: true };
+      if (first && allowedUrls.has(noHash(d.url))) return {};
       if (privateHost(u.hostname)) return { cancel: true };
       if (!api.dns || !api.dns.resolve || /^[\d.]+$/.test(u.hostname) || u.hostname.includes(':')) return {};
       return api.dns.resolve(u.hostname).then((r) => ({ cancel: (r.addresses || []).some(privateIp) }), () => ({}));
-    }, { urls: ['http://*/*', 'https://*/*'] }, ['blocking']);
-  } catch (e) {}
+    }, ALL, ['blocking']);
+    api.webRequest.onBeforeSendHeaders.addListener((d) => {
+      if (!own(d)) return {};
+      let same = false;
+      try { same = baseDomain(new URL(firstUrl.get(d.requestId) || '').hostname) === baseDomain(new URL(d.url).hostname); } catch (e) {}
+      if (same) return {};
+      return { requestHeaders: (d.requestHeaders || []).filter((h) => !/^(cookie|authorization|proxy-authorization)$/i.test(h.name)) };
+    }, ALL, ['blocking', 'requestHeaders']);
+    const forget = (d) => { firstUrl.delete(d.requestId); };
+    api.webRequest.onCompleted.addListener(forget, ALL);
+    api.webRequest.onErrorOccurred.addListener(forget, ALL);
+    netOk = true;
+  } catch (e) { netOk = false; }
 }
 // → Grund (Text), wenn die Anfrage nicht erlaubt ist; sonst ''. Setzt o.anonymous, wenn die Seite fremd ist.
 function guard(m, fromUrl) {
@@ -104,6 +119,7 @@ function guard(m, fromUrl) {
   const meth = String(m.method || 'GET').toUpperCase();
   if (meth !== 'GET' && meth !== 'HEAD' && !helper) return 'nur GET';
   if (!helper && (!site || baseDomain(site) !== baseDomain(u.hostname))) m.anonymous = true;
+  m.site = site ? baseDomain(site) : '';
   return '';
 }
 
@@ -132,15 +148,17 @@ api.runtime.onConnect.addListener((port) => {
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
     try {
-      await netGuard();
+      const helper = new URL(m.url).origin === HELPER_ORIGIN;
+      // Schutz nicht aktiv (Listener ließ sich nicht setzen)? Dann nichts hinaus – außer an die Helfer-App, ohne Weiterleitung
+      if (!(await netGuard()) && !helper) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
       let allowId = 0;
-      try { const h = new URL(m.url).hostname; if (privateHost(h)) allowId = await allowHost(h); } catch (e) {}   // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort)
+      if (!helper && privateHost(new URL(m.url).hostname)) allowId = await allowExact(m.url);   // (Prüfung oben: Seite liegt selbst dort)
       m.allowId = allowId;
       if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store',
+        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store',
       });
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
@@ -180,7 +198,7 @@ api.runtime.onConnect.addListener((port) => {
     } finally {
       clearTimeout(tm);
       dropRule(rule); rule = 0;
-      if (m.allowId) dropAllow(m.allowId);
+      if (m.allowId) dropExact(m.allowId);
     }
   });
 });

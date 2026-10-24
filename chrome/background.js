@@ -5,6 +5,7 @@
 //  2. Den Menüeintrag „Diagnose anzeigen“ (Tipp auf das Kadri-Symbol bei den Erweiterungen).
 //  3. hls.js und Kadri in eingebetteten Fenstern erst bei Bedarf nachladen.
 'use strict';
+importScripts('psl.js');   // pslBase(): Public Suffix List (welche Adressen zur selben Seite gehören)
 const api = globalThis.browser || globalThis.chrome;
 
 // ---------- Referer setzen (fetch darf das nicht – dafür eine kurze Regel, nur für genau diese Anfrage) ----------
@@ -27,7 +28,6 @@ async function refererRule(url, ref) {
     return id;
   } catch (e) { return 0; }
 }
-function dropAllow(id) { dropRule(id); }
 function dropRule(id) {
   if (!id) return;
   try { api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch (e) {}
@@ -41,20 +41,9 @@ function dropRule(id) {
 //  - Anmeldung (Cookies) nur an die Seite selbst (gleiche Domain wie das Fenster, aus dem die Anfrage kommt) –
 //    Video-Server, Untertitel-Server usw. bekommen sie nicht
 const HELPER_ORIGIN = 'http://127.0.0.1:47811';
-// angreifer.github.io und opfer.github.io sind verschiedene Seiten: Adressen, unter denen viele FREMDE Betreiber eigene
-// Seiten haben, zählen als eigene Endung (wie co.uk)
-const SHARED_SUFFIX = ['github.io', 'gitlab.io', 'netlify.app', 'vercel.app', 'pages.dev', 'workers.dev', 'web.app', 'firebaseapp.com',
-  'herokuapp.com', 'appspot.com', 'blogspot.com', 'azurewebsites.net', 'cloudfront.net', 's3.amazonaws.com', 'onrender.com', 'fly.dev',
-  'glitch.me', 'repl.co', 'surge.sh', 'ngrok.io', 'ngrok-free.app', 'duckdns.org', 'myshopify.com', 'wixsite.com', 'wordpress.com',
-  'tumblr.com', 'neocities.org', 'r2.dev', 'b-cdn.net', 'translate.goog', 'carrd.co', 'webflow.io', 'framer.app', 'notion.site'];
-const baseDomain = (host) => {
-  const h = String(host || '').toLowerCase().replace(/\.$/, '');
-  if (/^[\d.]+$/.test(h) || h.indexOf(':') >= 0) return h;   // IP-Adresse: nur sie selbst
-  const p = h.split('.');
-  for (const s of SHARED_SUFFIX) if (h === s || h.endsWith('.' + s)) return p.slice(-(s.split('.').length + 1)).join('.');
-  // co.uk, com.au, … (zweite Stufe kurz, Land zweistellig)
-  return p.length > 2 && p[p.length - 1].length === 2 && p[p.length - 2].length <= 3 ? p.slice(-3).join('.') : p.slice(-2).join('.');
-};
+// Welche Adressen gehören zur selben Seite? Nach der offiziellen Public Suffix List (vendor/psl.js): www.bbc.co.uk und
+// cdn.bbc.co.uk ja – angreifer.github.io und opfer.github.io, alice.eu.org und bob.eu.org nicht. IP-Adressen nur sich selbst.
+const baseDomain = (host) => pslBase(host);
 function privateHost(h) {
   h = String(h || '').toLowerCase().replace(/^\[|\]$/g, '');
   if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.lan') || h === '0.0.0.0') return true;
@@ -68,7 +57,11 @@ function privateHost(h) {
 // Die Prüfung oben sieht nur die erste Adresse. Leitet ein Server weiter (öffentliche Adresse → Router), hätte die
 // Anfrage das Ziel schon erreicht, bevor Kadri es merkt. Darum eine Regel des Browsers: Anfragen, die nicht aus einem
 // Tab kommen (= Kadris eigene), dürfen keine Adresse im eigenen Netz erreichen – auch nicht nach einer Weiterleitung.
-// Ausnahmen: die Helfer-App, und für die Dauer einer Anfrage die Adresse einer Seite, die selbst im eigenen Netz liegt.
+// Ausnahmen: die Helfer-App (genau 127.0.0.1:47811 – ihre Anfragen folgen keiner Weiterleitung), und für die Dauer einer
+// Anfrage GENAU deren Adresse, wenn die Seite selbst im eigenen Netz liegt (Medienserver zu Hause). Eine Freigabe für
+// den ganzen Server oder Port gälte auch für gleichzeitige fremde Anfragen, die eine böse Seite dorthin umleitet –
+// Chrome kann eine Regel nicht an eine einzelne Anfrage binden. Darum nur die genaue Adresse: Leitet der Medienserver
+// selbst weiter, wird das (als unerwartet) gesperrt.
 // (Chrome erlaubt pro Regel nur einfache Muster – darum je Adressbereich eine Regel)
 const UI = '^https?://(?:[^/@]+@)?';
 const O = '[0-9]{1,3}', E = '(?:[:/?#]|$)';
@@ -78,25 +71,54 @@ const PRIVATE_RES = ['127\\.' + O + '\\.' + O + '\\.' + O + E, '10\\.' + O + '\\
 const NET_RULES = [{ id: 50, priority: 10, action: { type: 'allow' }, condition: { regexFilter: '^http://127\\.0\\.0\\.1:47811/', tabIds: [-1] } }]
   .concat(PRIVATE_RES.map((re, i) => ({ id: 51 + i, priority: 5, action: { type: 'block' }, condition: { regexFilter: UI + re, tabIds: [-1] } })))
   .concat([{ id: 70, priority: 5, action: { type: 'block' }, condition: { requestDomains: ['localhost', 'local', 'internal', 'lan'], tabIds: [-1] } }]);
+// Anmeldung nie an eine fremde Seite weiterreichen: Cookies und Authorization nehmen Kadris Anfragen nur zu Seiten mit,
+// für die gerade eine angemeldete Anfrage läuft (deren Seite = die Seite des Fensters). Leitet ein Server dorthin weiter,
+// wo man nicht angemeldet sein soll, entfernt der Browser die Header VOR dem Absenden dieses Schritts (Regel 80).
+const STRIP = 80, credSites = new Map();   // Seite → Zahl laufender angemeldeter Anfragen
+const stripRule = () => {
+  const cond = { tabIds: [-1] }, ex = Array.from(credSites.keys());
+  if (ex.length) cond.excludedRequestDomains = ex;
+  return { id: STRIP, priority: 30, condition: cond, action: { type: 'modifyHeaders', requestHeaders: ['cookie', 'authorization', 'proxy-authorization'].map((header) => ({ header, operation: 'remove' })) } };
+};
+let stripChain = Promise.resolve();
+const stripUpdate = () => (stripChain = stripChain.catch(() => {}).then(() => api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [STRIP], addRules: [stripRule()] })));
+// Schutzregeln setzen und prüfen, ob sie wirklich stehen. Klappt das nicht, gehen KEINE Anfragen hinaus (außer an
+// die Helfer-App, und die ohne Weiterleitung) – lieber kein Untertitel als ein ungeschützter Zugriff.
 let netReady = null;
 function netGuard() {
   const dnr = api.declarativeNetRequest;
-  if (!dnr || !dnr.updateSessionRules) return Promise.resolve();
-  if (!netReady) netReady = dnr.updateSessionRules({ removeRuleIds: NET_RULES.map((r) => r.id), addRules: NET_RULES }).catch(() => {});
+  if (!dnr || !dnr.updateSessionRules || !dnr.getSessionRules) return Promise.resolve(false);
+  if (!netReady) {
+    const want = NET_RULES.map((r) => r.id).concat(STRIP);
+    netReady = dnr.updateSessionRules({ removeRuleIds: want, addRules: NET_RULES.concat(stripRule()) })
+      .then(() => dnr.getSessionRules())
+      .then((have) => { const ids = new Set(have.map((r) => r.id)); return want.every((id) => ids.has(id)); })
+      .catch(() => false)
+      .then((ok) => { if (!ok) netReady = null; return ok; });   // nächstes Mal neu versuchen
+  }
   return netReady;
 }
 netGuard();
-// Seite liegt selbst im eigenen Netz (Medienserver zu Hause): diese eine Adresse für die Dauer der Anfrage erlauben
-async function allowHost(host) {
+const noHash = (u) => String(u).split('#')[0];
+// Seite liegt selbst im eigenen Netz (Medienserver zu Hause): GENAU diese Adresse für die Dauer der Anfrage erlauben
+async function allowExact(u) {
   const dnr = api.declarativeNetRequest;
-  if (!dnr || !dnr.updateSessionRules) return 0;
   const id = nextRule++;
   if (nextRule > 900000) nextRule = 1000;
   try {
     await dnr.updateSessionRules({ removeRuleIds: [id], addRules: [{ id, priority: 20, action: { type: 'allow' },
-      condition: { regexFilter: '^https?://(?:[^/@]*@)?' + esc(host) + '(?:[:/?#]|$)', tabIds: [-1] } }] });
+      condition: { regexFilter: '^' + esc(noHash(u)) + '$', tabIds: [-1] } }] });
     return id;
   } catch (e) { return 0; }
+}
+async function credOn(site) {
+  credSites.set(site, (credSites.get(site) || 0) + 1);
+  if (credSites.get(site) === 1) await stripUpdate();
+}
+function credOff(site) {
+  const n = (credSites.get(site) || 1) - 1;
+  if (n > 0) { credSites.set(site, n); return; }
+  credSites.delete(site); stripUpdate().catch(() => {});
 }
 // → Grund (Text), wenn die Anfrage nicht erlaubt ist; sonst ''. Setzt o.anonymous, wenn die Seite fremd ist.
 function guard(m, fromUrl) {
@@ -111,6 +133,7 @@ function guard(m, fromUrl) {
   const meth = String(m.method || 'GET').toUpperCase();
   if (meth !== 'GET' && meth !== 'HEAD' && !helper) return 'nur GET';
   if (!helper && (!site || baseDomain(site) !== baseDomain(u.hostname))) m.anonymous = true;
+  m.site = site ? baseDomain(site) : '';
   return '';
 }
 
@@ -138,16 +161,20 @@ api.runtime.onConnect.addListener((port) => {
     const headers = Object.assign({}, m.headers || {});
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
+    let cred = '';
     try {
-      await netGuard();
+      const helper = new URL(m.url).origin === HELPER_ORIGIN;
+      if (!(await netGuard()) && !helper) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
       let allowId = 0;
-      try { const h = new URL(m.url).hostname; if (privateHost(h)) allowId = await allowHost(h); } catch (e) {}   // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort)
+      // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort) – nur genau diese Adresse, ohne Weiterleitung
+      try { if (!helper && privateHost(new URL(m.url).hostname)) { allowId = await allowExact(m.url); if (!allowId) throw new Error('Freigabe'); } } catch (e) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Freigabe fehlt' }); return; }
       m.allowId = allowId;
+      if (!helper && !m.anonymous && m.site) { cred = m.site; await credOn(cred); }
       if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store',
+        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store',
       });
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
@@ -187,7 +214,8 @@ api.runtime.onConnect.addListener((port) => {
     } finally {
       clearTimeout(tm);
       dropRule(rule); rule = 0;
-      if (m.allowId) dropAllow(m.allowId);
+      if (m.allowId) dropRule(m.allowId);
+      if (cred) credOff(cred);
     }
   });
 });

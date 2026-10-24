@@ -25,6 +25,7 @@
   },
   "background": {
     "scripts": [
+      "psl.js",
       "background.js"
     ]
   },

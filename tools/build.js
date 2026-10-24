@@ -55,6 +55,12 @@ function content(target, test) {
   if (test) {
     // nur für die Tests: Oberfläche von außen erreichbar (wie PRE im Userscript-Test) und markiert
     b = swap(b, "root = hostEl.attachShadow({ mode: 'closed' });", "root = hostEl.attachShadow({ mode: 'open' }); hostEl.setAttribute('data-kadri-test', '');", 'Shadow-DOM (Test)');
+    // nur für die Tests: die Seite kann Anfragen über Kadri stellen lassen (wie das Skript es tut) – so prüfen die
+    // Tests die Schutzregeln des Hintergrunds mit echten Anfragen aus einem Tab
+    b += "\n    window.addEventListener('message', (e) => { const d = e.data; if (!d || !d.kadriTestXhr || e.source !== window) return; const o = d.kadriTestXhr;" +
+      " const back = (r) => window.postMessage({ kadriTestRes: Object.assign({ id: o.id }, r) }, '*');" +
+      " GM_xmlhttpRequest(Object.assign({}, o, { onload: (r) => back({ status: r.status, text: r.responseText, finalUrl: r.finalUrl })," +
+      " onerror: (r) => back({ error: (r && (r.error || r.statusText)) || 'Fehler' }), ontimeout: () => back({ error: 'timeout' }) })); });\n";
   }
   const pre = fs.readFileSync(path.join(ROOT, target, 'prelude.js'), 'utf8').replace("(function () {\n  'use strict';", "(function () {\n  'use strict';\n  const KADRI_VERSION = " + JSON.stringify(VERSION) + ';');
   const epi = fs.readFileSync(path.join(ROOT, target, 'epilogue.js'), 'utf8');
@@ -81,6 +87,8 @@ function write(dir, target, test) {
   fs.writeFileSync(path.join(dir, 'defaults.js'), DEFAULTS);
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.min.js'), path.join(dir, 'hls.min.js'));
   fs.copyFileSync(path.join(ROOT, 'vendor', 'hls.LICENSE'), path.join(dir, 'hls.LICENSE'));
+  fs.copyFileSync(path.join(ROOT, 'vendor', 'psl.js'), path.join(dir, 'psl.js'));
+  fs.copyFileSync(path.join(ROOT, 'vendor', 'psl.LICENSE'), path.join(dir, 'psl.LICENSE'));
   fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(dir, 'LICENSE'));
   for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(SRC, 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
   // Syntax prüfen (alle Skripte)
