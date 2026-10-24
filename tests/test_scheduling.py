@@ -7,10 +7,12 @@ started = [threading.Event(), threading.Event()]
 release_bodies = threading.Event()
 hold_started = threading.Event()
 release_headers = threading.Event()
+request_order = []
 
 class SchedulingServer(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
+        request_order.append(self.path)
         path = self.path.split('?')[0]
         if path == '/hold':
             hold_started.set()
@@ -67,15 +69,34 @@ try:
         downloads = pg.evaluate('() => Promise.all([window.d0,window.d1])')
         check('both real downloads finish', all(r.get('status') == 200 for r in downloads), downloads)
 
-        # Demonstrate queue waiting behind active headers, with explicit release.
+        # Hold an active owner, queue ordinary work first, then a player resolution.
+        # Wait for actual acquire calls before release; no fixed overlap delay.
+        sw.evaluate("""() => {
+          globalThis.__priorityAttempts=0; globalThis.__priorityAcquire=headerGate.acquire;
+          headerGate.acquire=function(...args){globalThis.__priorityAttempts++;
+            return globalThis.__priorityAcquire.apply(this,args);};
+        }""")
         pg.evaluate('(o)=>{window.held=(%s)(o);return 1;}' % XHR, {'url':base+'/hold'})
         check('slow headers active', hold_started.wait(5))
+        pg.evaluate('(o)=>{window.ordinary=(%s)(o);return 1;}' % XHR, {'url':base+'/ordinary'})
         pg.evaluate('(o)=>{window.resolution=(%s)(o);return 1;}' % XHR,
-                    {'url':base+'/resolve','timeout':4000,'kadriPurpose':'player-resolve'})
+                    {'url':base+'/resolve?priority=1','timeout':4000,'kadriPurpose':'player-resolve'})
+        for _ in range(100):
+            if sw.evaluate('()=>globalThis.__priorityAttempts')>=3:break
+            pg.wait_for_timeout(10)
+        check('active, ordinary and player requests all entered the native gate',
+              sw.evaluate('()=>globalThis.__priorityAttempts')>=3)
+        check('queued work did not start before owner release',
+              '/ordinary' not in request_order and '/resolve?priority=1' not in request_order,request_order)
         release_headers.set()
-        r = pg.evaluate('() => window.resolution')
-        check('resolution after slow-header release', r.get('status') == 200, r)
-        print('MEASUREMENT queued_resolution_ms', r.get('elapsed'), flush=True)
+        r=pg.evaluate('()=>window.resolution')
+        ordinary=pg.evaluate('()=>window.ordinary')
+        check('resolution after slow-header release',r.get('status')==200,r)
+        check('native player priority passes ordinary queued work without cancellation',
+              ordinary.get('status')==200 and '/resolve?priority=1' in request_order and
+              request_order.index('/resolve?priority=1')<request_order.index('/ordinary'),request_order)
+        sw.evaluate('()=>{headerGate.acquire=globalThis.__priorityAcquire;}')
+        print('MEASUREMENT queued_resolution_ms',r.get('elapsed'),flush=True)
         ctx.close()
 finally:
     release_bodies.set()
