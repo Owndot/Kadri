@@ -1,3 +1,7 @@
+# Current evidence update
+
+The historical validation notes below are superseded by [FINAL-VALIDATION-REPORT.md](FINAL-VALIDATION-REPORT.md). Real Chromium request, injected DNR recovery, header-deadline, priority, abort and worker-restart tests now execute successfully; the full current suite has 18 files / 198 checks. Physical Samsung/Android/Firefox-extension and battery checks remain NOT TESTED.
+
 # Phase 1 correction round — 2026-10-24
 
 ## Request ownership and recovery
