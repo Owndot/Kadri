@@ -107,6 +107,7 @@ function guard(m, fromUrl) {
   return '';
 }
 
+const fromB64 = (s) => { const bin = atob(s); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
 // Binärdaten als Base64 in Stücken (Nachrichten zwischen Hintergrund und Seite können in Chrome nur Text/JSON)
 function b64(u8) {
   let s = '';
@@ -138,7 +139,7 @@ api.runtime.onConnect.addListener((port) => {
       if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
-        method: m.method || 'GET', headers, body: m.data == null ? undefined : m.data,
+        method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
         credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store',
       });
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben

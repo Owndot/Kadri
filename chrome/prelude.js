@@ -16,6 +16,10 @@
       try { const p = api.storage.local.set({ ['gm:' + k]: v }); if (p && p.catch) p.catch(() => {}); } catch (e) {}
     };
     // ---------- Anfragen ----------
+    // Binärdaten (ArrayBuffer/Uint8Array) als Base64 schicken – Nachrichten an den Hintergrund können nur Text/JSON
+    // (vorher wurde daraus der Text „[object ArrayBuffer]“ – „Über den Browser laden“ kam beim Helfer kaputt an)
+    const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+    const binOf = (d) => (d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null);
     const fromB64 = (s) => { const bin = atob(s); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i); return u8; };
     function GM_xmlhttpRequest(o) {
       o = o || {};
@@ -64,7 +68,9 @@
       });
       port.onDisconnect.addListener(() => { if (!done && !aborted) fail('error', 'getrennt'); });
       try {
-        port.postMessage({ t: 'req', method: o.method || 'GET', url: String(o.url || ''), headers: o.headers || {}, data: o.data == null ? null : String(o.data),
+        const bin = o.data == null ? null : binOf(o.data);
+        port.postMessage({ t: 'req', method: o.method || 'GET', url: String(o.url || ''), headers: o.headers || {},
+          data: o.data == null || bin ? null : String(o.data), dataB64: bin ? toB64(bin) : null,
           timeout: +o.timeout || 0, anonymous: !!o.anonymous, responseType: o.responseType || '' });
       } catch (e) { setTimeout(() => fail('error', 'senden'), 0); }
       return {

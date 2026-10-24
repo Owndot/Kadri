@@ -75,7 +75,7 @@ srv = http.server.ThreadingHTTPServer(('127.0.0.1', PORT), functools.partial(Q, 
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
 # ---------- nachgebaute Helfer-App (127.0.0.1:47811) ----------
-helper = {'on': False, 'key': 'evp-1', 'calls': [], 'vol': 0.4, 'bright': 0.5, 'max': 15}
+helper = {'on': False, 'key': 'evp-1', 'calls': [], 'vol': 0.4, 'bright': 0.5, 'max': 15, 'pulls': [], 'pushed': []}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, body, ctype='application/json'):
@@ -89,6 +89,14 @@ class H(http.server.BaseHTTPRequestHandler):
         if not helper['on'] or self.headers.get('X-EVP-Key') != helper['key']:
             self._send(403, '{"ok":false}'); return
         helper['calls'].append((u.path, q.get('v'), self.headers.get('X-EVP-Key')))
+        # Laden über den Browser: der Helfer verlangt Stücke (/pull), der Browser liefert sie (/push)
+        if u.path == '/download' and q.get('p') == '1': self._send(200, json.dumps({'ok': True, 'id': 'j1'})); return
+        if u.path == '/pull':
+            self._send(200, json.dumps(helper['pulls'].pop(0) if helper['pulls'] else {'done': True})); return
+        if u.path == '/push':
+            n = int(self.headers.get('Content-Length') or 0)
+            helper['pushed'].append((q.get('id'), q.get('st'), self.rfile.read(n) if n else b''))
+            self._send(200, '{"ok":true}'); return
         if u.path == '/vol' and 'v' in q: helper['vol'] = round(float(q['v']) * helper['max']) / helper['max']
         if u.path == '/bright' and 'v' in q: helper['bright'] = float(q['v'])
         self._send(200, json.dumps({'ok': True, 'overlay': True, 'write': False, 'dl': True, 'proxy': True, 'dash': True,
