@@ -76,7 +76,7 @@
         const bin = o.data == null ? null : binOf(o.data);
         port.postMessage({ t: 'req', method: o.method || 'GET', url: String(o.url || ''), headers: o.headers || {},
           data: o.data == null || bin ? null : String(o.data), dataB64: bin ? toB64(bin) : null,
-          timeout: +o.timeout || 0, anonymous: !!o.anonymous, responseType: o.responseType || '' });
+          purpose: o.kadriPurpose === 'player-resolve' ? 'player-resolve' : '', timeout: +o.timeout || 0, anonymous: !!o.anonymous, responseType: o.responseType || '' });
       } catch (e) { setTimeout(() => fail('error', 'senden'), 0); }
       return {
         abort() {

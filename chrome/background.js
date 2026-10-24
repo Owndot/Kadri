@@ -10,12 +10,16 @@ const api = globalThis.browser || globalThis.chrome;
 
 // Only the redirect/header phase owns global DNR exceptions. Bodies remain parallel.
 // No other non-helper fetch may start until exception removal has completed.
+const HEADER_TIMEOUT_MS = 15000, QUEUE_TIMEOUT_MS = 60000;
 function createHeaderGate(limit = 128) {
   let busy = false;
   const queue = [];
   const pump = () => {
     if (busy || !queue.length) return;
-    const item = queue.shift();
+    // FIFO within each class; an aged normal request cannot starve.
+    const urgent = queue.findIndex((q) => q.priority);
+    const index = urgent >= 0 && Date.now() - queue[0].queuedAt < 5000 ? urgent : 0;
+    const item = queue.splice(index, 1)[0];
     item.signal.removeEventListener('abort', item.cancel);
     if (item.signal.aborted) { item.reject(new Error('abgebrochen')); pump(); return; }
     busy = true;
@@ -30,11 +34,11 @@ function createHeaderGate(limit = 128) {
     });
   };
   return {
-    acquire(signal) {
+    acquire(signal, priority = false) {
       if (signal.aborted) return Promise.reject(new Error('abgebrochen'));
       if (queue.length >= limit) return Promise.reject(new Error('zu viele offene Anfragen'));
       return new Promise((resolve, reject) => {
-        const item = { signal, resolve, reject, cancel: null };
+        const item = { signal, resolve, reject, priority, queuedAt: Date.now(), cancel: null };
         item.cancel = () => {
           const i = queue.indexOf(item);
           if (i >= 0) queue.splice(i, 1);
@@ -191,9 +195,9 @@ function b64(u8) {
 api.runtime.onConnect.addListener((port) => {
   if (port.name !== 'kadri-xhr') return;
   const ac = new AbortController();
-  let rule = 0, gone = false, timedOut = false, tm = 0, started = false;
+  let rule = 0, gone = false, timedOut = false, tm = 0, phaseTimer = 0, started = false;
   const post = (m) => { if (gone) return; try { port.postMessage(m); } catch (e) { gone = true; } };
-  port.onDisconnect.addListener(() => { gone = true; ac.abort(); clearTimeout(tm); });
+  port.onDisconnect.addListener(() => { gone = true; ac.abort(); clearTimeout(tm); clearTimeout(phaseTimer); });
   port.onMessage.addListener(async (m) => {
     if (!m) return;
     if (m.t === 'abort') { ac.abort(); return; }
@@ -221,7 +225,12 @@ api.runtime.onConnect.addListener((port) => {
     try {
       const helper = new URL(m.url).origin === HELPER_ORIGIN;
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
-      if (!helper) release = await headerGate.acquire(ac.signal);
+      if (!helper) {
+        phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, QUEUE_TIMEOUT_MS);
+        try { release = await headerGate.acquire(ac.signal, m.purpose === 'player-resolve'); }
+        finally { clearTimeout(phaseTimer); }
+        phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, HEADER_TIMEOUT_MS);
+      }
       if (ac.signal.aborted) throw new Error('abgebrochen');
       if (!helper && !(await netGuard())) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
       if (!helper) headersChanged = true; // even a rejected mutation is treated as uncertain
@@ -233,6 +242,7 @@ api.runtime.onConnect.addListener((port) => {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
         credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store',
       });
+      clearTimeout(phaseTimer); // body lifetime is governed only by the caller's timeout
       await resetHeaders();   // fetch resolved at final headers, before consuming the response body
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
@@ -270,7 +280,7 @@ api.runtime.onConnect.addListener((port) => {
     } catch (e) {
       post({ t: 'error', timeout: timedOut, msg: String((e && e.message) || e) });
     } finally {
-      clearTimeout(tm);
+      clearTimeout(tm); clearTimeout(phaseTimer);
       try { await resetHeaders(); } catch (e) {
         post({ t: 'error', timeout: false, msg: 'Schutzregeln konnten nicht zurückgesetzt werden' });
       }
