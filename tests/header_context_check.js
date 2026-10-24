@@ -43,7 +43,7 @@ async function runHeaderTests(source, runtime) {
       listener({t:'req',url,headers:{Authorization:'test-auth'},...extra});
       return {done:end.promise,messages,abort(){listener({t:'abort'});},disconnect(){disconnect();}};
     }
-    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},failCleanup(){failCleanup=true;}};
+    return {rules,calls,req,setHold(d){hold=d;},setBody(d){body=d;},failCleanup(){failCleanup=true;},setFailure(v){failing=v;},restoreCleanup(){failCleanup=false;}};
   }
   {
     const h=setup(),d=deferred();h.setHold(d);await tick();
@@ -92,7 +92,7 @@ async function runHeaderTests(source, runtime) {
   {
     const h=setup(),d=deferred();h.setHold(d);await tick();
     const a=h.req('http://127.0.0.1:8790/page','http://127.0.0.1:8790/hold');await tick();
-    const b=h.req('https://b.test/page','https://b.test/check');h.failCleanup();d.resolve();
+    const b=h.req('https://b.test/page','https://b.test/check');h.failCleanup();h.setFailure(true);d.resolve();
     await a.done;await b.done;await tick();
     assert(h.calls.length===1,'cleanup failure allowed queued fetch');
     output.push('cleanup failure closes queue');
@@ -112,6 +112,25 @@ async function runHeaderTests(source, runtime) {
     d.resolve();await a.done;await tick();
     assert(!h.calls.some(x=>/b.test|c.test/.test(x.u)),'cancelled queue reached network');
     output.push('queue timeout and disconnect do not reach network');
+  }
+  {
+    const h=setup([],true); await tick();
+    await h.req('https://a.test/page','https://a.test/check').done;
+    h.setFailure(false);
+    const r=await h.req('https://a.test/page','https://a.test/check').done;
+    assert(r.t==='done' && h.calls.length===1,'setup failure never recovered');
+    output.push('setup failure recovers only after verified baseline');
+  }
+  {
+    const h=setup(), d=deferred(); h.setHold(d); await tick();
+    const a=h.req('http://127.0.0.1:8790/page','http://127.0.0.1:8790/hold');
+    await tick(); h.failCleanup(); d.resolve(); await a.done; await tick();
+    h.restoreCleanup();
+    const r=await h.req('https://a.test/page','https://a.test/check').done;
+    assert(r.t==='done','cleanup recovery failed');
+    assert(![...h.rules.keys()].some(id=>id>=1000),'recovery retained temporary grant');
+    assert(!(h.rules.get(80).condition.excludedRequestDomains||[]).length,'recovery retained credentials');
+    output.push('cleanup failure recovers with orphan grants removed');
   }
   return output;
 }

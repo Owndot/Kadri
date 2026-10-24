@@ -11,10 +11,10 @@ const api = globalThis.browser || globalThis.chrome;
 // Only the redirect/header phase owns global DNR exceptions. Bodies remain parallel.
 // No other non-helper fetch may start until exception removal has completed.
 function createHeaderGate(limit = 128) {
-  let busy = false, broken = false;
+  let busy = false;
   const queue = [];
   const pump = () => {
-    if (busy || broken || !queue.length) return;
+    if (busy || !queue.length) return;
     const item = queue.shift();
     item.signal.removeEventListener('abort', item.cancel);
     if (item.signal.aborted) { item.reject(new Error('abgebrochen')); pump(); return; }
@@ -23,18 +23,14 @@ function createHeaderGate(limit = 128) {
     item.resolve((safe = true) => {
       if (released) return;
       released = true; busy = false;
-      if (!safe) {
-        broken = true;
-        for (const q of queue.splice(0)) {
-          q.signal.removeEventListener('abort', q.cancel);
-          q.reject(new Error('Schutzregeln konnten nicht zurückgesetzt werden'));
-        }
-      } else pump();
+      // Ownership may pass, permission may not: the next owner must restore
+      // and verify the baseline in netGuard before it can issue any fetch.
+      if (!safe) netReady = null;
+      pump();
     });
   };
   return {
     acquire(signal) {
-      if (broken) return Promise.reject(new Error('Schutzregeln konnten nicht zurückgesetzt werden'));
       if (signal.aborted) return Promise.reject(new Error('abgebrochen'));
       if (queue.length >= limit) return Promise.reject(new Error('zu viele offene Anfragen'));
       return new Promise((resolve, reject) => {
@@ -73,10 +69,6 @@ async function refererRule(url, ref) {
     });
     return id;
   } catch (e) { return 0; }
-}
-function dropRule(id) {
-  if (!id) return;
-  try { api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [id] }); } catch (e) {}
 }
 
 // ---------- Schutz: welche Anfragen Kadri überhaupt stellt ----------
@@ -135,6 +127,7 @@ function netGuard() {
   const dnr = api.declarativeNetRequest;
   if (!dnr || !dnr.updateSessionRules || !dnr.getSessionRules) return Promise.resolve(false);
   if (!netReady) {
+    credSites.clear();
     const want = NET_RULES.map((r) => r.id).concat(STRIP);
     // Session rules survive service-worker restarts; remove orphaned temporary grants first.
     netReady = dnr.getSessionRules()
@@ -143,7 +136,14 @@ function netGuard() {
         addRules: NET_RULES.concat(stripRule()),
       }))
       .then(() => dnr.getSessionRules())
-      .then((have) => { const ids = new Set(have.map((r) => r.id)); return want.every((id) => ids.has(id)); })
+      .then((have) => {
+        const canonical = (v) => JSON.stringify(v, function(k, x) {
+          return x && typeof x === 'object' && !Array.isArray(x)
+            ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x;
+        });
+        return !have.some((r) => r.id >= 1000 && r.id <= 900000) &&
+          NET_RULES.concat(stripRule()).every((r) => have.some((h) => canonical(h) === canonical(r)));
+      })
       .catch(() => false)
       .then((ok) => { if (!ok) netReady = null; return ok; });   // nächstes Mal neu versuchen
   }
@@ -193,7 +193,7 @@ api.runtime.onConnect.addListener((port) => {
   const ac = new AbortController();
   let rule = 0, gone = false, timedOut = false, tm = 0, started = false;
   const post = (m) => { if (gone) return; try { port.postMessage(m); } catch (e) { gone = true; } };
-  port.onDisconnect.addListener(() => { gone = true; ac.abort(); dropRule(rule); clearTimeout(tm); });
+  port.onDisconnect.addListener(() => { gone = true; ac.abort(); clearTimeout(tm); });
   port.onMessage.addListener(async (m) => {
     if (!m) return;
     if (m.t === 'abort') { ac.abort(); return; }
@@ -204,25 +204,27 @@ api.runtime.onConnect.addListener((port) => {
     const headers = Object.assign({}, m.headers || {});
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
-    let release = null, allowId = 0;
+    let release = null, allowId = 0, headersChanged = false;
     const resetHeaders = async () => {
       if (!release) return;
       const unlock = release; release = null;
       try {
+        if (!headersChanged) { unlock(true); return; }
         const removeRuleIds = [rule, allowId].filter(Boolean);
         if (removeRuleIds.length) await api.declarativeNetRequest.updateSessionRules({ removeRuleIds });
         rule = 0; allowId = 0;
         credSites.clear();
         await stripUpdate();
         unlock(true);
-      } catch (e) { ac.abort(); unlock(false); throw e; }
+      } catch (e) { credSites.clear(); netReady = null; ac.abort(); unlock(false); throw e; }
     };
     try {
       const helper = new URL(m.url).origin === HELPER_ORIGIN;
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       if (!helper) release = await headerGate.acquire(ac.signal);
       if (ac.signal.aborted) throw new Error('abgebrochen');
-      if (!(await netGuard()) && !helper) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
+      if (!helper && !(await netGuard())) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
+      if (!helper) headersChanged = true; // even a rejected mutation is treated as uncertain
       // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort) – nur genau diese Adresse, ohne Weiterleitung
       try { if (!helper && privateHost(new URL(m.url).hostname)) { allowId = await allowExact(m.url); if (!allowId) throw new Error('Freigabe'); } } catch (e) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Freigabe fehlt' }); return; }
       if (!helper && !m.anonymous && m.site) { credSites.set(m.site, 1); await stripUpdate(); }
