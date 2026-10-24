@@ -11,7 +11,8 @@ src/170-player-laden.js now consumes the opening seek once per intentional tryNe
 - Kadri full existing 18-file suite with this runtime correction: PASS in run 40133376428.
 - Counterbalanced source-switch observations in helper run 40133593779: both stable samples fail the exact assertion (35/36), both corrected samples pass (36/36). The overall job was red because the newly added standalone test initially looked for a lazy player before video discovery; that harness error was corrected and is not counted as a product pass.
 - Added native event regression tests verify the opening position, then change source and inspect position at loadedmetadata rather than waiting an arbitrary number of seconds. They are present in both projects; a47e53ec / 0442866e correct fixture discovery before pausing.
-- A fresh full-suite run and counterbalanced performance rerun after the player correction are in progress. Earlier 198-check results below are historical, not a claim that the new 19-file suite has finished.
+- Full corrected native suite: **19 files / 201 checks PASS**, [40134238016](https://github.com/Owndot/Kadri/actions/runs/40134238016), source a47e53ec. New event-position test is 3/3.
+- Counterbalanced performance repeat after the player correction: **PASS**, [40133859838](https://github.com/Owndot/Kadri/actions/runs/40133859838), source fe9d0d3f. Raw observations and their limits are below. No battery/device claim.
 
 ## Executed checklist
 PASS means executed with evidence. A prepared procedure is NOT TESTED.
@@ -35,7 +36,23 @@ Host execution used GitHub Actions because the shared shell environment was unav
 
 Fault injection rejects the browser method through a test wrapper. Rule installation, persisted state, HTTP requests and redirect enforcement still use real Chromium. It does not reproduce every native quota/permission failure.
 
-## Performance observations, not invented release thresholds
+## Performance repeat after the player correction
+Run 40133859838, Chromium 141.0.7390.37, six samples/version; stable/current/current/stable repeated three times. No arbitrary pass threshold.
+
+| Median | Stable | Corrected development |
+|---|---:|---:|
+| First compositor frame | 110.6 ms | 105.2 ms |
+| Own-player transition (median of each sample's eight cycles) | 1038.1 ms | 1038.9 ms |
+| Resolution with two 32 MiB transfers | 28.3 ms | 31.6 ms |
+| Resolution behind deliberately 750 ms delayed active headers | 2.75 ms | 755.55 ms |
+| Browser-process playing CPU over about 3 s | 0.475 s | 0.470 s |
+| Retained JS heap growth across eight cycles | 157,688 B | 159,754 B |
+| Sampled process RSS sum peak (shared pages counted repeatedly) | 1347.8 MiB | 1341.8 MiB |
+
+No clear first-frame/transition/CPU deterioration appears in this small desktop repeat. The header serialization delay remains clearly measurable. This is not a statistical guarantee or physical-display/energy/large-file bounded-memory proof.
+Raw data and ranges: validation-results/kadri-post-seek-raw.jsonl and kadri-post-seek-summary.json.
+
+## Earlier performance observations, retained as baseline evidence
 Stable source c559dfa0ee10f6ab8138028e1004298ebfde5b48; development measurement source 07807e10 (same request-manager runtime as the final test head). Chromium 141 via pinned Playwright 1.56. No Android conclusion follows.
 
 | Median, 6 samples/version | Stable | Development |

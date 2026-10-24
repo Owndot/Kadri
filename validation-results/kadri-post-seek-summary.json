@@ -1,0 +1,88 @@
+{
+  "run": 40133859838,
+  "source": "fe9d0d3f1f70b4f2483864d9aa83c9e6a80cc041",
+  "methods": {
+    "n_per_version": 6,
+    "handoff": "median of each sample's 8 transitions, then median across samples",
+    "physical_device": false,
+    "battery_measured": false,
+    "thresholds": false,
+    "rss_sum_double_counts_shared_pages": true
+  },
+  "stable": {
+    "n": 6,
+    "first_frame_ms": {
+      "median": 110.59999999999854,
+      "min": 89,
+      "max": 123
+    },
+    "handoff_ms": {
+      "median": 1038.0720147499858,
+      "min": 1011.7333970000004,
+      "max": 1064.050748000028
+    },
+    "resolution_download_ms": {
+      "median": 28.299999999995634,
+      "min": 14.599999999976717,
+      "max": 53
+    },
+    "resolution_slow_headers_ms": {
+      "median": 2.749999999985448,
+      "min": 2.2999999999883585,
+      "max": 3.400000000008731
+    },
+    "playing_cpu_seconds": {
+      "median": 0.47500000000000003,
+      "min": 0.41999999999999993,
+      "max": 0.5399999999999999
+    },
+    "heap_growth_bytes": {
+      "median": 157688,
+      "min": 152488,
+      "max": 220016
+    },
+    "rss_sum_peak_mib": {
+      "median": 1347.77734375,
+      "min": 1334.1796875,
+      "max": 1372.8046875
+    }
+  },
+  "current": {
+    "n": 6,
+    "first_frame_ms": {
+      "median": 105.15000000000873,
+      "min": 97.19999999998254,
+      "max": 113.60000000000582
+    },
+    "handoff_ms": {
+      "median": 1038.8911719999996,
+      "min": 1037.3715724999925,
+      "max": 1063.079692499997
+    },
+    "resolution_download_ms": {
+      "median": 31.55000000000291,
+      "min": 17.20000000001164,
+      "max": 106.89999999999418
+    },
+    "resolution_slow_headers_ms": {
+      "median": 755.5500000000029,
+      "min": 755.2999999999884,
+      "max": 755.7999999999884
+    },
+    "playing_cpu_seconds": {
+      "median": 0.4699999999999999,
+      "min": 0.42000000000000004,
+      "max": 0.5199999999999999
+    },
+    "heap_growth_bytes": {
+      "median": 159754,
+      "min": 150148,
+      "max": 214672
+    },
+    "rss_sum_peak_mib": {
+      "median": 1341.81640625,
+      "min": 1324.734375,
+      "max": 1353.87109375
+    }
+  }
+}
