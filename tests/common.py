@@ -115,6 +115,9 @@ def open_player(pg, url):
     pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
     pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
+    # (nahtloser Start: bis die eigene Kopie aufgeholt hat, läuft die Seite sichtbar weiter – dann still)
+    try: pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=12000)
+    except Exception: pass
     time.sleep(0.6)
 
 def settings(pg):
