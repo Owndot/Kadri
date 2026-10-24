@@ -7,9 +7,12 @@ parser.add_argument('--label',required=True)
 parser.add_argument('--output',required=True)
 args=parser.parse_args()
 
+slow_started=threading.Event()
 class Stream(http.server.BaseHTTPRequestHandler):
     def log_message(self,*a): pass
     def do_GET(self):
+        if self.path.startswith('/slow'):
+            slow_started.set(); time.sleep(.75)
         if self.path.startswith('/large'):
             self.send_response(200); self.send_header('Content-Length',str(32*1024*1024)); self.end_headers()
             try:
@@ -59,6 +62,15 @@ try:
         pg.evaluate('()=>new Promise(resolve=>%s.querySelector(".vv").requestVideoFrameCallback(()=>resolve()))'%R)
         elapsed=(time.perf_counter()-start)*1000
         position=pg.evaluate('()=>%s.querySelector(".vv").currentTime'%R)
+        if not out['cycles']:
+            cpu_a=rss_cpu(); t_a=time.perf_counter()
+            tasks_a={m['name']:m['value'] for m in page_cdp.send('Performance.getMetrics')['metrics']}
+            pg.wait_for_timeout(3000)
+            tasks_b={m['name']:m['value'] for m in page_cdp.send('Performance.getMetrics')['metrics']}
+            cpu_b=rss_cpu()
+            out['playing_window_seconds']=time.perf_counter()-t_a
+            out['playing_browser_cpu_seconds']=cpu_b['browser_cpu_seconds']-cpu_a['browser_cpu_seconds']
+            out['playing_page_task_seconds']=tasks_b['TaskDuration']-tasks_a['TaskDuration']
         pg.evaluate('()=>%s.querySelector("button[aria-label=Schließen]").click()'%R)
         pg.wait_for_function('()=>!%s.querySelector(".vv")'%R,timeout=10000)
         page_cdp.send('HeapProfiler.collectGarbage')
@@ -86,6 +98,11 @@ try:
     out['idle_window_seconds']=time.perf_counter()-start
     out['idle_page_task_seconds']=metrics(z)['TaskDuration']-metrics(a)['TaskDuration']
     out['idle_browser_cpu_seconds']=end['browser_cpu_seconds']-c['browser_cpu_seconds']
+    pg.evaluate('(o)=>{window.__slow=(%s)(o);return 1;}'%XHR,{'url':base+'/slow'})
+    if not slow_started.wait(5): raise RuntimeError('Controlled slow header request not active')
+    out['resolution_during_750ms_headers']=pg.evaluate(XHR,{'url':base+'/resolve','timeout':4000,'kadriPurpose':'player-resolve'})
+    if out['resolution_during_750ms_headers'].get('status')!=200: raise RuntimeError('Slow-header resolution failed')
+    pg.evaluate('window.__slow')
     out['browser_version']=ctx.browser.version
     ctx.close()
 finally:
