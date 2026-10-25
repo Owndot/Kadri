@@ -48,3 +48,20 @@ The local runner refuses physical devices before resetting test data. Samsung
 S26 Ultra / reported Android 17 OEM behavior, physical battery/display checks,
 production-signature decisions and actual production update paths remain
 separate. This test branch does not merge or publish either security PR.
+
+## Executed results and merge gate
+
+The shared [technical validation report](https://github.com/Owndot/video-assistent-helper/blob/codex/android-e2e/tests/android_e2e/VALIDATION-REPORT.md)
+records exact commits, real API33/35 route results, saved-file hashes, observed
+memory, proven product corrections and remaining failures. The full comparison
+[40197766277](https://github.com/Owndot/video-assistent-helper/actions/runs/40197766277)
+is not green. Setup/pairing/playback and native APK security checks have real
+positive evidence; full gesture/seek/download/PiP/lifecycle coverage is incomplete.
+This is not a merge approval. Fixture pointer metadata distinguishes incorrectly
+injected timing from product behavior, while all actions still use actual Android
+input. Read the current report before interpreting one successful old case.
+
+The tested extension is unmodified f76c209db9a3749007f4cd6a180d6d8509eb5971.
+Host/JVM and captured-image regression checks are labeled separately from real
+Android Firefox tests. Physical Samsung battery/OEM and production migration
+remain outside these emulator results.
