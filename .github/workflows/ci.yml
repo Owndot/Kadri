@@ -26,6 +26,14 @@ jobs:
           sudo apt-get install -y xvfb zip
       - name: Bauen
         run: node tools/build.js --test
+      - name: Referrer policy and real HTTP/HTTPS redirects
+        run: |
+          set -euo pipefail
+          node tests/referrer_check.js
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          mkdir -p /tmp/privacy-media
+          ffmpeg -v error -y -f lavfi -i testsrc2=size=320x180:rate=24 -t 8 -c:v libx264 -threads 1 -pix_fmt yuv420p -g 48 -movflags +faststart /tmp/privacy-media/clip.mp4
+          EXT_DIR="$PWD/dist/test" xvfb-run -a python3 -u tests/privacy_browser.py --kadri
       - name: Prove recovery regression against the broken predecessor
         env:
           GH_TOKEN: ${{ github.token }}
