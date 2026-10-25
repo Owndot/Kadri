@@ -1,0 +1,15 @@
+# Begrenzte Referrer-/hls.js-Runde
+
+Basis: `6199a550eb006b8939a01ef6c8aeff6dd6a15833` (main).
+
+`refererRule()` bereinigt den Referer zusätzlich am Hintergrund-Eingang: gleiche Origin (Schema/Host/effektiver Port) erhält die URL ohne Benutzerinfo/Fragment, fremde Origin höchstens die Origin, HTTPS→HTTP nichts. Die temporäre DNR-Regel gilt nur für die genaue erste Medien-URL; deren signierte Query wird nicht verändert. Fetch unterdrückt ambienten Referrer bei Redirects. Falls eine benötigte Regel fehlschlägt, wird nicht stillschweigend weitergearbeitet. Andere Request-, Cookie-, DNS- und UI-Regeln werden nicht gelockert.
+
+Die gemeinsam mit dem Userscript gepflegten Adapter verwenden dieselbe zielabhängige Bereinigung. Automatisch weiterleitende GM-Transporte haben zusätzlich eine sichere Transportgrenze: keine HTTPS-Seitenreferenz, HTTP-Seiten höchstens Origin. Kadris Adapter kann die bereinigte vollständige Same-Origin-URL an die exakt passende erste Anfrage geben. Browser-fetch-Fallbacks setzen `strict-origin-when-cross-origin`. Redirects können weniger als eine Origin erhalten. Native Medien-/hls.js-XHRs bleiben durch den Browser und die Seitenpolicy verwaltet; keine seitenweite Policy-Umschreibung.
+
+Das Userscript erhält hls.js 1.7.3 als geprüfte lokale Kopie im erzeugten Skript, ohne bewegliches @require. Die gemeinsame Quellversion steigt auf 19.29. Kadri verwendet weiterhin seine unveränderten hls.js-1.7.3-Bytes und sein bestehendes verzögertes Laden. Die zusätzliche `typeof loadBundledHls`-Prüfung ist ausschließlich für den Userscript-Build wirksam. Player-Architektur und Oberfläche bleiben unverändert.
+
+Nachweise: `tests/referrer_check.js` prüft Origins/Ports, Downgrade und exakt passende URL-Regeln; `tests/privacy_browser.py --kadri` misst tatsächlich am HTTP-/HTTPS-Testserver empfangene Header mit geladener Chromium-Erweiterung. Diese Tests laufen im bestehenden read-only PR-Workflow vor den unverändert aktiven Lifecycle- und Medientests. Lokale Netzwerkserver sind in der Cloud-Sandbox blockiert; sie werden hier nicht als bestanden behauptet. Der tatsächliche alte Userscript-gmGet-Headerfluss wurde lokal mit synthetischen Geheimnissen reproduziert; native HTTP-/TLS- und DownloadManager-Nachweise gehören zum Helper-PR.
+
+Der vollständige Umfang, Byte-Digest, Manager-/Integritätsgrenzen, Testverfahren und offene Geräteprüfungen stehen im [Helper-Bericht](https://github.com/Owndot/video-assistent-helper/blob/codex/referrer-hls/SECURITY-REFERRER-HLS.md). Der separate, nicht implementierte [Authentifizierungs-Entscheidungsvorschlag](https://github.com/Owndot/video-assistent-helper/blob/codex/referrer-hls/HELPER-AUTH-DECISION.md) verändert kein Protokoll. Keine Signaturmigration, kein DNS-Umbau und kein Firefox-UI-Refactoring.
+
+Es wurde kein konkreter Anbieter nachgewiesen, der zwingend den vollständigen Cross-Origin-Referrer benötigt. Es gibt daher keine Ausnahme und keinen unsicheren Hotlink-Fallback. Reale Anbieter und physische Android-/Firefox-Installationen bleiben neben den CI-Protokollen gesondert zu validieren.

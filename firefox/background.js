@@ -9,7 +9,21 @@ const api = globalThis.browser || globalThis.chrome;
 // ---------- Referer setzen (fetch darf das nicht – dafür eine kurze Regel, nur für genau diese Anfrage) ----------
 let nextRule = 1000;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Strict origin comparison includes scheme and effective port. Never alter the media URL.
+  function mediaReferrer(url, page, automaticRedirects = false) {
+    try {
+      const source = new URL(page), target = new URL(url);
+      if (!/^https?:$/.test(source.protocol) || !/^https?:$/.test(target.protocol) ||
+          source.protocol === 'https:' && target.protocol === 'http:') return '';
+      source.username = ''; source.password = ''; source.hash = '';
+      // GM transports cannot portably recompute custom headers at every redirect.
+      // HTTPS sources therefore send none; HTTP sources send at most their origin.
+      if (automaticRedirects) return source.protocol === 'https:' ? '' : source.origin + '/';
+      return source.origin === target.origin ? source.href : source.origin + '/';
+    } catch (e) { return ''; }
+  }
 async function refererRule(url, ref) {
+  ref = mediaReferrer(url, ref);
   const dnr = api.declarativeNetRequest;
   if (!dnr || !dnr.updateSessionRules || !ref) return 0;
   const id = nextRule++;
@@ -154,11 +168,11 @@ api.runtime.onConnect.addListener((port) => {
       let allowId = 0;
       if (!helper && privateHost(new URL(m.url).hostname)) allowId = await allowExact(m.url);   // (Prüfung oben: Seite liegt selbst dort)
       m.allowId = allowId;
-      if (ref && /^https?:/i.test(ref)) rule = await refererRule(m.url, ref);
+      if (ref && /^https?:/i.test(ref)) { rule = await refererRule(m.url, ref); if (mediaReferrer(m.url, ref) && !rule) throw new Error('Referrer protection unavailable'); }
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store',
+        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
