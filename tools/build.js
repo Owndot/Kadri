@@ -57,10 +57,10 @@ function content(target, test) {
     b = swap(b, "root = hostEl.attachShadow({ mode: 'closed' });", "root = hostEl.attachShadow({ mode: 'open' }); hostEl.setAttribute('data-kadri-test', '');", 'Shadow-DOM (Test)');
     // nur für die Tests: die Seite kann Anfragen über Kadri stellen lassen (wie das Skript es tut) – so prüfen die
     // Tests die Schutzregeln des Hintergrunds mit echten Anfragen aus einem Tab
-    b += "\n    window.addEventListener('message', (e) => { const d = e.data; if (!d || !d.kadriTestXhr || e.source !== window) return; const o = d.kadriTestXhr;" +
-      " const back = (r) => window.postMessage({ kadriTestRes: Object.assign({ id: o.id }, r) }, '*');" +
-      " GM_xmlhttpRequest(Object.assign({}, o, { onload: (r) => back({ status: r.status, text: r.responseText, finalUrl: r.finalUrl })," +
-      " onerror: (r) => back({ error: (r && (r.error || r.statusText)) || 'Fehler' }), ontimeout: () => back({ error: 'timeout' }) })); });\n";
+    b += "\n    const __kadriTestRequests = new Map(); window.addEventListener('message', (e) => { const d = e.data; if (!d || e.source !== window) return; if (d.kadriTestAbort) { const q = __kadriTestRequests.get(d.kadriTestAbort); if (q) q.abort(); return; } if (!d.kadriTestXhr) return; const o = d.kadriTestXhr;" +
+      " const back = (r) => { __kadriTestRequests.delete(o.id); window.postMessage({ kadriTestRes: Object.assign({ id: o.id }, r) }, '*'); };" +
+      " const req = GM_xmlhttpRequest(Object.assign({}, o, { onload: (r) => back({ status: r.status, text: r.responseText, finalUrl: r.finalUrl })," +
+      " onerror: (r) => back({ error: (r && (r.error || r.statusText)) || 'Fehler' }), ontimeout: () => back({ error: 'timeout' }), onabort: () => back({ error: 'aborted' }) })); __kadriTestRequests.set(o.id, req); });\n";
   }
   const pre = fs.readFileSync(path.join(ROOT, target, 'prelude.js'), 'utf8').replace("(function () {\n  'use strict';", "(function () {\n  'use strict';\n  const KADRI_VERSION = " + JSON.stringify(VERSION) + ';');
   const epi = fs.readFileSync(path.join(ROOT, target, 'epilogue.js'), 'utf8');

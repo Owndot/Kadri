@@ -41,6 +41,8 @@ oder wenn die Seite selbst dort liegt; Weiterleitungen ins eigene Netz → Antwo
 Test `test_guard.py`. Nachrichten eingebetteter Fenster an die Hauptseite tragen einen Schlüssel (`frameKey`, siehe
 Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
 
+**Arbeitsbranch Phase 1:** Siehe [SECURITY-PHASE-1.md](SECURITY-PHASE-1.md) für die neue Isolation der Header-Phase, ihre Tests und noch ausstehende Browser-Prüfungen. Die folgende Beschreibung von 1.12.14 beschreibt den bisherigen Release-Stand.
+
 **Auf Netz-Ebene** (seit 1.12.13, in 1.12.14 nach einer zweiten Prüfung an die einzelne Anfrage gebunden – greift
 auch bei Weiterleitungen, bevor ein Schritt das Gerät verlässt):
 

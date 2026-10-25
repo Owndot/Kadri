@@ -83,6 +83,62 @@ with sync_playwright() as p:
     r = xhr(lan, {'method': 'GET', 'url': LAN + 'redir?to=' + urllib.parse.quote(LAN + 'hdr?tag=l2')})
     check('Weiterleitung des Medienservers (unerwartet): gesperrt', 'error' in r and not hits('l2'), [r, hits('l2')])
     lan.close()
+    # Exact SAME local URL: only the legitimate request may reach the server.
+    lan = ctx.new_page(); lan.goto(LAN + 'direct.html'); time.sleep(1.0)
+    sw.evaluate("""() => {
+        globalThis.__gateAttempts = 0;
+        globalThis.__originalAcquire = headerGate.acquire;
+        headerGate.acquire = function(...args) {
+            globalThis.__gateAttempts++; return globalThis.__originalAcquire.apply(this, args);
+        };
+    }""")
+    HEADER_BARRIERS['exact-grant'] = threading.Event()
+    exact = LAN + 'slow?tag=exact-grant'
+    lan.evaluate('(o) => { window.__slow = (%s)(o); return 1; }' % XHR, {'url': exact})
+    for _ in range(100):
+        if hits('exact-grant'): break
+        time.sleep(0.02)
+    check('exact URL: legitimate request reached server', len(hits('exact-grant')) == 1, hits('exact-grant'))
+    pg.evaluate('(o) => { window.__attack = (%s)(o); return 1; }' % XHR, {'url': A + 'redir?to=' + urllib.parse.quote(exact)})
+    for _ in range(100):
+        if sw.evaluate('() => globalThis.__gateAttempts') >= 2: break
+        time.sleep(0.02)
+    check('exact URL: both contexts entered while headers held', sw.evaluate('() => globalThis.__gateAttempts') >= 2)
+    HEADER_BARRIERS['exact-grant'].set()
+    r = pg.evaluate('() => window.__attack')
+    sw.evaluate('() => { headerGate.acquire = globalThis.__originalAcquire; }')
+    legitimate = lan.evaluate('() => window.__slow')
+    check('exact URL: concurrent foreign redirect blocked', 'error' in r and legitimate.get('status') == 200 and len(hits('exact-grant')) == 1, [r, hits('exact-grant')])
+    lan.close()
+    # B has an authenticated request in flight while A redirects to B.
+    bp = ctx.new_page(); bp.goto(Bb + 'direct.html'); time.sleep(1.0)
+    sw.evaluate("""() => {
+        globalThis.__gateAttempts = 0;
+        globalThis.__originalAcquire = headerGate.acquire;
+        headerGate.acquire = function(...args) {
+            globalThis.__gateAttempts++; return globalThis.__originalAcquire.apply(this, args);
+        };
+    }""")
+    HEADER_BARRIERS['b-active'] = threading.Event()
+    bp.evaluate('(o) => { window.__slow = (%s)(o); return 1; }' % XHR,
+                {'url': Bb + 'slow?tag=b-active'})
+    for _ in range(100):
+        if hits('b-active'): break
+        time.sleep(0.02)
+    check('B credential request is active', len(hits('b-active')) == 1, hits('b-active'))
+    pg.evaluate('(o) => { window.__attack = (%s)(o); return 1; }' % XHR,
+                {'url': A + 'redir?to=' + urllib.parse.quote(Bb + 'hdr?tag=b-parallel'), 'headers': AUTH})
+    for _ in range(100):
+        if sw.evaluate('() => globalThis.__gateAttempts') >= 2: break
+        time.sleep(0.02)
+    check('credentials: both contexts entered while headers held', sw.evaluate('() => globalThis.__gateAttempts') >= 2)
+    HEADER_BARRIERS['b-active'].set()
+    r = pg.evaluate('() => window.__attack')
+    sw.evaluate('() => { headerGate.acquire = globalThis.__originalAcquire; }')
+    bp.evaluate('() => window.__slow')
+    h = hits('b-parallel')
+    check('parallel B request does not authorize A redirect', r.get('status') == 200 and h and not h[0]['cookie'] and not h[0]['auth'], [r,h])
+    bp.close()
     # ---- 4. Schutzregeln lassen sich nicht setzen ----
     sw.evaluate('''() => { const d = chrome.declarativeNetRequest; globalThis.__upd = d.updateSessionRules;
         d.updateSessionRules = () => Promise.reject(new Error('Test')); netReady = null; }''')
@@ -94,6 +150,52 @@ with sync_playwright() as p:
     sw.evaluate('() => { chrome.declarativeNetRequest.updateSessionRules = globalThis.__upd; netReady = null; }')
     r = xhr(pg, {'method': 'GET', 'url': A + 'hdr?tag=f2'})
     check('Regeln wieder setzbar: Anfragen gehen wieder', r.get('status') == 200 and hits('f2'), r)
+    # ---- 5. Native DNR state + deterministic failed cleanup, without resetting implementation state ----
+    local = ctx.new_page(); local.goto(LAN + 'direct.html'); time.sleep(1)
+    sw.evaluate("""() => {
+      const d = chrome.declarativeNetRequest;
+      globalThis.__recoveryOriginal = d.updateSessionRules;
+      globalThis.__cleanupWasRejected = false;
+      globalThis.__rejectRecovery = false;
+      globalThis.__rejectCleanupOnce = true;
+      d.updateSessionRules = async function(o) {
+        if (globalThis.__rejectRecovery) throw new Error('injected repeated DNR failure');
+        if (globalThis.__rejectCleanupOnce && !(o.addRules || []).length &&
+            (o.removeRuleIds || []).some(id => id >= 1000)) {
+          globalThis.__rejectCleanupOnce = false;
+          globalThis.__cleanupWasRejected = true;
+          throw new Error('injected cleanup failure');
+        }
+        return globalThis.__recoveryOriginal.call(d,o);
+      };
+    }""")
+    r = xhr(local, {'url': LAN + 'hdr?tag=recovery-owner'})
+    # Error reaches the caller only after resetHeaders has rejected and released the owner as unsafe.
+    state = sw.evaluate("""async () => ({
+      failed: globalThis.__cleanupWasRejected,
+      orphan: (await chrome.declarativeNetRequest.getSessionRules()).some(r=>r.id>=1000)
+    })""")
+    check('native cleanup failure leaves a confirmed orphan, request fails closed',
+          bool(r.get('error')) and state['failed'] and state['orphan'], [r,state])
+    sw.evaluate('() => { globalThis.__rejectRecovery = true; }')
+    r = xhr(pg, {'url': A + 'hdr?tag=recovery-must-not-fetch'})
+    check('repeated native DNR failure prevents the next network request',
+          bool(r.get('error')) and not hits('recovery-must-not-fetch'), r)
+    sw.evaluate('() => { globalThis.__rejectRecovery = false; }')
+    r = xhr(pg, {'url': A + 'redir?to=' + urllib.parse.quote(LAN + 'hdr?tag=recovery-foreign')})
+    check('successful native recovery removes orphan before foreign redirect',
+          bool(r.get('error')) and not hits('recovery-foreign'), r)
+    r = xhr(pg, {'url': A + 'hdr?tag=recovery-normal'})
+    state = sw.evaluate("""async () => {
+      const rules = await chrome.declarativeNetRequest.getSessionRules();
+      return {orphan: rules.some(r=>r.id>=1000),
+              exemptions: (rules.find(r=>r.id===80).condition.excludedRequestDomains || [])};
+    }""")
+    check('native recovery resumes requests and clears temporary grants/credentials',
+          r.get('status') == 200 and len(hits('recovery-normal')) == 1 and
+          not state['orphan'] and not state['exemptions'], [r,state])
+    sw.evaluate('() => { chrome.declarativeNetRequest.updateSessionRules = globalThis.__recoveryOriginal; }')
+    local.close()
     ctx.close()
 tsrv.shutdown()
 shutdown()

@@ -1,0 +1,66 @@
+name: Baseline performance observations
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/security-phase-1]
+    paths: ['tests/mess_validation.py', '.github/workflows/performance-validation.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install measurement tools
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+      - name: Record reproducible browser environment
+        run: |
+          mkdir -p validation-results
+          python3 - <<'PY'
+          import json,os,platform,sys,importlib.metadata
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              browser=p.chromium.launch()
+              version=browser.version
+              browser.close()
+          with open("validation-results/environment.json","w") as f:
+              json.dump({"source":os.environ["GITHUB_SHA"],"platform":platform.platform(),
+                         "python":sys.version,"playwright":importlib.metadata.version("playwright"),
+                         "chromium":version,"physical_device":False,
+                         "order":["stable","current","current","stable"]*3},f,indent=2)
+          PY
+      - name: Build pinned stable and current
+        run: |
+          mkdir "$RUNNER_TEMP/stable"
+          git archive c559dfa0ee10f6ab8138028e1004298ebfde5b48 | tar -x -C "$RUNNER_TEMP/stable"
+          (cd "$RUNNER_TEMP/stable" && node tools/build.js --test)
+          node tools/build.js --test
+      - name: Counterbalanced raw observations
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p validation-results
+          for block in 1 2 3; do
+            for label in stable current current stable; do
+              if [ "$label" = stable ]; then ext="$RUNNER_TEMP/stable/dist/test"; else ext="$GITHUB_WORKSPACE/dist/test"; fi
+              KADRI_EXT="$ext" xvfb-run -a python3 tests/mess_validation.py --label "$label" --output validation-results/raw.jsonl
+            done
+          done
+          git rev-parse HEAD > validation-results/current-commit.txt
+          echo c559dfa0ee10f6ab8138028e1004298ebfde5b48 > validation-results/stable-commit.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: desktop-baseline-observations
+          path: validation-results

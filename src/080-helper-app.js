@@ -130,6 +130,7 @@
           url: u,
           headers: { Range: 'bytes=0-1', Referer: location.href },   // wie der Web-Player der Seite
           timeout: 4000,
+          kadriPurpose: 'player-resolve',
           onreadystatechange: (r) => { if (r && r.readyState >= 2 && r.finalUrl) finish(r.finalUrl, desc(r.status, r.finalUrl)); },
           onload: (r) => finish((r && r.finalUrl) || u, desc(r && r.status, r && r.finalUrl)),
           onerror: () => finish(u, 'Anfrage abgelehnt'),
