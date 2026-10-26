@@ -10,6 +10,7 @@ permissions:
   contents: read
 jobs:
   build-test:
+    if: github.head_ref != 'codex/pairing-key-recovery'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -68,3 +69,47 @@ jobs:
           path: |
             dist/kadri-*.zip
             tests/out/*.log
+
+  pairing-recovery:
+    if: github.head_ref == 'codex/pairing-key-recovery'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: cc14bcdfb8a7a7d296c32ab3943c74b291be6ac4
+          path: baseline
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Existing Chromium test tools only
+        run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y --no-install-recommends xvfb zip
+      - name: Prove stale-key regression on unchanged main
+        run: |
+          set -euo pipefail
+          if node tests/helper_repair_check.js baseline > /tmp/old-key.log 2>&1; then echo 'Stale-key failure not reproduced'; exit 1; fi
+          grep -q 'existing tab kept stale key' /tmp/old-key.log
+          node baseline/tools/build.js --test
+          if timeout 100 env KADRI_EXT="$PWD/baseline/dist/test" xvfb-run -a python3 -u tests/test_repair.py > /tmp/old-browser.log 2>&1; then echo 'Browser baseline unexpectedly recovered'; exit 1; fi
+          grep -q 'existing tab kept stale key after re-pairing' /tmp/old-browser.log
+          echo 'PASS: actual old source and old Chromium extension reproduce stale-key failure'
+      - name: Fixed adapters and focused real extension checks
+        run: |
+          set -euo pipefail
+          node tests/helper_repair_check.js
+          node tests/referrer_check.js
+          node tests/header_context_check.js
+          node tests/ff_net_check.js firefox/background.js
+          node tools/build.js --test
+          xvfb-run -a python3 -u tests/test_repair.py
+          TESTS="test_helper.py test_proxy.py" tests/run_all.sh

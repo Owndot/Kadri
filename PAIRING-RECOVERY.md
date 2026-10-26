@@ -1,0 +1,11 @@
+# Erneute Kopplung in bereits offenen Tabs
+
+Ausgangsstand: Kadri cc14bcd / Helper 4541036, unveränderte Schnittstelle v3 auf Port 47811. Der alte Code hielt den Dokumentstart-Schlüssel fest. Nach neuer Kopplung in einem anderen Tab blieb die Popup-Anzeige bereits aktuell, während offene Videotabs weiterhin den alten Schlüssel verwendeten. Bestehende Tests luden danach eine neue Videoseite und übersahen diesen Fall.
+
+Der Draft-Fix (Kadri 1.12.15, gemeinsame Userscript-Basis 19.30) liest für jede neue Helper-Anfrage den aktuellen GM-kompatiblen Speicher. Chromium und Firefox übernehmen ausschließlich lokale Änderungen/Entfernung von gm:helperKey. Andere Einstellungen behalten ihren bisherigen Snapshot. Ein Speicherfehler stoppt die Anfrage; explizite Kandidaten werden nur für ihren Prüfaufruf verwendet. Kein Retry mit alten Schlüsseln, keine neue Serverauthentifizierung, keine Protokolländerung und keine neue APK erforderlich. Bereits abgesendete Requests werden nicht umgeschrieben.
+
+Tests: `node tests/helper_repair_check.js` prüft tatsächliche Adapter/Funktion mit synthetischen Schlüsseln. Als Argument kann ein unveränderter Baseline-Quellordner übergeben werden: dort muss der neue Regressionstest fehlschlagen. `KADRI_EXT=dist/test xvfb-run -a python3 tests/test_repair.py` prüft mit vorhandenen Playwright-/HTTP-Fixtures zwei echte Videotabs während einer Kopplung im dritten Tab sowie Browserneustart. Keine produktiven Konten oder Schlüssel. Chromium-Browsernachweis und Firefox-Adaptermodell werden ausdrücklich unterschieden.
+
+Der Fix verspricht keine vollständige Helper-Erkennung in einem bereits offenen Player, wenn dessen einmaliger Start-Ping ursprünglich fehlschlug. Lokale Serveridentität bleibt das akzeptierte Beta-Restrisiko; der Schlüssel-Speicher ist keine Serverauthentifizierung. Samsung-/Vivaldi-/OEM-Einzelheiten sind auf echter Hardware nicht verifiziert.
+
+Die gemeinsame Bestandsaufnahme und vorhandene Issues werden im parallelen Helper-Draft dokumentiert (`TECHNICAL-BASELINE-2026-10-26.md`): große Proxy-/Segmentantworten (#5), Download-Prozessende (#6), PiP (#7), veraltete Referrer-Issuebeschreibung (#8) und bestehende Firefox-Abweichungen (#9). Keine neue Sicherheitsarchitektur oder behobene Referrer-/Quellenpositions-Regression erneut eröffnen.
