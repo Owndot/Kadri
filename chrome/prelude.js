@@ -37,7 +37,7 @@
       const call = (fn, arg) => { try { if (typeof fn === 'function') fn(arg); } catch (e) {} };
       const fail = (kind, msg) => {
         if (done) return;
-        done = true;
+        done = true; chunks.length = 0; size = 0;
         const r = { status: 0, readyState: 4, finalUrl: o.url, responseText: '', response: null, responseHeaders: '', error: msg || '' };
         call(kind === 'timeout' ? (o.ontimeout || o.onerror) : o.onerror, r);
         try { port && port.disconnect(); } catch (e) {}
@@ -89,7 +89,7 @@
       return {
         abort() {
           if (done) return;
-          aborted = true; done = true;
+          aborted = true; done = true; chunks.length = 0; size = 0;
           try { port.postMessage({ t: 'abort' }); } catch (e) {}
           try { port.disconnect(); } catch (e) {}
           call(o.onabort, { status: 0, readyState: 4 });

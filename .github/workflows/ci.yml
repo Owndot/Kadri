@@ -10,7 +10,7 @@ permissions:
   contents: read
 jobs:
   build-test:
-    if: github.head_ref != 'codex/pairing-key-recovery'
+    if: github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/browser-proxy-memory'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -151,3 +151,19 @@ jobs:
           echo 'PASS: both reviewed races reproduced independently for Chrome and Firefox'
       - name: Current persistent-reader regression tests
         run: node tests/helper_repair_check.js
+
+
+  proxy-memory-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Actual shared proxy client and bounded concurrent responses
+        run: node --max-old-space-size=32 --expose-gc tests/proxy_memory_check.js
+      - name: Build both unchanged extension targets
+        run: node tools/build.js
