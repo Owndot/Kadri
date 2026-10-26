@@ -163,6 +163,22 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Reproduce lost player priority and verify the previous working caller
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=2cc7e597b725de8db0356f5ae3ccc6d8fda8e931' --jq .content | base64 --decode > "$RUNNER_TEMP/old-player.js"
+          if node tests/player_priority_check.js "$PWD" "$RUNNER_TEMP/old-player.js" > "$RUNNER_TEMP/old-player.log" 2>&1; then echo 'Lost priority not reproduced'; exit 1; fi
+          grep -q 'actual player caller lost priority behind background work' "$RUNNER_TEMP/old-player.log"
+          gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=186b25072223c3a25a62176ae4063e1bef3c6344' --jq .content | base64 --decode > "$RUNNER_TEMP/previous-working-player.js"
+          node tests/player_priority_check.js "$PWD" "$RUNNER_TEMP/previous-working-player.js"
+          echo 'PASS: actual reviewed caller fails; previous working caller retains priority'
+      - name: Current transfer, cancellation and player-priority regressions
+        run: |
+          node tests/proxy_review_check.js
+          node tests/player_priority_check.js
       - name: Actual shared proxy client and bounded concurrent responses
         run: node --max-old-space-size=32 --expose-gc tests/proxy_memory_check.js
       - name: Build both unchanged extension targets
