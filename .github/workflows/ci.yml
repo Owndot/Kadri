@@ -107,8 +107,6 @@ jobs:
       - name: Prove stale-key regression on unchanged main
         run: |
           set -euo pipefail
-          if node tests/helper_repair_check.js baseline > /tmp/old-key.log 2>&1; then echo 'Stale-key failure not reproduced'; exit 1; fi
-          grep -q 'existing tab kept stale key' /tmp/old-key.log
           node baseline/tools/build.js --test
           if timeout 100 env KADRI_EXT="$PWD/baseline/dist/test" xvfb-run -a python3 -u tests/test_repair.py > /tmp/old-browser.log 2>&1; then echo 'Browser baseline unexpectedly recovered'; exit 1; fi
           grep -q 'existing tab kept stale key after re-pairing' /tmp/old-browser.log
@@ -116,10 +114,40 @@ jobs:
       - name: Fixed adapters and focused real extension checks
         run: |
           set -euo pipefail
-          node tests/helper_repair_check.js
           node tests/referrer_check.js
           node tests/header_context_check.js
           node tests/ff_net_check.js firefox/background.js
           node tools/build.js --test
           xvfb-run -a python3 -u tests/test_repair.py
-          TESTS="test_helper.py test_proxy.py" tests/run_all.sh
+          TESTS="test_repair.py test_helper.py test_proxy.py" tests/run_all.sh
+
+  helper-key-regression:
+    # Regular fast guard for every matching PR and main push, independent of branch name.
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/checkout@v4
+        if: github.head_ref == 'codex/pairing-key-recovery'
+        with:
+          ref: 85c0d3c7fa8b3ec75f0f7abba68fbf9a8b2f5796
+          path: review-baseline
+          persist-credentials: false
+      - name: Reproduce both reviewed races on the previous PR head
+        if: github.head_ref == 'codex/pairing-key-recovery'
+        run: |
+          set -euo pipefail
+          for target in chrome firefox; do
+            for race in event-race initial-race; do
+              if node tests/helper_repair_check.js review-baseline --target="$target" --case="$race" > /tmp/race.log 2>&1; then echo 'Reviewed race not reproduced'; exit 1; fi
+              grep -Eq 'request before storage event used stale key|initialization lost storage change' /tmp/race.log
+            done
+          done
+          echo 'PASS: both reviewed races reproduced independently for Chrome and Firefox'
+      - name: Current persistent-reader regression tests
+        run: node tests/helper_repair_check.js

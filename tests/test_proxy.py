@@ -7,7 +7,8 @@ from common import *
 with sync_playwright() as p:
     ctx, sw, udir = launch(p)
     pg = ctx.pages[0] if ctx.pages else ctx.new_page()
-    helper['on'] = True; helper['key'] = 'evp-1'
+    helper['on'] = True; helper['key'] = '11112222333344445555666677778888'
+    sw.evaluate('(key) => chrome.storage.local.set({"gm:helperKey":key})', helper['key'])
     data = open(os.path.join(WEB, 'clip.webm'), 'rb').read()
     helper['pulls'] = [{'reqs': [{'id': 1, 'u': B + 'clip.webm', 'o': 0, 'l': 70000}, {'id': 2, 'u': B + 'clip.webm', 'o': 100000, 'l': 50000}]}]
     open_player(pg, B + 'direct.html')
