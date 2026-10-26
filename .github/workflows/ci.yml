@@ -90,10 +90,20 @@ jobs:
         with:
           python-version: '3.12'
       - name: Existing Chromium test tools only
+        timeout-minutes: 6
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000'
         run: |
-          pip install playwright==1.56.0
-          python -m playwright install --with-deps chromium
-          sudo apt-get install -y --no-install-recommends xvfb zip
+          set -euo pipefail
+          timeout 90 pip install --timeout 30 --retries 1 playwright==1.56.0
+          # Run40304715724 spent >11 minutes on Azure mirror downloads.
+          # Same signed official Ubuntu archive, already used by Helper validation.
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          timeout 240 python -m playwright install --with-deps chromium
+          command -v xvfb-run
+          command -v zip
       - name: Prove stale-key regression on unchanged main
         run: |
           set -euo pipefail
