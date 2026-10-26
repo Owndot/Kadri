@@ -175,8 +175,21 @@ jobs:
           gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=186b25072223c3a25a62176ae4063e1bef3c6344' --jq .content | base64 --decode > "$RUNNER_TEMP/previous-working-player.js"
           node tests/player_priority_check.js "$PWD" "$RUNNER_TEMP/previous-working-player.js"
           echo 'PASS: actual reviewed caller fails; previous working caller retains priority'
+      - name: Reproduce initial-status timeout on the reviewed client
+        if: github.head_ref == 'codex/browser-proxy-memory'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          old="$RUNNER_TEMP/initial-status-baseline"
+          mkdir -p "$old/src"
+          gh api 'repos/Owndot/Kadri/contents/src/080-helper-app.js?ref=0fea61f9999595add670ba232ae91e44a4891201' --jq .content | base64 --decode > "$old/src/080-helper-app.js"
+          if node tests/proxy_initial_status_check.js "$old" > "$old/status.log" 2>&1; then echo 'Initial status regression not reproduced'; exit 1; fi
+          grep -q 'initial status timeout discarded pulled work' "$old/status.log"
+          echo 'PASS: reviewed helper/proxyLoop drops the pulled batch on one status timeout'
       - name: Current transfer, cancellation and player-priority regressions
         run: |
+          node tests/proxy_initial_status_check.js
           node tests/proxy_review_check.js
           node tests/player_priority_check.js
       - name: Actual shared proxy client and bounded concurrent responses
