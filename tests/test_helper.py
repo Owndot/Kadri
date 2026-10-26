@@ -5,6 +5,7 @@ import time
 from common import *
 
 KEY = '0123456789abcdef0123456789abcdef'
+OLD = '11112222333344445555666677778888'
 with sync_playwright() as p:
     ctx, sw, udir = launch(p)
     pg = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -27,11 +28,12 @@ with sync_playwright() as p:
     check('… Download-Menü ohne Helfer-Wege', dl and 'Mit dem Helper' not in dl and 'Über den Browser laden' not in dl, dl)
     close_menu(pg)
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.6)
-    # ---------- mit Helfer (alter fester Schlüssel) ----------
-    helper['on'] = True; helper['key'] = 'evp-1'; helper['calls'].clear()
+    # ---------- mit synthetisch gekoppeltem Helfer ----------
+    helper['on'] = True; helper['key'] = OLD; helper['calls'].clear()
+    sw.evaluate('(key) => chrome.storage.local.set({"gm:helperKey":key})', OLD)
     open_player(pg, B + 'direct.html')
     time.sleep(0.8)
-    check('mit Helfer: beim Öffnen nachgefragt (Anfrage über den Hintergrund, mit Schlüssel)', len(hcalls('/ping')) >= 1 and hcalls('/ping')[0][2] == 'evp-1', helper['calls'][:3])
+    check('mit Helfer: beim Öffnen nachgefragt (Anfrage über den Hintergrund, mit Schlüssel)', len(hcalls('/ping')) >= 1 and hcalls('/ping')[0][2] == OLD, helper['calls'][:3])
     swipe(pg, 80, 600, 450)
     s_l2 = side(pg)
     br = hcalls('/bright')
