@@ -1,0 +1,128 @@
+name: Helper channel device package (minimal test build, upload gated)
+
+# Builds the MINIMAL Kadri test build dist/channel-only (the reviewed channel modules only: pairing, ping, dummy
+# data; no Kadri background, no content scripts, no media functions, no legacy helper port), checks it, rebuilds the
+# vendored WASM core from the pinned helper commit, runs the channel tests against the unchanged PocServer, and
+# packs a deterministic ZIP for "Load unpacked" after extraction. The repository is PUBLIC: the ZIP is uploaded only
+# after the owner committed .github/DEVICE-ARTIFACTS-APPROVED. No release, no tag, no store upload.
+on:
+  push:
+    branches: [feature/helper-channel-dummy]
+    paths:
+      - '.github/workflows/channel-device-package.yml'
+      - '.github/DEVICE-ARTIFACTS-APPROVED'
+      - 'channel/**'
+      - 'vendor/kadri-pairing-poc/**'
+      - 'tools/build.js'
+      - 'tests/channel/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channel-device-package
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Pinned helper commit
+        id: pin
+        run: |
+          sha=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/kadri-pairing-poc/SOURCE)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pin.outputs.sha }}
+          path: helper
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Toolchains (Rust 1.97.0 via the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+        run: |
+          set -euo pipefail
+          (cd helper/poc/pake-channel/core && rustc -V)
+          cargo install wasm-bindgen-cli --version 0.2.104 --locked
+      - name: WASM provenance – rebuild from the pinned helper commit, byte-compare
+        run: |
+          set -euo pipefail
+          grep -q '"status": "UNAPPROVED"' helper/release/production-policy.json
+          bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+          for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+          test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d' ' -f1)" = "$(sed -n 's/^sha256_wasm=//p' vendor/kadri-pairing-poc/SOURCE)"
+          echo 'PASS: vendored WASM rebuilt bit-identically; helper production policy UNAPPROVED'
+      - name: Desktop host of the unchanged PocServer
+        run: bash helper/poc/android-capability/tools/build-desktop-helper.sh "$RUNNER_TEMP/helper-host"
+      - name: Playwright (Chromium)
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+          npx playwright install --with-deps chromium
+      - name: Build and check the minimal test build
+        run: |
+          set -euo pipefail
+          node tools/build.js --channel-poc --channel-only
+          node - <<'JS'
+          const fs = require('fs'), path = require('path');
+          const d = 'dist/channel-only', m = JSON.parse(fs.readFileSync(path.join(d, 'manifest.json'), 'utf8'));
+          const want = { manifest_version: 3, permissions: ['declarativeNetRequest'], host_permissions: ['http://127.0.0.1/*'],
+            background: { service_worker: 'channel-only-background.js' },
+            content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" } };
+          for (const [k, v] of Object.entries(want)) if (JSON.stringify(m[k]) !== JSON.stringify(v)) throw new Error('manifest ' + k + ': ' + JSON.stringify(m[k]));
+          for (const k of ['content_scripts', 'web_accessible_resources', 'externally_connectable', 'declarative_net_request', 'optional_permissions'])
+            if (k in m) throw new Error('unexpected manifest key ' + k);
+          const files = [];
+          (function walk(p) { for (const f of fs.readdirSync(p)) { const q = path.join(p, f); fs.statSync(q).isDirectory() ? walk(q) : files.push(path.relative(d, q)); } })(d);
+          // Code ohne Kommentare (Kommentare nennen den alten Weg als Gegenbeispiel); der WASM-Glue ist generiert.
+          const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/.*$/gm, '$1').replace(/<!--[\s\S]*?-->/g, '');
+          const text = files.filter((f) => /\.(js|html)$/.test(f)).map((f) => strip(fs.readFileSync(path.join(d, f), 'utf8'))).join('\n');
+          for (const bad of ['47811', 'X-EVP-Key', 'kadri-xhr', 'GM_xmlhttpRequest', 'evp-1'])
+            if (text.includes(bad)) throw new Error('legacy path in minimal build: ' + bad);
+          console.log(files.sort().join('\n'));
+          console.log('PASS: MV3, only declarativeNetRequest + http://127.0.0.1/*, no content scripts, no legacy helper path');
+          JS
+      - name: Channel tests (unit, integration, browser – both test builds)
+        env:
+          HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+        run: |
+          set -euo pipefail
+          node tests/channel/channel_unit_check.js
+          node tests/channel/channel_integration_check.js
+          node tests/channel/channel_browser_check.js
+          CHANNEL_DIST_DIR=dist/channel-only node tests/channel/channel_browser_check.js
+          node tests/channel/channel_sandbox_failure_check.js
+      - name: Deterministic ZIP and SHA-256
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/deliver"
+          ZIP="$RUNNER_TEMP/deliver/kadri-channel-only-test.zip"
+          (cd dist/channel-only && find . -exec touch -h -d '@0' {} + && find . -type f | LC_ALL=C sort | sed 's#^\./##' | TZ=UTC zip -X -D -q "$ZIP" -@)
+          unzip -Z1 "$ZIP"
+          (cd "$RUNNER_TEMP/deliver" && sha256sum kadri-channel-only-test.zip > SHA256SUMS)
+          (cd dist/channel-only && sha256sum channel/kadri_pairing_poc_bg.wasm manifest.json) >> "$RUNNER_TEMP/deliver/SHA256SUMS"
+          printf 'kadri_commit=%s\nhelper_commit=%s\nworkflow_run=%s\n' "$GITHUB_SHA" "${{ steps.pin.outputs.sha }}" "${{ github.run_id }}" >> "$RUNNER_TEMP/deliver/SHA256SUMS"
+          cat "$RUNNER_TEMP/deliver/SHA256SUMS"
+      - name: Upload is gated
+        if: hashFiles('.github/DEVICE-ARTIFACTS-APPROVED') == ''
+        run: |
+          echo "Not uploaded: no owner approval (.github/DEVICE-ARTIFACTS-APPROVED). Nothing installable leaves the runner."
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: hashFiles('.github/DEVICE-ARTIFACTS-APPROVED') != ''
+        with:
+          name: kadri-channel-only-test-${{ github.run_id }}
+          path: ${{ runner.temp }}/deliver
+          retention-days: 1
+          if-no-files-found: error

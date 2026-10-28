@@ -198,3 +198,75 @@ jobs:
         run: node --max-old-space-size=32 --expose-gc tests/proxy_memory_check.js
       - name: Build both unchanged extension targets
         run: node tools/build.js
+
+  helper-channel:
+    # Isolated test build dist/channel-poc only (authenticated helper channel, dummy data).
+    # The helper counterpart is the unchanged, device-tested PocServer of the pinned helper commit,
+    # run on a desktop JVM. Nothing here is published; no APK is built.
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pinned helper commit
+        id: pin
+        run: |
+          sha=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/kadri-pairing-poc/SOURCE)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pin.outputs.sha }}
+          path: helper
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Toolchains (Rust 1.97.0 from the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+        run: |
+          set -euo pipefail
+          (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          cargo install wasm-bindgen-cli --version 0.2.104 --locked
+      - name: Rebuild the vendored WASM core from the pinned commit and compare
+        run: |
+          set -euo pipefail
+          bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+          for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+          test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d' ' -f1)" = "$(sed -n 's/^sha256_wasm=//p' vendor/kadri-pairing-poc/SOURCE)"
+          test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d' ' -f1)" = "$(sed -n 's/^sha256_js=//p' vendor/kadri-pairing-poc/SOURCE)"
+          echo 'PASS: vendored WASM core rebuilt bit-identically from the pinned helper commit'
+      - name: Desktop host of the unchanged PocServer
+        run: bash helper/poc/android-capability/tools/build-desktop-helper.sh "$RUNNER_TEMP/helper-host"
+      - name: Playwright (Chromium)
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+          npx playwright install --with-deps chromium
+      - name: Build; normal builds must not contain the channel
+        run: |
+          set -euo pipefail
+          node tools/build.js --test --channel-poc --channel-only
+          for d in dist/chrome dist/firefox dist/test; do
+            test ! -e "$d/channel" && test ! -e "$d/channel-background.js"
+            if grep -rlE 'kadri-channel|wasm_bindgen|47899' "$d"; then echo "channel code in $d"; exit 1; fi
+          done
+          if unzip -l dist/kadri-chrome-*.zip | grep -qE 'channel|wasm'; then exit 1; fi
+          if unzip -l dist/kadri-firefox-*.zip | grep -qE 'channel|wasm'; then exit 1; fi
+          echo 'PASS: dist/chrome, dist/firefox, dist/test and both zips contain no channel code'
+      - name: Channel integration, browser and mutation tests
+        env:
+          HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+        run: |
+          set -euo pipefail
+          node tests/channel/channel_unit_check.js
+          node tests/channel/channel_integration_check.js
+          node tests/channel/channel_browser_check.js
+          CHANNEL_DIST_DIR=dist/channel-only node tests/channel/channel_browser_check.js
+          node tests/channel/channel_sandbox_failure_check.js
+          node tests/channel/channel_mutation_check.js
