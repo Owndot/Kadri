@@ -108,4 +108,6 @@ write(path.join(DIST, 'firefox'), 'firefox', false);
 zip(path.join(DIST, 'chrome'), path.join(DIST, 'kadri-chrome-' + VERSION + '.zip'));
 zip(path.join(DIST, 'firefox'), path.join(DIST, 'kadri-firefox-' + VERSION + '.zip'));
 if (process.argv.includes('--test')) write(path.join(DIST, 'test'), 'chrome', true);
+// Firefox-Fassung mit denselben Test-Öffnungen (nur für den Firefox-Test der Schutzregeln, tests/firefox_dnr_scope.py)
+if (process.argv.includes('--test-firefox')) write(path.join(DIST, 'test-firefox'), 'firefox', true);
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));

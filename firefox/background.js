@@ -5,6 +5,9 @@
 //  2. Den Menüeintrag „Diagnose anzeigen“ (Tipp auf das Kadri-Symbol bei den Erweiterungen).
 'use strict';
 const api = globalThis.browser || globalThis.chrome;
+// Kadris Sitzungsregeln (DNR) gelten nur für Kadris eigene Anfragen: kein Tab UND von dieser Erweiterung
+// (Initiator moz-extension://<uuid>). Auch die Service Worker fremder Webseiten haben keinen Tab.
+const OWN_HOST = new URL(api.runtime.getURL('')).hostname;
 
 // ---------- Referer setzen (fetch darf das nicht – dafür eine kurze Regel, nur für genau diese Anfrage) ----------
 let nextRule = 1000;
@@ -34,7 +37,7 @@ async function refererRule(url, ref) {
       addRules: [{
         id, priority: 1,
         action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: ref }] },
-        condition: { regexFilter: '^' + esc(url) + '$', tabIds: [-1] },
+        condition: { regexFilter: '^' + esc(url) + '$', tabIds: [-1], initiatorDomains: [OWN_HOST] },
       }],
     });
     return id;
