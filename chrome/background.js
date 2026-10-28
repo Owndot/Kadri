@@ -7,6 +7,11 @@
 'use strict';
 importScripts('psl.js');   // pslBase(): Public Suffix List (welche Adressen zur selben Seite gehören)
 const api = globalThis.browser || globalThis.chrome;
+// Welche Anfragen Kadris Sitzungsregeln (DNR) betreffen: nur Kadris eigene. „Kein Tab“ (tabIds -1) allein genügt nicht –
+// auch die Service Worker fremder Webseiten haben keinen Tab; ohne die Herkunft (Initiator = diese Erweiterung) sperrte
+// Kadri deren Anfragen ins eigene Netz und entfernte ihre Cookies. Anfragen der Erweiterung (Hintergrund, Popup,
+// Optionen) tragen ihre Kennung als Initiator, auch nach Weiterleitungen; Anfragen aus Tabs betreffen die Regeln nie.
+const OWN = () => ({ tabIds: [-1], initiatorDomains: [api.runtime.id] });
 
 // Only the redirect/header phase owns global DNR exceptions. Bodies remain parallel.
 // No other non-helper fetch may start until exception removal has completed.
@@ -82,7 +87,7 @@ async function refererRule(url, ref) {
       addRules: [{
         id, priority: 1,
         action: { type: 'modifyHeaders', requestHeaders: [{ header: 'referer', operation: 'set', value: ref }] },
-        condition: { regexFilter: '^' + esc(url) + '$', tabIds: [-1] },
+        condition: Object.assign({ regexFilter: '^' + esc(url) + '$' }, OWN()),
       }],
     });
     return id;
@@ -111,8 +116,10 @@ function privateHost(h) {
 }
 // ---------- Schutz auf Netzwerk-Ebene: Kadris eigene Anfragen kommen nie ins eigene Netz ----------
 // Die Prüfung oben sieht nur die erste Adresse. Leitet ein Server weiter (öffentliche Adresse → Router), hätte die
-// Anfrage das Ziel schon erreicht, bevor Kadri es merkt. Darum eine Regel des Browsers: Anfragen, die nicht aus einem
-// Tab kommen (= Kadris eigene), dürfen keine Adresse im eigenen Netz erreichen – auch nicht nach einer Weiterleitung.
+// Anfrage das Ziel schon erreicht, bevor Kadri es merkt. Darum eine Regel des Browsers: Kadris eigene Anfragen (OWN:
+// ohne Tab UND von dieser Erweiterung) dürfen keine Adresse im eigenen Netz erreichen – auch nicht nach einer
+// Weiterleitung (der Initiator bleibt über alle Schritte derselbe). Anfragen von Webseiten, auch die ihrer Service
+// Worker, bleiben unberührt.
 // Ausnahmen: die Helfer-App (genau 127.0.0.1:47811 – ihre Anfragen folgen keiner Weiterleitung), und für die Dauer einer
 // Anfrage GENAU deren Adresse, wenn die Seite selbst im eigenen Netz liegt (Medienserver zu Hause). Eine Freigabe für
 // den ganzen Server oder Port gälte auch für gleichzeitige fremde Anfragen, die eine böse Seite dorthin umleitet –
@@ -124,15 +131,16 @@ const O = '[0-9]{1,3}', E = '(?:[:/?#]|$)';
 const PRIVATE_RES = ['127\\.' + O + '\\.' + O + '\\.' + O + E, '10\\.' + O + '\\.' + O + '\\.' + O + E, '192\\.168\\.' + O + '\\.' + O + E,
   '172\\.(?:1[6-9]|2[0-9]|3[01])\\.' + O + '\\.' + O + E, '169\\.254\\.' + O + '\\.' + O + E, '0\\.' + O + '\\.' + O + '\\.' + O + E,
   '100\\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.' + O + '\\.' + O + E, '\\[(?:::1|::|::ffff:[^\\]]*|f[cd][0-9a-f]{2}:[^\\]]*|fe80:[^\\]]*)\\]' + E];
-const NET_RULES = [{ id: 50, priority: 10, action: { type: 'allow' }, condition: { regexFilter: '^http://127\\.0\\.0\\.1:47811/', tabIds: [-1] } }]
-  .concat(PRIVATE_RES.map((re, i) => ({ id: 51 + i, priority: 5, action: { type: 'block' }, condition: { regexFilter: UI + re, tabIds: [-1] } })))
-  .concat([{ id: 70, priority: 5, action: { type: 'block' }, condition: { requestDomains: ['localhost', 'local', 'internal', 'lan'], tabIds: [-1] } }]);
+const NET_RULES = [{ id: 50, priority: 10, action: { type: 'allow' }, condition: Object.assign({ regexFilter: '^http://127\\.0\\.0\\.1:47811/' }, OWN()) }]
+  .concat(PRIVATE_RES.map((re, i) => ({ id: 51 + i, priority: 5, action: { type: 'block' }, condition: Object.assign({ regexFilter: UI + re }, OWN()) })))
+  .concat([{ id: 70, priority: 5, action: { type: 'block' }, condition: Object.assign({ requestDomains: ['localhost', 'local', 'internal', 'lan'] }, OWN()) }]);
 // Anmeldung nie an eine fremde Seite weiterreichen: Cookies und Authorization nehmen Kadris Anfragen nur zu Seiten mit,
 // für die gerade eine angemeldete Anfrage läuft (deren Seite = die Seite des Fensters). Leitet ein Server dorthin weiter,
 // wo man nicht angemeldet sein soll, entfernt der Browser die Header VOR dem Absenden dieses Schritts (Regel 80).
+// Nur für Kadris eigene Anfragen (OWN) – Cookies der Service Worker fremder Webseiten bleiben unberührt.
 const STRIP = 80, credSites = new Map();   // Seite → Zahl laufender angemeldeter Anfragen
 const stripRule = () => {
-  const cond = { tabIds: [-1] }, ex = Array.from(credSites.keys());
+  const cond = OWN(), ex = Array.from(credSites.keys());
   if (ex.length) cond.excludedRequestDomains = ex;
   return { id: STRIP, priority: 30, condition: cond, action: { type: 'modifyHeaders', requestHeaders: ['cookie', 'authorization', 'proxy-authorization'].map((header) => ({ header, operation: 'remove' })) } };
 };
@@ -176,7 +184,7 @@ async function allowExact(u) {
   if (nextRule > 900000) nextRule = 1000;
   try {
     await dnr.updateSessionRules({ removeRuleIds: [id], addRules: [{ id, priority: 20, action: { type: 'allow' },
-      condition: { regexFilter: '^' + esc(noHash(u)) + '$', tabIds: [-1] } }] });
+      condition: Object.assign({ regexFilter: '^' + esc(noHash(u)) + '$' }, OWN()) }] });
     return id;
   } catch (e) { return 0; }
 }

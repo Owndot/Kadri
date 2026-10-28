@@ -198,3 +198,45 @@ jobs:
         run: node --max-old-space-size=32 --expose-gc tests/proxy_memory_check.js
       - name: Build both unchanged extension targets
         run: node tools/build.js
+
+  dnr-scope:
+    # Kadris Schutzregeln gelten nur für Kadris eigene Anfragen, nie für Service Worker fremder Webseiten
+    # (Chromium: Mutationsprobe; Firefox: echter Browser vom Runner, Kadri als temporäre Erweiterung).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Werkzeuge
+        run: |
+          pip install playwright==1.56.0 selenium==4.38.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb
+          firefox --version
+          geckodriver --version | head -1
+      - name: Bauen (Chromium- und Firefox-Testfassung)
+        run: node tools/build.js --test --test-firefox
+      - name: Chromium – fremde Service Worker und eigene Anfragen
+        run: TESTS="test_dnr_scope.py test_redirect.py test_guard.py" tests/run_all.sh
+      - name: Chromium – Mutationsprobe (jede Abschwächung muss auffallen)
+        run: cd tests && xvfb-run -a python3 -u dnr_scope_mutation.py
+      - name: Firefox – fremde Service Worker und eigene Anfragen
+        run: cd tests && python3 -u firefox_dnr_scope.py | tee "$RUNNER_TEMP/ff.log" && ! grep -q '^FAIL' "$RUNNER_TEMP/ff.log" && grep -q '^ERGEBNIS' "$RUNNER_TEMP/ff.log"
+      - name: Firefox – Gegenprobe ohne Initiator an der Referer-Regel muss auffallen
+        run: |
+          set -euo pipefail
+          mut="$RUNNER_TEMP/ff-mutant"; rm -rf "$mut"; cp -r dist/test-firefox "$mut"
+          python3 - "$mut/background.js" <<'PY'
+          import sys
+          p = sys.argv[1]; s = open(p, encoding='utf-8').read()
+          a = "tabIds: [-1], initiatorDomains: [OWN_HOST] },"
+          assert s.count(a) == 1
+          open(p, 'w', encoding='utf-8').write(s.replace(a, "tabIds: [-1] },"))
+          PY
+          cd tests && python3 -u firefox_dnr_scope.py "$mut" | tee "$RUNNER_TEMP/ff-mut.log" || true
+          grep -q '^FAIL F5' "$RUNNER_TEMP/ff-mut.log"
+          echo 'PASS: Firefox-Test erkennt die Referer-Regel ohne Initiator'
