@@ -103,6 +103,7 @@ jobs:
           node tests/channel/channel_integration_check.js
           node tests/channel/channel_browser_check.js
           CHANNEL_DIST_DIR=dist/channel-only node tests/channel/channel_browser_check.js
+          node tests/channel/channel_sandbox_failure_check.js
       - name: Deterministic ZIP and SHA-256
         run: |
           set -euo pipefail

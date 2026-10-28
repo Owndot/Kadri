@@ -8,6 +8,9 @@
 //  - Nachrichten: nur von der eigenen Testseite channel/channel.html. Content-Scripts (auch Kadris eigene) und
 //    Webseiten bekommen "refused". Andere Nachrichtentypen bleiben unberührt für Kadris eigene Empfänger.
 //  - Kein Weg vom Kanal zum alten Helfer-Protokoll (X-EVP-Key, Port 47811) und umgekehrt.
+//  - Optionale Vorbedingung des Builds (NS.networkPrecondition, im minimalen Test-Build: bestätigter Netzwerk-
+//    Sandkasten): Solange sie nicht erfüllt ist, wird jede Aktion mit „sandbox-missing“ abgelehnt und keine Anfrage
+//    gestellt (fail-closed).
 (function (root) {
   'use strict';
   const NS = root.KadriChannel;
@@ -43,6 +46,7 @@
   const transport = NS.createTransport({
     port: PORT,
     fetchImpl: async (url, init) => {
+      if (!(await precondition())) throw new Error('network sandbox unavailable');
       if (!(await networkRule())) throw new Error('network rule unavailable');
       return fetch(url, init);
     },
@@ -50,6 +54,7 @@
   const store = NS.createStore(NS.idbBackend('kadri-helper-channel'), () => core.identity_generate());
   const channel = NS.createChannel({ core, store, transport });
   const ready = () => wasmReady.then(() => channel);
+  const precondition = () => (typeof NS.networkPrecondition === 'function' ? Promise.resolve(NS.networkPrecondition()).catch(() => false) : Promise.resolve(true));
 
   const ACTIONS = {
     status: (c) => c.status(),
@@ -66,7 +71,10 @@
       (!sender.origin || sender.origin === new URL(page).origin);
     const act = fromPage && Object.prototype.hasOwnProperty.call(ACTIONS, m.op) ? ACTIONS[m.op] : null;
     if (!act) { reply({ ok: false, error: { kind: 'refused', message: 'refused' } }); return; }
-    ready().then((c) => act(c, m)).then(
+    precondition().then((ok) => {
+      if (!ok) { const e = new Error('Sicherheitsregel (Netzwerk-Sandkasten) fehlt – Test-Build gesperrt'); e.kind = 'sandbox-missing'; throw e; }
+      return ready();
+    }).then((c) => act(c, m)).then(
       (value) => reply({ ok: true, value }),
       (e) => reply({ ok: false, error: { kind: (e && e.kind) || 'error', message: String((e && e.message) || e) } }));
     return true;

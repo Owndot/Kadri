@@ -27,6 +27,26 @@ const PROBE_PAGE = `<!doctype html><meta charset="utf-8"><title>Angreifer-Seite 
 })();
 </script>`;
 
+// Fremde Webseite mit eigenem Service Worker (Review N1): Dessen Anfragen haben ebenfalls tabId -1. Eine Sperrregel
+// nur mit tabIds [-1] träfe sie – die Sandkasten-Regel des minimalen Builds darf nur die eigene Erweiterung treffen.
+const WEB_SW = `self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+self.addEventListener('message', async (e) => {
+  let r;
+  try { const res = await fetch('/sw-data', { cache: 'no-store' }); r = 'sw:' + (await res.text()); } catch (x) { r = 'blocked'; }
+  e.ports[0].postMessage(r);
+});`;
+const WEB_SW_PAGE = `<!doctype html><meta charset="utf-8"><title>Webseite mit Service Worker (Test)</title><script>
+(async () => { try {
+  const reg = await navigator.serviceWorker.register('/sw.js');
+  const ready = await navigator.serviceWorker.ready;
+  const sw = ready.active || reg.active;
+  const ch = new MessageChannel();
+  const r = await new Promise((res) => { ch.port1.onmessage = (e) => res(e.data); sw.postMessage('go', [ch.port2]); setTimeout(() => res('timeout'), 8000); });
+  document.documentElement.dataset.sw = r;
+} catch (e) { document.documentElement.dataset.sw = 'register-failed: ' + e.name; } })();
+</script>`;
+
 // Probe-Content-Script (nur in der Testkopie): versucht alles, was ein kompromittiertes Content-Script versuchen könnte.
 const PROBE_CS = `(async () => {
   if (location.port !== '${PROBE_PORT}') return;
@@ -63,7 +83,13 @@ async function main() {
   manifest.content_scripts.push({ matches: ['http://127.0.0.1/*'], js: ['channel-probe-cs.js'], run_at: 'document_idle' });
   fs.writeFileSync(path.join(ext, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
-  const probe = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(PROBE_PAGE); });
+  const probe = http.createServer((req, res) => {
+    const u = req.url.split('?')[0];
+    if (u === '/sw.js') { res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' }); res.end(WEB_SW); return; }
+    if (u === '/sw-data') { res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' }); res.end('sw-ok'); return; }
+    if (u === '/sw-page.html') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(WEB_SW_PAGE); return; }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(PROBE_PAGE);
+  });
   await new Promise((r) => probe.listen(PROBE_PORT, '127.0.0.1', r));
   const h = startHelper();
   await h.ready;
@@ -107,7 +133,8 @@ async function main() {
     check('Kanal-Freigabe (Regel 40) nur für POST an die vier Pfade', rules.some((r) => r.id === 40 && r.action.type === 'allow' && /47899\/p1\//.test(r.condition.regexFilter) && r.condition.requestMethods.join() === 'post'));
     if (!minimal) check('Kadris Schutzregeln bleiben bestehen (50–70, 80)', [50, 51, 58, 70, 80].every((x) => ids.includes(x)), ids.join(','));
     if (minimal) {
-      check('Minimal: Sandkasten-Regel 41 sperrt alle übrigen Anfragen der Erweiterung', ids.join(',') === '40,41' && rules.some((r) => r.id === 41 && r.action.type === 'block' && r.condition.tabIds.join() === '-1'), ids.join(','));
+      check('Minimal: Sandkasten-Regel 41 sperrt nur Anfragen der eigenen Erweiterung (tabIds -1 + initiatorDomains = ID)', ids.join(',') === '40,41' &&
+        rules.some((r) => r.id === 41 && r.action.type === 'block' && r.condition.tabIds.join() === '-1' && JSON.stringify(r.condition.initiatorDomains) === JSON.stringify([id])), ids.join(','));
       const blocked = await sw.evaluate(async () => {
         const out = {};
         for (const [k, u, m] of [['other', 'http://127.0.0.1:47901/', 'GET'], ['web', 'https://example.com/', 'GET'], ['legacy', 'http://127.0.0.1:47811/ping', 'GET'], ['getChannel', 'http://127.0.0.1:47899/p1/ch/hs', 'GET'], ['otherPath', 'http://127.0.0.1:47899/ping', 'POST']]) {
@@ -140,6 +167,15 @@ async function main() {
     check('Fremder Listener: erkannt, nichts übertragen', !r1.ok && !r2.ok && r2.error.kind === 'identity-mismatch', r1.error.kind + ' / ' + r2.error.kind);
     const off = await h.cmd('rogue-off');
     check('Fremder Listener sah keinen Klartext; echter Helfer wieder erreichbar', /plaintextHits=0$/.test(off) && (await send('ping')).ok, off);
+
+    // Fremde Webseite mit Service Worker (Review N1)
+    const web = await context.newPage();
+    await web.goto('http://127.0.0.1:' + PROBE_PORT + '/sw-page.html');
+    await web.waitForFunction(() => document.documentElement.dataset.sw, null, { timeout: 20000 });
+    const swResult = await web.evaluate(() => document.documentElement.dataset.sw);
+    await web.close();
+    if (minimal) check('Minimal: Service Worker einer fremden Webseite wird nicht blockiert (N1)', swResult === 'sw:sw-ok', swResult);
+    else console.log('INFO Kadri + Kanal: Webseiten-Service-Worker → ' + swResult + ' (Kadris eigene Regeln 51–70 sperren 127.x für tabId -1 ohne Initiator – bestehendes Kadri-Verhalten, nicht Teil dieses Builds)');
 
     // Bösartige Webseite und Content-Script
     const evil = await context.newPage();

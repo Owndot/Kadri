@@ -33,6 +33,9 @@ const BROWSER_MUTANTS = [   // [Name, Build, Datei, alt, neu]
   ['Netzwerkfreigabe für alle Methoden', 'channel-poc', 'channel/channel-service.js', "requestMethods: ['post'], ", ""],
   ['Minimal: Sandkasten lässt alles durch', 'channel-only', 'channel-only-background.js', "action: { type: 'block' }", "action: { type: 'allow' }"],
   ['Minimal: Absenderprüfung entfernt', 'channel-only', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
+  ['N1: Sandkasten ohne Initiator (trifft fremde Service Worker)', 'channel-only', 'channel-only-background.js', "condition: { tabIds: [-1], initiatorDomains: [chrome.runtime.id] }", "condition: { tabIds: [-1] }"],
+  ['N1: Fehler beim Setzen der Regel verschluckt', 'channel-only', 'channel-only-background.js', "nicht gesetzt werden:', e); return false;", "nicht gesetzt werden:', e); return true;"],
+  ['N1: Vorbedingung im Kanal ignoriert', 'channel-only', 'channel/channel-service.js', "const precondition = () => (typeof NS.networkPrecondition === 'function' ?", "const precondition = () => (false ?"],
 ];
 
 function mutate(srcFile, from, to) {
@@ -53,6 +56,7 @@ if (!run('channel_unit_check.js', {}, 120000, true)) { console.log('baseline uni
 if (!run('channel_integration_check.js', {}, 600000, true)) { console.log('baseline integration FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', {}, 600000, true)) { console.log('baseline browser FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', { CHANNEL_DIST_DIR: path.join(ROOT, 'dist', 'channel-only') }, 600000, true)) { console.log('baseline minimal browser FAILED'); process.exit(1); }
+if (!run('channel_sandbox_failure_check.js', {}, 300000, true)) { console.log('baseline sandbox failure FAILED'); process.exit(1); }
 console.log('baselines pass');
 for (const [name, file, from, to] of NODE_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-'));
@@ -68,7 +72,9 @@ for (const [name, build, file, from, to] of BROWSER_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-dist-'));
   fs.cpSync(path.join(ROOT, 'dist', build), dir, { recursive: true });
   mutate(path.join(dir, file), from, to);
-  const passed = run('channel_browser_check.js', { CHANNEL_DIST_DIR: dir }, 300000);
+  // Minimaler Build: zusätzlich der Fail-closed-Test; erkannt, wenn einer der Tests fehlschlägt.
+  const passed = run('channel_browser_check.js', { CHANNEL_DIST_DIR: dir }, 300000) &&
+    (build !== 'channel-only' || run('channel_sandbox_failure_check.js', { CHANNEL_DIST_DIR: dir }, 300000));
   fs.rmSync(dir, { recursive: true, force: true });
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);
