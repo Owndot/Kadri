@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Fremder Service Worker</title>
+<p>Seite mit eigenem Service Worker (Test der Schutzregeln)</p>
+<script>
+window.swReady = navigator.serviceWorker.register('/sw_foreign.js').then(() => navigator.serviceWorker.ready);
+window.swFetch = (url, init) => window.swReady.then((reg) => new Promise((res) => {
+  const id = Math.random().toString(36).slice(2);
+  const h = (e) => { if (e.data && e.data.id === id) { navigator.serviceWorker.removeEventListener('message', h); res(e.data.res); } };
+  navigator.serviceWorker.addEventListener('message', h);
+  reg.active.postMessage({ id, url, init });
+  setTimeout(() => res('timeout'), 10000);
+}));
+</script>

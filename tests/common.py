@@ -39,9 +39,9 @@ class Q(http.server.SimpleHTTPRequestHandler):
         q = dict(urllib.parse.parse_qsl(self.path.partition('?')[2]))
         if p0 in ('/hdr', '/redir', '/setc', '/slow'):
             if p0 == '/hdr':
-                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
+                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
             if p0 == '/slow':
-                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', '')})
+                HDR_HITS.append({'tag': q.get('tag', ''), 'host': self.headers.get('Host', ''), 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
                 barrier = HEADER_BARRIERS.get(q.get('tag', ''))
                 if barrier is not None:
                     if not barrier.wait(10):
@@ -116,6 +116,9 @@ class H(http.server.BaseHTTPRequestHandler):
         helper['calls'].append((u.path, q.get('v'), self.headers.get('X-EVP-Key')))
         # Laden über den Browser: der Helfer verlangt Stücke (/pull), der Browser liefert sie (/push)
         if u.path == '/download' and q.get('p') == '1': self._send(200, json.dumps({'ok': True, 'id': 'j1'})); return
+        # Seit der Proxy-Speicher-Korrektur fragt Kadri vor jeder abgeholten Arbeit den Zustand des Downloads ab
+        # (proxyLoop → /dlstate) und bricht ohne gültigen Zustand sicher ab. Der nachgebaute Helfer meldet ihn.
+        if u.path == '/dlstate': self._send(200, json.dumps({'ok': True, 'state': 'läuft'})); return
         if u.path == '/pull':
             self._send(200, json.dumps(helper['pulls'].pop(0) if helper['pulls'] else {'done': True})); return
         if u.path == '/push':

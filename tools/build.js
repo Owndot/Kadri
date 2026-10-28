@@ -168,4 +168,6 @@ function writeChannelOnly(dir) {
   console.log('Gebaut: minimaler Test-Build nur Helfer-Kanal → dist/channel-only (nicht veröffentlichen)');
 }
 if (process.argv.includes('--channel-only')) writeChannelOnly(path.join(DIST, 'channel-only'));
+// Firefox-Fassung mit denselben Test-Öffnungen (nur für den Firefox-Test der Schutzregeln, tests/firefox_dnr_scope.py)
+if (process.argv.includes('--test-firefox')) write(path.join(DIST, 'test-firefox'), 'firefox', true);
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));
