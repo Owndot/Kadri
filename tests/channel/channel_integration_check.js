@@ -218,9 +218,10 @@ async function main() {
       const e3 = await NS.createTransport({ fetchImpl: fetch, port: chunked.port }).post('/p1/ch/hs', new Uint8Array(69)).then(() => 'no error', (x) => x.kind);
       check('Antwort ohne Content-Length abgewiesen', e3 === 'framing', e3);
       await chunked.close();
-      // Das Ziel der Weiterleitung antwortet gültig – würde ihr gefolgt, käme eine Antwort zurück.
+      // Das Ziel der Weiterleitung antwortet gültig – würde ihr gefolgt, käme eine Antwort zurück. (303, weil Node einen
+      // POST-Body bei 307 nicht erneut senden kann; so prüft der Test wirklich das Verfolgen, nicht diese Eigenheit.)
       const target = await fakeServer((req, res) => { res.writeHead(200, { 'Content-Length': 5 }); res.end('hello'); });
-      const redir = await fakeServer((req, res) => { res.writeHead(307, { Location: 'http://127.0.0.1:' + target.port + '/p1/ch/hs' }); res.end(); });
+      const redir = await fakeServer((req, res) => { res.writeHead(303, { Location: 'http://127.0.0.1:' + target.port + '/p1/ch/hs' }); res.end(); });
       const e4 = await NS.createTransport({ fetchImpl: fetch, port: redir.port }).post('/p1/ch/hs', new Uint8Array(69)).then(() => 'no error', (x) => x.kind);
       check('Weiterleitung wird nicht verfolgt (auch nicht zu einem antwortenden Ziel)', e4 === 'http' || e4 === 'unreachable', e4);
       await redir.close(); await target.close();
