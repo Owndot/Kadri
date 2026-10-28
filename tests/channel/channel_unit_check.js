@@ -88,6 +88,9 @@ async function main() {
     const { channel } = await channelWith({ ping: () => control({ ok: true, helper: 'x'.repeat(500) }) });
     check('Ping: Helfer-Kennung auf 40 Zeichen begrenzt', (await channel.ping()).helper.length === 40);
   }
+  // Review I1: nur Befehle ohne Wirkung werden nach HTTP 404 automatisch wiederholt.
+  check('Wiederholung nach 404 nur für ping und dummy', NS.retryableAfterStaleSession('ping') && NS.retryableAfterStaleSession('dummy') &&
+    !['download', 'push', 'bright', 'vol', 'end', 'pair', '', undefined].some((op) => NS.retryableAfterStaleSession(op)));
   summary('channel-unit');
 }
 

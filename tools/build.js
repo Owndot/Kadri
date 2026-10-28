@@ -121,18 +121,51 @@ function writeChannelPoc(dir) {
   m.background = { service_worker: 'channel-background.js' };
   m.content_security_policy = { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" };
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
+  copyChannel(dir, 'channel-background.js');
+  console.log('Gebaut: isolierter Test-Build Helfer-Kanal → dist/channel-poc (nicht veröffentlichen)');
+}
+// Kanal-Module (unverändert, für beide Test-Builds), WASM-Kern und der jeweilige Service-Worker-Einstieg.
+function copyChannel(dir, entry) {
   const CH = path.join(ROOT, 'channel'), VW = path.join(ROOT, 'vendor', 'kadri-pairing-poc');
   fs.mkdirSync(path.join(dir, 'channel'));
-  fs.copyFileSync(path.join(CH, 'channel-background.js'), path.join(dir, 'channel-background.js'));
+  fs.copyFileSync(path.join(CH, entry), path.join(dir, entry));
   for (const f of ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-service.js', 'channel.html', 'channel-page.js'])
     fs.copyFileSync(path.join(CH, f), path.join(dir, 'channel', f));
   for (const f of ['kadri_pairing_poc.js', 'kadri_pairing_poc_bg.wasm', 'PROVENANCE.md'])
     fs.copyFileSync(path.join(VW, f), path.join(dir, 'channel', f));
-  for (const f of ['channel-background.js'].concat(fs.readdirSync(path.join(dir, 'channel')).filter((x) => /\.js$/.test(x)).map((x) => path.join('channel', x)))) {
+  for (const f of [entry].concat(fs.readdirSync(path.join(dir, 'channel')).filter((x) => /\.js$/.test(x)).map((x) => path.join('channel', x)))) {
     try { execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'pipe' }); }
     catch (e) { console.error('Syntaxfehler in ' + f + ':\n' + String(e.stderr || e.message)); process.exit(1); }
   }
-  console.log('Gebaut: isolierter Test-Build Helfer-Kanal → dist/channel-poc (nicht veröffentlichen)');
 }
 if (process.argv.includes('--channel-poc')) writeChannelPoc(path.join(DIST, 'channel-poc'));
+
+// ---------- Minimaler Test-Build „nur Helfer-Kanal“ (nur mit --channel-only; für den Gerätetest) ----------
+// Dieselben Kanal-Module, aber OHNE Kadris Hintergrund (kein kadri-xhr-Anfrage-Weg), ohne Content-Scripts, ohne
+// Medienfunktionen, ohne alten Helfer-Port. Berechtigungen nur für den Kanal; Netzwerk-Sandkasten im SW-Einstieg.
+function writeChannelOnly(dir) {
+  rmrf(dir);
+  fs.mkdirSync(path.join(dir, 'icons'), { recursive: true });
+  const base = manifestOf('chrome');
+  const m = {
+    manifest_version: 3,
+    name: 'Kadri TEST – Helfer-Kanal minimal (Dummy)',
+    version: base.version,
+    description: 'TEST-BUILD, nicht veröffentlichen: nur der authentisierte Helfer-Kanal von Kadri (Kopplung, Ping, Dummy-Daten). Keine Medienfunktionen.',
+    icons: base.icons,
+    action: { default_title: 'Kadri TEST – Helfer-Kanal', default_icon: base.action.default_icon, default_popup: 'channel/channel.html' },
+    options_ui: { page: 'channel/channel.html', open_in_tab: true },
+    background: { service_worker: 'channel-only-background.js' },
+    permissions: ['declarativeNetRequest'],
+    host_permissions: ['http://127.0.0.1/*'],
+    content_security_policy: { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" },
+    minimum_chrome_version: base.minimum_chrome_version,
+  };
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
+  copyChannel(dir, 'channel-only-background.js');
+  for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(ROOT, 'chrome', 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
+  fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(dir, 'LICENSE'));
+  console.log('Gebaut: minimaler Test-Build nur Helfer-Kanal → dist/channel-only (nicht veröffentlichen)');
+}
+if (process.argv.includes('--channel-only')) writeChannelOnly(path.join(DIST, 'channel-only'));
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));

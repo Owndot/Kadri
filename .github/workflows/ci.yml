@@ -251,7 +251,7 @@ jobs:
       - name: Build; normal builds must not contain the channel
         run: |
           set -euo pipefail
-          node tools/build.js --test --channel-poc
+          node tools/build.js --test --channel-poc --channel-only
           for d in dist/chrome dist/firefox dist/test; do
             test ! -e "$d/channel" && test ! -e "$d/channel-background.js"
             if grep -rlE 'kadri-channel|wasm_bindgen|47899' "$d"; then echo "channel code in $d"; exit 1; fi
@@ -267,4 +267,5 @@ jobs:
           node tests/channel/channel_unit_check.js
           node tests/channel/channel_integration_check.js
           node tests/channel/channel_browser_check.js
+          CHANNEL_DIST_DIR=dist/channel-only node tests/channel/channel_browser_check.js
           node tests/channel/channel_mutation_check.js

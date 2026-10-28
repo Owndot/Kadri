@@ -12,7 +12,8 @@
 //    zurückgesetzt) im Zustand "rejected". Beides ändert den Pin nicht; nur eine bewusste neue Kopplung per Code hilft.
 //  - Jeder Fehler im Kanal beendet die Sitzung (keine Wiederverwendung nach Manipulation). Einzige automatische
 //    Wiederholung: Kennt der Helfer die Sitzung nicht (HTTP 404, z. B. nach seinem Neustart), wird EINMAL ein neuer
-//    authentisierter Handshake gemacht – der Record wurde dann nachweislich nicht verarbeitet.
+//    authentisierter Handshake gemacht – der Record wurde dann nachweislich nicht verarbeitet. Das gilt nur für
+//    Befehle ohne Wirkung (ping, dummy); alle anderen melden den Fehler (Review I1).
 //  - Alle Aktionen laufen nacheinander (höchstens ein offener Record); die Warteschlange ist begrenzt.
 //  - Fristen der Kopplung auf der monotonen Uhr (performance.now, Review R3).
 (function (root) {
@@ -23,6 +24,10 @@
   const MAX_QUEUE = 32;
   const RECORD_DATA_MAX = 60 * 1024;
   const DUMMY_MAX = 8 * 1024 * 1024;
+  // Nur Befehle ohne Wirkung beim Helfer dürfen nach HTTP 404 (Sitzung unbekannt) einmal mit neuem Handshake
+  // wiederholt werden (Review I1). Künftige Befehle mit Wirkung kommen NICHT in diese Liste.
+  const IDEMPOTENT_OPS = new Set(['ping', 'dummy']);
+  const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);
 
   class ChannelError extends Error {
     constructor(kind, message) { super(message); this.kind = kind; }
@@ -123,6 +128,7 @@
         try { return await exchange(obj); }
         catch (e) {
           if (e.kind !== 'stale-session') throw e;
+          if (!retryableAfterStaleSession(obj.op)) throw fail('stale-session', 'Sitzung beim Helfer unbekannt – Befehl nicht automatisch wiederholt');
           await connect(pin, await store.identity());   // genau einmal
           try { return await exchange(obj); }
           catch (e2) { throw e2.kind === 'stale-session' ? fail('record-rejected') : e2; }
@@ -230,4 +236,5 @@
   NS.ChannelError = ChannelError;
   NS.createChannel = createChannel;
   NS.DUMMY_MAX = DUMMY_MAX;
+  NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);

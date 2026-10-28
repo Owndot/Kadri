@@ -1,6 +1,6 @@
 // Mutationsprobe für den Helfer-Kanal: Jeder Mutant baut gezielt einen Sicherheitsfehler in eine KOPIE des Codes ein.
 // Die Tests müssen jeden Mutanten erkennen (fehlschlagen). Die echten Quellen werden nie verändert.
-//   HELPER_HOST_DIR=... node tests/channel/channel_mutation_check.js   (vorher: node tools/build.js --channel-poc)
+//   HELPER_HOST_DIR=... node tests/channel/channel_mutation_check.js   (vorher: node tools/build.js --channel-poc --channel-only)
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -14,6 +14,8 @@ const NODE_MUTANTS = [
   ['fremde Identität als Widerruf eingeordnet', 'channel-session.js', "throw fail(coreError(e) === 'AuthFailed' ? 'identity-mismatch' : 'protocol'", "throw fail(coreError(e) === 'AuthFailed' ? 'rejected' : 'protocol'"],
   ['jeder Fehler wird wiederholt', 'channel-session.js', "if (e.kind !== 'stale-session') throw e;", "if (false) throw e;"],
   ['Sitzung nach Manipulation weiterverwendet', 'channel-session.js', "        if (session === s) drop();\n        state = 'paired';\n        throw fail('tampered'", "        state = 'paired';\n        throw fail('tampered'"],
+  ['I1: jeder Befehl nach 404 wiederholt', 'channel-session.js', "const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);", "const retryableAfterStaleSession = (op) => true;"],
+  ['I1: auch ping nicht wiederholt', 'channel-session.js', "const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);", "const retryableAfterStaleSession = (op) => false;"],
   ['Warteschlange unbegrenzt', 'channel-session.js', "if (queued >= MAX_QUEUE)", "if (false)"],
   ['Codeformat ungeprüft', 'channel-session.js', "if (!/^[0-9]{8}$/.test(code))", "if (false)"],
   ['Dummy-Inhalt ungeprüft', 'channel-session.js', "if (r[13 + i] !== ((offset + i) * 31 + 7 + transfer) % 256)", "if (false)"],
@@ -26,9 +28,11 @@ const NODE_MUTANTS = [
   ['beliebige Pfade', 'channel-transport.js', "if (!PATHS.has(path))", "if (false)"],
   ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(timeoutMs),", ""],
 ];
-const BROWSER_MUTANTS = [
-  ['Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
-  ['Netzwerkfreigabe für alle Methoden', 'channel/channel-service.js', "requestMethods: ['post'], ", ""],
+const BROWSER_MUTANTS = [   // [Name, Build, Datei, alt, neu]
+  ['Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel-poc', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
+  ['Netzwerkfreigabe für alle Methoden', 'channel-poc', 'channel/channel-service.js', "requestMethods: ['post'], ", ""],
+  ['Minimal: Sandkasten lässt alles durch', 'channel-only', 'channel-only-background.js', "action: { type: 'block' }", "action: { type: 'allow' }"],
+  ['Minimal: Absenderprüfung entfernt', 'channel-only', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
 ];
 
 function mutate(srcFile, from, to) {
@@ -48,6 +52,7 @@ let survived = 0;
 if (!run('channel_unit_check.js', {}, 120000, true)) { console.log('baseline unit FAILED'); process.exit(1); }
 if (!run('channel_integration_check.js', {}, 600000, true)) { console.log('baseline integration FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', {}, 600000, true)) { console.log('baseline browser FAILED'); process.exit(1); }
+if (!run('channel_browser_check.js', { CHANNEL_DIST_DIR: path.join(ROOT, 'dist', 'channel-only') }, 600000, true)) { console.log('baseline minimal browser FAILED'); process.exit(1); }
 console.log('baselines pass');
 for (const [name, file, from, to] of NODE_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-'));
@@ -59,9 +64,9 @@ for (const [name, file, from, to] of NODE_MUTANTS) {
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);
 }
-for (const [name, file, from, to] of BROWSER_MUTANTS) {
+for (const [name, build, file, from, to] of BROWSER_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-dist-'));
-  fs.cpSync(path.join(ROOT, 'dist', 'channel-poc'), dir, { recursive: true });
+  fs.cpSync(path.join(ROOT, 'dist', build), dir, { recursive: true });
   mutate(path.join(dir, file), from, to);
   const passed = run('channel_browser_check.js', { CHANNEL_DIST_DIR: dir }, 300000);
   fs.rmSync(dir, { recursive: true, force: true });

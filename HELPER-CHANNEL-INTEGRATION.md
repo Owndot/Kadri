@@ -78,7 +78,7 @@ Gegenstelle in allen automatischen Tests: der **unveränderte** `PocServer` der 
 | bösartige Webseite (kein Zugriff auf die Erweiterung, Preflight blockiert, Gate) und bösartiges Content-Script (alle Kanal-Befehle `refused`, keine Kanal-Daten in `storage.local`, kein POST über Kadris Anfrage-Weg) | Browser | PASS |
 | fehlgeschlagene Persistenz (Kadri: Identität, neuer Pin, Vergessen; Helfer: Kopplung, Widerruf) | Node | PASS |
 | gescheiterte Bestätigung einer neuen Kopplung behält die alte (R4) | Node | PASS |
-| Mutationsprobe: 18 gezielt eingebaute Sicherheitsfehler | `tests/channel/channel_mutation_check.js` | siehe Bericht |
+| Mutationsprobe: 22 gezielt eingebaute Sicherheitsfehler (inkl. I1 und Sandkasten des minimalen Builds) | `tests/channel/channel_mutation_check.js` | PASS 22/22 |
 | normale Builds unverändert | Vergleich aller Dateien mit `main`; CI prüft, dass `dist/chrome`, `dist/firefox`, `dist/test` und Zips keinen Kanal-Code enthalten | PASS |
 | bestehende Kadri-Tests | bestehender CI-Job `build-test` | im Draft-PR |
 
@@ -126,13 +126,33 @@ HELPER_HOST_DIR=/tmp/helper-host node tests/channel/channel_mutation_check.js
 7. Tests und Mutationsprobe lesen und gegen die Liste in §5 abgleichen; insbesondere, ob ein Mutant fehlt, der eine Regel aus §1 verletzt.
 8. Danach entscheiden, ob ein zweiter isolierter Samsung-Gerätetest mit dem Kadri-Test-Build durchgeführt wird.
 
-## 9. Optionaler zweiter Samsung-Gerätetest (nur nach gesonderter Freigabe)
+## 9. Review-Auflagen (Review von #7 am Commit `2e2f59b`, Helper `15fed6d`, Entscheidung A)
 
-Sinnvoll, weil diese Stufe Neues enthält, das der erste Gerätetest nicht abgedeckt hat: klassischer Service Worker mit `importScripts` und `no-modules`-WASM, Kadris DNR-Schutzregeln zusammen mit Regel 40, Kadris übrige Content-Scripts im selben Browser. Ablauf wie im Helper-Repository (`poc/android-capability/DEVICE-TEST-GUIDE.md`), mit diesen Unterschieden:
+| Punkt | Umsetzung |
+| --- | --- |
+| **L1** Test-Build enthält alle produktiven Kadri-Funktionen und Content-Scripts | Neuer **minimaler Test-Build** `dist/channel-only` (`node tools/build.js --channel-only`) für den Gerätetest: dieselben, unveränderten Kanal-Module (`channel-store/transport/session/service.js`, Testseite, WASM), aber ohne Kadris Hintergrund, ohne Content-Scripts, ohne Player/Medien, ohne Optionsseite von Kadri. Neu ist nur der Service-Worker-Einstieg `channel/channel-only-background.js` und das eigene Manifest (`permissions: ["declarativeNetRequest"]`, `host_permissions: ["http://127.0.0.1/*"]`, CSP wie zuvor). `dist/channel-poc` bleibt für den Koexistenz-Test mit Kadri. |
+| **I3** Kadris alter Anfrage-Weg kann GET an 47899 auslösen | Im minimalen Build gibt es den Weg `kadri-xhr` nicht (Test: Port ohne Empfänger). Zusätzlich sperrt Regel 41 (`block`, `tabIds: [-1]`) jede eigene Anfrage der Erweiterung außer den vier Kanal-POSTs (Regel 40, höhere Priorität); getestet: anderer Port, Webseite, alter Helfer-Port 47811, GET und fremder Pfad auf 47899 sind gesperrt. In `dist/channel-poc` bleibt I3 bestehen (der Helfer lehnt mit 403 ab). |
+| **I1** 404-Wiederholung ungeeignet für Befehle mit Wirkung | `channel-session.js`: automatische Wiederholung nach HTTP 404 nur noch für `ping` und `dummy` (`IDEMPOTENT_OPS`); jeder künftige Befehl meldet den Fehler. Unit-Test und zwei Mutanten. **Änderung an geprüftem Code → im Re-Review ansehen.** |
+| **I5** `test_proxy.py` rot auf `main` (Test-Stub ohne `/dlstate`) | Getrennter Draft-PR #8 (nur `tests/common.py`), nicht mit dieser Integration vermischt. |
+| R1/R2, kompromittierte Produktionssignatur (Helper-Issue #3) | unverändert offen |
 
-1. Kadri-Test-Build lokal bauen: `node tools/build.js --channel-poc` → Ordner `dist/channel-poc` (kein Zip). Die SHA-256 von `dist/channel-poc/channel/kadri_pairing_poc_bg.wasm` muss `d84e09bb…79a4` sein (steht so in `vendor/kadri-pairing-poc/SOURCE`; ein Bau mit `build-wasm-kadri.sh` auf dem Mac sollte dank Pfad-Umschreibung denselben Wert ergeben – nicht nachgewiesen).
-2. In Vivaldi Android **die bisherige PoC-Testerweiterung entfernen** und `dist/channel-poc` über „Entpackte Erweiterung laden“ laden. Eine eventuell installierte produktive Kadri-Version ist eine getrennte Erweiterung und wird nicht berührt.
-3. Gegenstelle bleibt die bereits geprüfte Test-App `de.evp.pakepoc.test` (Port 47899). Die produktive Helper-App wird nicht benötigt und nicht verändert.
-4. Testseite: `chrome-extension://<ID>/channel/channel.html` (die ID steht in Vivaldis Erweiterungsverwaltung). Prüfen: Koppeln, Ping, Dummy 1 MiB, Vivaldi schließen/neu öffnen → Ping, Widerruf in der App → Ping (`rejected`), Fremd-Listener EIN → Ping zweimal (`tampered`, dann `identity-mismatch`), AUS → Ping, „Kopplung vergessen“.
-5. Normale Webseiten weiter mit Kadri ansehen, um Wechselwirkungen mit dem Player zu bemerken (keine echten Konten oder privaten Medien).
-6. Entfernen: Test-Build entfernen, Entwicklermodus aus, Test-App deinstallieren.
+## 10. Gerätetest-Paket (Cloud, ohne Mac)
+
+Workflow `.github/workflows/channel-device-package.yml` (läuft bei Pushes auf diesen Branch): baut `dist/channel-only`, prüft Manifest und Inhalt (MV3, nur die zwei Berechtigungen, keine Content-Scripts, kein alter Helfer-Weg im Code), baut die WASM aus dem gepinnten Helper-Commit nach und vergleicht byteweise, führt Unit-, Integrations- und Browser-Tests (beide Builds) aus und packt ein **deterministisches ZIP** (feste Zeitstempel, sortiert; gleiche Eingabe → gleicher Hash) samt `SHA256SUMS`. **Upload nur nach Freigabe:** Das Repository ist öffentlich; das ZIP wird nur hochgeladen, wenn `.github/DEVICE-ARTIFACTS-APPROVED` existiert (Aufbewahrung 1 Tag). Die passende Test-App baut der Helper-Workflow `poc-device-package.yml` (Helper-Repository, `poc/android-capability/DEVICE-PACKAGE.md`).
+
+### Installation auf Vivaldi Android – was belegt ist
+
+- Vivaldi für Android unterstützt Erweiterungen seit 8.2 im Entwicklermodus: „Entpackte Erweiterung laden“ (Ordner) und `.crx` per Drag-and-drop im geteilten Bildschirm (Vivaldi-Hilfe, über Suchergebnisse; die Seite war von hier nicht abrufbar). Ein **ZIP lässt sich nicht direkt laden** (Vivaldi-Forum). Darum: ZIP herunterladen, mit „Eigene Dateien“ entpacken, den entpackten Ordner (der `manifest.json` direkt enthält) laden.
+- Kein `.crx`: Ein `.crx` bräuchte einen eigenen Signierschlüssel und bringt hier keinen Sicherheitsgewinn.
+- Welche Vivaldi-Version auf dem S26 läuft und mit welchem Weg der erste Gerätetest geladen wurde, ist hier nicht dokumentiert – bitte beim Test notieren (`vivaldi://about`).
+
+### Schritte auf dem Samsung (nur nach Freigabe des Uploads)
+
+1. **Vorher entfernen:** die bisherige PoC-Testerweiterung und die alte Test-App (`TEST PAKE-PoC (kein Helper)`). Jede Cloud-APK hat einen eigenen Wegwerf-Signierer; eine neue Version lässt sich **nicht** über eine alte installieren – erst deinstallieren.
+2. Test-App-APK und Erweiterungs-ZIP aus den beiden Workflow-Läufen herunterladen (GitHub im Browser angemeldet; Artefakte kommen als ZIP). Mit „Eigene Dateien“ entpacken. **SHA-256 prüfen** gegen die im Lauf ausgegebenen Werte (z. B. mit einer Prüfsummen-App) – stimmt etwas nicht, nicht installieren.
+3. APK installieren: „Unbekannte Apps installieren“ nur für „Eigene Dateien“, nur für diese Installation; danach wieder entziehen. Paket muss `de.evp.pakepoc.test` heißen, Name „TEST PAKE-PoC (kein Helper)“.
+4. Vivaldi → Erweiterungen verwalten → Entwicklermodus → „Entpackte Erweiterung laden“ → den entpackten Ordner wählen. Es darf nur „Kadri TEST – Helfer-Kanal minimal (Dummy)“ erscheinen; Berechtigungen: Inhalte blockieren (declarativeNetRequest) und Zugriff auf 127.0.0.1.
+5. Testseite: Erweiterungssymbol (Popup) oder „Optionen“ der Erweiterung. Prüfen: Koppeln (Code aus der Test-App), Ping, Dummy 1 MiB, Vivaldi schließen/öffnen → Ping, Widerruf in der App → Ping (`rejected`), „Testserver beenden/starten“ → Ping weiterhin `rejected`, neu koppeln, Fremd-Listener EIN → Ping zweimal (`tampered`, dann `identity-mismatch`), AUS → Ping, „Kopplung vergessen“.
+6. Entfernen: Erweiterung entfernen, Entwicklermodus aus, Test-App deinstallieren, heruntergeladene Dateien löschen.
+
+Die produktive Kadri-Erweiterung und die produktive Helper-App werden dabei nicht berührt (anderer Name, anderes Paket, anderer Port).
