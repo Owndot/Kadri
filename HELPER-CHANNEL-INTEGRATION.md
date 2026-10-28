@@ -14,7 +14,7 @@
 | Anwendungsbefehle | `channel/channel-session.js` (`ping`, `dummy`) | einzige Befehle dieser Stufe | Medien-URLs, Cookies, Header, echte Medien |
 | Spätere Medienverarbeitung | – (nicht Teil dieser Stufe) | künftig ausschließlich als Records **in** diesem Kanal | über den alten Weg (`47811`, `X-EVP-Key`) laufen |
 
-Warum so: Der geprüfte Kern bleibt die einzige Kryptografie (die `.wasm` ist bitgleich mit der im Gerätetest geladenen Datei, siehe `vendor/kadri-pairing-poc/PROVENANCE.md`). Alles in JavaScript ist austauschbar und testbar: Speicher und Transport werden injiziert, darum laufen dieselben Module in Node gegen den echten Helper-Server und im Browser gegen denselben Server. Kadris Service Worker ist ein klassisches Skript (`importScripts`); deshalb wird der Kern mit wasm-bindgen `--target no-modules` gebaut, und der Test-Build lädt über `channel-background.js` zuerst Kadris unveränderten `background.js` und danach den Kanal.
+Warum so: Der geprüfte Kern bleibt die einzige Kryptografie (gleicher Quelltext, gleiche Toolchain und Abhängigkeiten wie im Gerätetest; Bitgleichheit mit der damals lokal gebauten Datei ist **nicht** belegt, siehe `vendor/kadri-pairing-poc/PROVENANCE.md`). Alles in JavaScript ist austauschbar und testbar: Speicher und Transport werden injiziert, darum laufen dieselben Module in Node gegen den echten Helper-Server und im Browser gegen denselben Server. Kadris Service Worker ist ein klassisches Skript (`importScripts`); deshalb wird der Kern mit wasm-bindgen `--target no-modules` gebaut, und der Test-Build lädt über `channel-background.js` zuerst Kadris unveränderten `background.js` und danach den Kanal.
 
 Sicherheitsregeln und wo sie durchgesetzt werden:
 
@@ -42,7 +42,7 @@ Ersetzt wird in dieser Stufe **nichts** Produktives. Isoliert: Der neue Kanal ha
 
 | Teil | Geprüfter PoC (Helper `bf84258`) | Diese Integration |
 | --- | --- | --- |
-| Kryptografischer Kern | Rust, WASM (`--target web`) | dieselbe `.wasm`-Datei, Glue `--target no-modules` |
+| Kryptografischer Kern | Rust, WASM (`--target web`) | gleicher Quelltext; reproduzierbarer Bau mit Pfad-Umschreibung, Glue `--target no-modules` |
 | Erweiterung | eigene Wegwerf-Erweiterung `ext-vivaldi` (ES-Modul-SW) | Kadri-Test-Build mit Kadris Hintergrund + Kanal |
 | Logik Kopplung/Kanal | `ext-vivaldi/background.js` | aufgeteilt in Store/Transport/Session/Service; gleiche Regeln (R3, R4, keine Hooks R5) plus: Zustände `rejected`/`identity-mismatch`, genau ein Reconnect bei 404, begrenzte Warteschlange, Prüfung gespeicherter Werte, Dummy-Inhalt mit Transfer-Nummer |
 | Helfer-Gegenstelle | Android-Test-App `de.evp.pakepoc.test` | dieselbe App (Gerät) bzw. ihr unveränderter `PocServer` auf dem Desktop-JVM (Tests) |
@@ -112,11 +112,12 @@ HELPER_HOST_DIR=/tmp/helper-host node tests/channel/channel_mutation_check.js
 - **Kadris Hintergrund ist geteilt:** Der Kanal läuft im selben Service Worker wie Kadris übrige Logik. Ein Fehler dort (z. B. in `background.js`) teilt sich den Prozess mit der Kopplung.
 - **Test-Gegenstelle ≠ produktive App:** Die Tests prüfen den Server der Test-App; die produktive Helper-App hat diesen Kanal noch nicht.
 - **Neustart des Helfer-Servers:** Unter dem JDK wird ein Port nach `stop()` asynchron freigegeben; ein sofortiger Neustart scheiterte in Tests gelegentlich mit „port busy“ (Testwerkzeug fängt das ab). Dasselbe Muster steckt in der Android-Test-App; bei der Helper-Integration einplanen.
+- **Korrigierte Behauptung:** Eine frühere Fassung sagte, die WASM sei bitgleich mit der im Gerätetest geladenen. Kadris CI hat beim Nachbau gezeigt, dass Builds absolute Rechnerpfade enthielten; die Behauptung war nicht haltbar. Heute: reproduzierbarer Bau, gleicher Quelltext – die genaue Datei wurde nie auf einem Gerät getestet.
 - **Gelernter Fehler:** Die Node-Tests hatten einen Ladefehler im Service Worker verdeckt (`let wasm_bindgen` ist keine Eigenschaft von `self`); erst der Browser-Test mit dem echten Build zeigte ihn. Darum gehören beide Testebenen in die CI.
 
 ## 8. Unabhängiger Review – konkrete Schritte
 
-1. Herkunft prüfen: `vendor/kadri-pairing-poc/*` mit `build-wasm-kadri.sh` aus dem gepinnten Helper-Commit nachbauen (CI-Job tut das) und bestätigen, dass der Kern-Quelltext gleich `bf84258` ist.
+1. Herkunft prüfen: `vendor/kadri-pairing-poc/*` mit `build-wasm-kadri.sh` aus dem gepinnten Helper-Commit nachbauen (CI-Job tut das) und bestätigen, dass der Kern-Quelltext gleich `bf84258` ist. Beachten: Bitgleichheit mit der im ersten Gerätetest geladenen WASM ist nicht belegt (Build-Pfade); erst ein zweiter Gerätetest prüft genau diese Datei.
 2. `channel/channel-session.js`: Zustandsübergänge (R4, `rejected`, `identity-mismatch`, Reconnect nur bei 404), Fehlerklassifizierung, Warteschlange.
 3. `channel/channel-service.js`: Absenderprüfung (`sender.url`, `sender.origin`, `sender.id`), Nichtbeantwortung fremder Nachrichtentypen, DNR-Regel 40 im Zusammenspiel mit Kadris `netGuard()` (IDs, Prioritäten, Bereiche 1000–900000).
 4. `channel/channel-transport.js`: keine Weiterleitung, keine Credentials, Längenprüfung, Zeitgrenze, Pfad-Whitelist.
@@ -129,7 +130,7 @@ HELPER_HOST_DIR=/tmp/helper-host node tests/channel/channel_mutation_check.js
 
 Sinnvoll, weil diese Stufe Neues enthält, das der erste Gerätetest nicht abgedeckt hat: klassischer Service Worker mit `importScripts` und `no-modules`-WASM, Kadris DNR-Schutzregeln zusammen mit Regel 40, Kadris übrige Content-Scripts im selben Browser. Ablauf wie im Helper-Repository (`poc/android-capability/DEVICE-TEST-GUIDE.md`), mit diesen Unterschieden:
 
-1. Kadri-Test-Build lokal bauen: `node tools/build.js --channel-poc` → Ordner `dist/channel-poc` (kein Zip). Die SHA-256 von `dist/channel-poc/channel/kadri_pairing_poc_bg.wasm` muss `18d07767…eac6f` sein.
+1. Kadri-Test-Build lokal bauen: `node tools/build.js --channel-poc` → Ordner `dist/channel-poc` (kein Zip). Die SHA-256 von `dist/channel-poc/channel/kadri_pairing_poc_bg.wasm` muss `d84e09bb…79a4` sein (steht so in `vendor/kadri-pairing-poc/SOURCE`; ein Bau mit `build-wasm-kadri.sh` auf dem Mac sollte dank Pfad-Umschreibung denselben Wert ergeben – nicht nachgewiesen).
 2. In Vivaldi Android **die bisherige PoC-Testerweiterung entfernen** und `dist/channel-poc` über „Entpackte Erweiterung laden“ laden. Eine eventuell installierte produktive Kadri-Version ist eine getrennte Erweiterung und wird nicht berührt.
 3. Gegenstelle bleibt die bereits geprüfte Test-App `de.evp.pakepoc.test` (Port 47899). Die produktive Helper-App wird nicht benötigt und nicht verändert.
 4. Testseite: `chrome-extension://<ID>/channel/channel.html` (die ID steht in Vivaldis Erweiterungsverwaltung). Prüfen: Koppeln, Ping, Dummy 1 MiB, Vivaldi schließen/neu öffnen → Ping, Widerruf in der App → Ping (`rejected`), Fremd-Listener EIN → Ping zweimal (`tampered`, dann `identity-mismatch`), AUS → Ping, „Kopplung vergessen“.
