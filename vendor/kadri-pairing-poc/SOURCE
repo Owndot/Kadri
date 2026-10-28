@@ -1,0 +1,5 @@
+# Read by CI (job helper-channel) and by tests/channel/*.  One key per line.
+repository=Owndot/video-assistent-helper
+helper_commit=cf76ed164058e3af7d8e8c553356d6a959850338
+sha256_js=bda8018d18c08ae01b4a935e5761f1ce7d13e67928636ce3e3f7261451bde874
+sha256_wasm=18d077679df9c70b64ce326bb890681d80f02a2d6ef782fdcb88434e433eac6f

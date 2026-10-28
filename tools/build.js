@@ -108,4 +108,31 @@ write(path.join(DIST, 'firefox'), 'firefox', false);
 zip(path.join(DIST, 'chrome'), path.join(DIST, 'kadri-chrome-' + VERSION + '.zip'));
 zip(path.join(DIST, 'firefox'), path.join(DIST, 'kadri-firefox-' + VERSION + '.zip'));
 if (process.argv.includes('--test')) write(path.join(DIST, 'test'), 'chrome', true);
+
+// ---------- Isolierter Test-Build „Helfer-Kanal“ (nur mit --channel-poc) ----------
+// Kadri (Chromium-Basis) plus der neue authentisierte Kanal zum Android-Helfer – ausschließlich Kopplung, Ping und
+// begrenzte Dummy-Daten. Eigener Name, kein Zip, nicht für Stores. Die normalen Builds und Zips oben bleiben davon
+// unberührt (sie enthalten weder channel/ noch den WASM-Kern).
+function writeChannelPoc(dir) {
+  write(dir, 'chrome', false);
+  const m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  m.name = 'Kadri TEST – Helfer-Kanal (Dummy)';
+  m.description = 'TEST-BUILD, nicht veröffentlichen: Kadri mit isoliertem, authentisiertem Helfer-Kanal (nur Dummy-Daten).';
+  m.background = { service_worker: 'channel-background.js' };
+  m.content_security_policy = { extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';" };
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 2) + '\n');
+  const CH = path.join(ROOT, 'channel'), VW = path.join(ROOT, 'vendor', 'kadri-pairing-poc');
+  fs.mkdirSync(path.join(dir, 'channel'));
+  fs.copyFileSync(path.join(CH, 'channel-background.js'), path.join(dir, 'channel-background.js'));
+  for (const f of ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-service.js', 'channel.html', 'channel-page.js'])
+    fs.copyFileSync(path.join(CH, f), path.join(dir, 'channel', f));
+  for (const f of ['kadri_pairing_poc.js', 'kadri_pairing_poc_bg.wasm', 'PROVENANCE.md'])
+    fs.copyFileSync(path.join(VW, f), path.join(dir, 'channel', f));
+  for (const f of ['channel-background.js'].concat(fs.readdirSync(path.join(dir, 'channel')).filter((x) => /\.js$/.test(x)).map((x) => path.join('channel', x)))) {
+    try { execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'pipe' }); }
+    catch (e) { console.error('Syntaxfehler in ' + f + ':\n' + String(e.stderr || e.message)); process.exit(1); }
+  }
+  console.log('Gebaut: isolierter Test-Build Helfer-Kanal → dist/channel-poc (nicht veröffentlichen)');
+}
+if (process.argv.includes('--channel-poc')) writeChannelPoc(path.join(DIST, 'channel-poc'));
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));
