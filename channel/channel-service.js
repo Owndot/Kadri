@@ -20,7 +20,10 @@
     condition: { regexFilter: '^http://127\\.0\\.0\\.1:' + PORT + '/p1/(?:pair/m[02]|ch/(?:hs|rec))$', requestMethods: ['post'], tabIds: [-1] },
   };
 
-  const wasmReady = root.wasm_bindgen({ module_or_path: api.runtime.getURL('channel/kadri_pairing_poc_bg.wasm') });
+  // Der no-modules-Glue legt `let wasm_bindgen` als globale lexikalische Bindung an – sie ist KEINE Eigenschaft von self.
+  // eslint-disable-next-line no-undef
+  const core = wasm_bindgen;
+  const wasmReady = core({ module_or_path: api.runtime.getURL('channel/kadri_pairing_poc_bg.wasm') });
 
   const canonical = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x)
     ? Object.keys(x).sort().reduce((o, key) => { o[key] = x[key]; return o; }, {}) : x));
@@ -44,8 +47,8 @@
       return fetch(url, init);
     },
   });
-  const store = NS.createStore(NS.idbBackend('kadri-helper-channel'), () => root.wasm_bindgen.identity_generate());
-  const channel = NS.createChannel({ core: root.wasm_bindgen, store, transport });
+  const store = NS.createStore(NS.idbBackend('kadri-helper-channel'), () => core.identity_generate());
+  const channel = NS.createChannel({ core, store, transport });
   const ready = () => wasmReady.then(() => channel);
 
   const ACTIONS = {

@@ -37,7 +37,7 @@
         });
       } catch (e) {
         if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new TransportError('timeout', 'Helfer antwortet nicht rechtzeitig');
-        throw new TransportError('unreachable', 'Helfer nicht erreichbar');
+        throw new TransportError('unreachable', 'Helfer nicht erreichbar' + (e && e.cause && e.cause.code ? ' (' + e.cause.code + ')' : ''));
       }
       if (res.status !== 200) {
         try { await res.body?.cancel(); } catch (e) {}
