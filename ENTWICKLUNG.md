@@ -35,9 +35,9 @@ und schickt sie noch einmal, wenn Kadri später startet (`kadri-hello`). Streams
 Content-Type der Antwort – der Hintergrund wird dafür nicht bei jeder Anfrage aller Seiten geweckt.
 
 **Schutzregeln für Anfragen (`guard` in background.js, beide Browser):** nur http(s); nichts im eigenen Netz (Router,
-NAS, localhost – auch versteckt als `0x7f.1`, `2130706433`, `[::ffff:…]`), außer der Helfer-App auf 127.0.0.1:47811
-oder wenn die Seite selbst dort liegt; Weiterleitungen ins eigene Netz → Antwort wird nicht herausgegeben; nur GET/HEAD
-(POST nur an die Helfer-App); Anmeldung (Cookies) nur an dieselbe Domain wie das Fenster, aus dem die Anfrage kommt.
+NAS, localhost – auch versteckt als `0x7f.1`, `2130706433`, `[::ffff:…]`), außer wenn die Seite selbst dort liegt (die
+Helfer-App erreicht Kadri nur über den sicheren Kanal, siehe HELPER-CHANNEL-INTEGRATION.md); Weiterleitungen ins eigene Netz → Antwort wird nicht herausgegeben; nur GET/HEAD
+(kein POST); Anmeldung (Cookies) nur an dieselbe Domain wie das Fenster, aus dem die Anfrage kommt.
 Test `test_guard.py`. Nachrichten eingebetteter Fenster an die Hauptseite tragen einen Schlüssel (`frameKey`, siehe
 Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
 
@@ -46,8 +46,8 @@ Skript 19.14), den Webseiten nicht lesen können. Angriffstest `test_attack.py`.
 **Auf Netz-Ebene** (seit 1.12.13, in 1.12.14 nach einer zweiten Prüfung an die einzelne Anfrage gebunden – greift
 auch bei Weiterleitungen, bevor ein Schritt das Gerät verlässt):
 
-- Chrome (Sitzungsregeln `declarativeNetRequest`, nur für Kadris eigene Anfragen – `tabIds: [-1]`): Regel 50 erlaubt
-  genau `http://127.0.0.1:47811/` (Helfer-Anfragen selbst folgen keiner Weiterleitung, `redirect: 'error'`), 51–58
+- Chrome (Sitzungsregeln `declarativeNetRequest`, nur für Kadris eigene Anfragen – `tabIds: [-1]`): Regel 40 erlaubt
+  nur POST an die vier Pfade des sicheren Helfer-Kanals auf `127.0.0.1:47899` (der alte Port 47811 ist gesperrt), 51–58
   sperren je einen privaten Bereich (127/8, 10/8, 192.168/16, 172.16/12, 169.254/16, 0/8, 100.64/10, IPv6 in Klammern),
   70 sperrt `localhost`/`.local`/`.internal`/`.lan`. (Ein einziger großer Ausdruck war übersetzt über 2 KB – Chrome
   lehnt das ab.) Liegt die Seite selbst im eigenen Netz (Medienserver), gibt `allowExact` für die Dauer der Anfrage
@@ -76,9 +76,8 @@ auch bei Weiterleitungen, bevor ein Schritt das Gerät verlässt):
   `bob.eu.org` sind verschiedene Seiten, `www.bbc.co.uk` und `cdn.bbc.co.uk` dieselbe. (Das Userscript allein hat
   die Liste nicht – dort weiter die kurze Liste geteilter Endungen; in Kadri entscheidet der Hintergrund.)
 - Bleibt offen: Chrome kann nicht vorab erkennen, ob ein öffentlicher Name auf eine private Adresse zeigt (keine
-  DNS-Schnittstelle für Erweiterungen); eine Weiterleitung von fremder Seite auf die Helfer-App (Regel 50) kann Chrome
-  nicht von einer echten Helfer-Anfrage unterscheiden – die Helfer-App beantwortet aber nichts ohne ihren Schlüssel
-  (`X-EVP-Key`), und eine Weiterleitung kann keine Header setzen.
+  DNS-Schnittstelle für Erweiterungen); eine Weiterleitung auf den Kanal-Port (Regel 40) bleibt ein
+  GET bzw. trägt keinen gültigen Kanal-Record – der Helfer lehnt sie ab (Browser-Schutz und Kryptografie).
 
 Weitere Punkte aus den Prüfungen (1.12.13/1.12.14): Schlüssel der eingebetteten Fenster gilt **je Seite** (aus dem
 Grundschlüssel und der Herkunft der Hauptseite, die nur der Browser kennt – `location.ancestorOrigins`; ein auf Seite A

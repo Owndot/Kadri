@@ -47,11 +47,14 @@ Kadri funktioniert ohne die Helfer-App. Was nur mit ihr geht, ist dann ausgeblen
 |---|---|---|
 | Lautstärke (rechts wischen) | – (ausgeblendet) | echte Lautstärke des Handys, fein abgestuft |
 | Helligkeit (links wischen) | – (ausgeblendet) | echte Bildschirmhelligkeit, ganz unten „Auto“ |
-| Download-Menü | YTDLnis, Teilen, Browser | zusätzlich „Mit dem Helper“ und „Über den Browser laden“ |
+| Download-Menü | YTDLnis, Teilen, Browser | wie ohne Helfer (Downloads über die App sind auf dem Integrationszweig vorübergehend aus) |
 | Einstellung „Helper-App“ | – | an/aus |
 
-Koppeln wie bisher: In der Helfer-App auf **Verbinden** tippen. Die Seite, die sich dann öffnet, speichert den
-Schlüssel in Kadri.
+**Integrationszweig `feature/helper-channel-control` (nicht freigegeben):** Kadri spricht die Helfer-App nur noch über einen
+gekoppelten, verschlüsselten Kanal (SPAKE2 + Noise KK, `127.0.0.1:47899`) und nur mit Steuerbefehlen für Helligkeit und
+Lautstärke. Koppeln: in der Helfer-App „Code anzeigen“, in Kadris Einstellungen unter „Helfer koppeln“ den 8-stelligen
+Code eingeben. Der alte Port 47811 und der alte Schlüssel entfallen; die Firefox-Fassung hat den Kanal noch nicht.
+Siehe [HELPER-CHANNEL-INTEGRATION.md](HELPER-CHANNEL-INTEGRATION.md).
 
 ## Für Entwickler
 

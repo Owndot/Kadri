@@ -14,7 +14,7 @@ Jede Sitzungsregel bekommt zusätzlich `initiatorDomains: [<Erweiterungs-ID>]`: 
 
 | Regel | Sicherheitsfunktion | Wirkung der Initiator-Einschränkung | Erhalten? Nachweis |
 | --- | --- | --- | --- |
-| 50 `allow` `127.0.0.1:47811` (Prio 10) | Kadris Anfragen an die Helfer-App trotz Sperre 51 | Fremde Service Worker sind ohnehin nicht mehr gesperrt; die Ausnahme betrifft nur Kadri | ja – `test_redirect.py`, `test_helper.py` (Helfer erreichbar), `guard_check.js` |
+| 40 `allow` POST an `127.0.0.1:47899/p1/…` (Prio 10) | Kadris sicherer Kanal zur Helfer-App trotz Sperre 51 (ersetzt die frühere Regel 50 für den alten Port 47811) | Fremde Service Worker sind ohnehin nicht gesperrt; die Ausnahme betrifft nur Kadri | ja – `test_redirect.py`, `test_helper.py` (Helfer erreichbar), `guard_check.js` |
 | 51–58 `block` private Adressbereiche (Prio 5) | Kadris eigene Anfragen erreichen nie das Heimnetz, auch nicht per Weiterleitung (öffentliche Adresse → Router) | gilt weiter für jeden Schritt einer Kadri-Anfrage; fremde Service Worker werden nicht mehr gesperrt | ja – `test_dnr_scope.py` O1, `test_redirect.py`; fremd: F2, F4 |
 | 70 `block` `localhost`, `.local`, `.internal`, `.lan` | wie 51–58 für Namen | wie oben | ja – O2; fremd: F3 |
 | 80 `modifyHeaders` Cookie/Authorization/Proxy-Authorization entfernen, außer laufende angemeldete Seite (Prio 30) | Kadris Anfragen nehmen Anmeldedaten nur zur Seite des Fensters mit, nie zu einem fremden Weiterleitungsziel | gilt weiter für jeden Schritt einer Kadri-Anfrage; fremde Service Worker behalten ihre Cookies | ja – `test_redirect.py` (inkl. Gegenprobe ohne Regel); fremd: F1 |
