@@ -86,7 +86,13 @@ async function main() {
     let sw = context.serviceWorkers().find((w) => w.url().endsWith('/background.js'));
     if (!sw) sw = await context.waitForEvent('serviceworker', { predicate: (w) => w.url().endsWith('/background.js'), timeout: 20000 });
     const id = new URL(sw.url()).host;
-    check('Kadris Service Worker läuft (mit Kanal)', await sw.evaluate(() => typeof self.KadriChannel.createChannel === 'function'));
+    // Das serviceworker-Ereignis kann kommen, bevor background.js fertig geladen ist: bis zu 10 s auf den Kanal warten.
+    let swReady = false;
+    for (let i = 0; i < 100 && !swReady; i++) {
+      swReady = await sw.evaluate(() => !!self.KadriChannel && typeof self.KadriChannel.createChannel === 'function');
+      if (!swReady) await new Promise((r) => setTimeout(r, 100));
+    }
+    check('Kadris Service Worker läuft (mit Kanal)', swReady);
     check('CSP erlaubt nur WASM zusätzlich (kein unsafe-eval)', original.content_security_policy.extension_pages === "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';");
     check('Keine neuen Berechtigungen', JSON.stringify(original.permissions) === '["storage","declarativeNetRequestWithHostAccess","scripting"]' && JSON.stringify(original.host_permissions) === '["<all_urls>"]');
 
