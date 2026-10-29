@@ -37,6 +37,45 @@
     return el('div', { class: 'row listrow' }, el('div', { class: 'lab' }, t(label), el('small', {}, t('eine Seite pro Zeile, gilt auch für Unterdomains'))), ta);
   };
 
+  // Kopplung mit der Helfer-App (sicherer Kanal im Hintergrund). Der Code kommt aus der App; er geht nur in den
+  // Hintergrund und nirgends sonst hin. Gespeichert werden nur Kadris eigener Schlüssel und der des Helfers.
+  function pairCard() {
+    const ask = (op, extra) => api.runtime.sendMessage(Object.assign({ t: 'kadri-channel', op }, extra || {})).catch(() => null);
+    const line = el('div', { class: 'note', id: 'pairState' }, '…');
+    const msg = el('div', { class: 'note', id: 'pairMsg' });
+    const code = el('input', { id: 'pairCode', type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '9', placeholder: '1234 5678', spellcheck: 'false' });
+    const show = async () => {
+      const r = await ask('status');
+      const v = r && r.ok ? r.value : null;
+      line.textContent = !v ? '–' : v.paired ? t('Gekoppelt mit Helfer') + ' ' + v.helper + ' · ' + v.reg : t('Nicht gekoppelt');
+      return v;
+    };
+    const pairBtn = el('button', { id: 'pairBtn', class: 'primary', onclick: async () => {
+      const c = code.value.replace(/\s+/g, '');
+      pairBtn.disabled = true; msg.textContent = t('Koppelt …');
+      const r = await ask('pair', { code: c });
+      pairBtn.disabled = false; code.value = '';
+      msg.textContent = r && r.ok ? t('Verbunden') + (r.value.helperChanged ? ' – ' + t('Achtung: neue Helfer-Identität – nur bestätigen, wenn du die Helfer-App selbst zurückgesetzt hast.') : '')
+        : (r && r.error ? r.error.message : '–');
+      show();
+    } }, t('Koppeln'));
+    const checkBtn = el('button', { id: 'checkBtn', onclick: async () => {
+      const r = await ask('check');
+      msg.textContent = r && r.ok && r.value.ok === true ? t('Verbunden') : t('Nicht erreichbar') + (r && r.error ? ' – ' + r.error.message : '');
+    } }, t('Verbindung prüfen'));
+    const forgetBtn = el('button', { id: 'forgetBtn', onclick: async () => {
+      if (!confirm(t('Kopplung wirklich entfernen?'))) return;
+      const r = await ask('forget');
+      msg.textContent = r && r.ok ? t('Kopplung entfernt') : '–';
+      show();
+    } }, t('Kopplung entfernen'));
+    show();
+    return el('div', { class: 'card' },
+      el('div', { class: 'row' }, el('div', { class: 'lab' }, t('Code aus der Helfer-App (8 Ziffern)'),
+        el('small', {}, t('In der Helfer-App „Code anzeigen“ tippen und den Code hier eingeben. Der Code gilt 2 Minuten und nur für einen Versuch.'))), code),
+      el('div', { class: 'btns' }, pairBtn, checkBtn, forgetBtn), line, msg);
+  }
+
   app.append(
     el('h2', {}, t('Player')),
     el('div', { class: 'card' },
@@ -63,7 +102,9 @@
     el('h2', {}, t('Download & Helfer')),
     el('div', { class: 'card' },
       pick('downloader', 'Download', [['ytdlnis', 'YTDLnis'], ['share', 'Teilen']]),
-      yes('systemHelper', 'Helper-App', 'wenn die Helfer-App läuft')),
+      yes('systemHelper', 'Helper-App', 'Helligkeit und Lautstärke über die Helfer-App; Downloads über die App sind vorübergehend aus')),
+    el('h2', {}, t('Helfer koppeln')),
+    pairCard(),
     el('h2', {}, t('Seiten')),
     el('div', { class: 'card' },
       list('disabledSites', 'Kadri ganz aus auf'),

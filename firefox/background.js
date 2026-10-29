@@ -51,11 +51,11 @@ function dropRule(id) {
 // ---------- Schutz: welche Anfragen Kadri überhaupt stellt ----------
 // Die Adressen kommen oft aus den Daten der Webseite. Eine böse Seite soll Kadri damit nichts tun lassen, was sie selbst
 // nicht dürfte:
-//  - nur http(s); keine Adressen im eigenen Netz (Router, NAS …) – außer der Helfer-App auf 127.0.0.1:47811
-//  - nur GET/HEAD; POST nur an die Helfer-App
+//  - nur http(s); keine Adressen im eigenen Netz (Router, NAS …) – auch nicht 127.0.0.1 (die Helfer-App ist in der
+//    Firefox-Fassung vorübergehend aus: sie spricht nur noch den sicheren Kanal, den es hier noch nicht gibt)
+//  - nur GET/HEAD
 //  - Anmeldung (Cookies) nur an die Seite selbst (gleiche Domain wie das Fenster, aus dem die Anfrage kommt) –
 //    Video-Server, Untertitel-Server usw. bekommen sie nicht
-const HELPER_ORIGIN = 'http://127.0.0.1:47811';
 // Welche Adressen gehören zur selben Seite? Nach der offiziellen Public Suffix List (psl.js, vor diesem Skript geladen):
 // www.bbc.co.uk und cdn.bbc.co.uk ja – angreifer.github.io und opfer.github.io, alice.eu.org und bob.eu.org nicht.
 const baseDomain = (host) => pslBase(host);
@@ -104,7 +104,6 @@ if (api.webRequest && api.webRequest.onBeforeRequest && api.webRequest.onBeforeS
       const first = firstUrl.get(d.requestId) === d.url;
       let u;
       try { u = new URL(d.url); } catch (e) { return { cancel: true }; }
-      if (u.origin === HELPER_ORIGIN) return first ? {} : { cancel: true };
       if (first && allowedUrls.has(noHash(d.url))) return {};
       if (privateHost(u.hostname)) return { cancel: true };
       if (!api.dns || !api.dns.resolve || /^[\d.]+$/.test(u.hostname) || u.hostname.includes(':')) return {};
@@ -128,14 +127,13 @@ function guard(m, fromUrl) {
   let u;
   try { u = new URL(m.url); } catch (e) { return 'ungültige Adresse'; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'nur http(s)';
-  const helper = u.origin === HELPER_ORIGIN;
   let site = '';
   try { site = new URL(fromUrl).hostname; } catch (e) {}
   // (eigenes Netz nur, wenn die Seite selbst dort liegt – z. B. ein Medienserver zu Hause)
-  if (!helper && privateHost(u.hostname) && u.hostname !== site) return 'Adresse im eigenen Netz';
+  if (privateHost(u.hostname) && u.hostname !== site) return 'Adresse im eigenen Netz';
   const meth = String(m.method || 'GET').toUpperCase();
-  if (meth !== 'GET' && meth !== 'HEAD' && !helper) return 'nur GET';
-  if (!helper && (!site || baseDomain(site) !== baseDomain(u.hostname))) m.anonymous = true;
+  if (meth !== 'GET' && meth !== 'HEAD') return 'nur GET';
+  if (!site || baseDomain(site) !== baseDomain(u.hostname)) m.anonymous = true;
   m.site = site ? baseDomain(site) : '';
   return '';
 }
@@ -165,20 +163,19 @@ api.runtime.onConnect.addListener((port) => {
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
     try {
-      const helper = new URL(m.url).origin === HELPER_ORIGIN;
-      // Schutz nicht aktiv (Listener ließ sich nicht setzen)? Dann nichts hinaus – außer an die Helfer-App, ohne Weiterleitung
-      if (!(await netGuard()) && !helper) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
+      // Schutz nicht aktiv (Listener ließ sich nicht setzen)? Dann nichts hinaus
+      if (!(await netGuard())) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
       let allowId = 0;
-      if (!helper && privateHost(new URL(m.url).hostname)) allowId = await allowExact(m.url);   // (Prüfung oben: Seite liegt selbst dort)
+      if (privateHost(new URL(m.url).hostname)) allowId = await allowExact(m.url);   // (Prüfung oben: Seite liegt selbst dort)
       m.allowId = allowId;
       if (ref && /^https?:/i.test(ref)) { rule = await refererRule(m.url, ref); if (mediaReferrer(m.url, ref) && !rule) throw new Error('Referrer protection unavailable'); }
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
+        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
-      try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
+      try { const fu = new URL(res.url || m.url); if (privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
       const hdr = [];
       res.headers.forEach((v, k) => hdr.push(k + ': ' + v));
       const head = { status: res.status, statusText: res.statusText, finalUrl: res.url || m.url, headers: hdr.join('\r\n'), type: res.headers.get('content-type') || '' };
@@ -258,3 +255,5 @@ if (action && action.onClicked) {
     } catch (e) {}
   });
 }
+// Ein früher gespeicherter Schlüssel des alten Klartext-Ports der Helfer-App wird gelöscht.
+try { const p = api.storage.local.remove('gm:helperKey'); if (p && p.catch) p.catch(() => {}); } catch (e) {}

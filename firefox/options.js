@@ -63,7 +63,7 @@
     el('h2', {}, t('Download & Helfer')),
     el('div', { class: 'card' },
       pick('downloader', 'Download', [['ytdlnis', 'YTDLnis'], ['share', 'Teilen']]),
-      yes('systemHelper', 'Helper-App', 'wenn die Helfer-App läuft')),
+      yes('systemHelper', 'Helper-App', 'in Firefox vorübergehend nicht verfügbar')),
     el('h2', {}, t('Seiten')),
     el('div', { class: 'card' },
       list('disabledSites', 'Kadri ganz aus auf'),

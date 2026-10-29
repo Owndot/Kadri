@@ -15,13 +15,17 @@
       cache['gm:' + k] = v;
       try { const p = api.storage.local.set({ ['gm:' + k]: v }); if (p && p.catch) p.catch(() => {}); } catch (e) {}
     };
-    // Helper requests alone read the authoritative persistent value, independent
-    // of this document's initial snapshot and storage.onChanged event delivery.
-    const KADRI_HELPER_KEY = async () => {
-      const stored = await api.storage.local.get('gm:helperKey');
-      const key = stored && stored['gm:helperKey'];
-      if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(key)) throw new Error('Helper key unavailable');
-      return key;
+    // ---------- Helfer-App: nur Steuerbefehle über den sicheren Kanal im Hintergrund ----------
+    // helper() im Skript gibt nur den Pfad weiter. Erlaubt sind /ping (= status), /status, /beat, /end, /bright?v=…,
+    // /vol?v=…; alles andere (Downloads, Laden über den Browser) gibt es über den Kanal nicht → null („kein Helfer“).
+    // Der Hintergrund prüft die Befehle noch einmal streng; keine URLs, Cookies oder Medien gehen dorthin.
+    const KADRI_HELPER = async (path) => {
+      const m = /^\/(ping|status|beat|end|bright|vol)(?:\?v=(\d{1,3}(?:\.\d{1,8})?))?$/.exec(path);
+      if (!m) return null;
+      const msg = { t: 'kadri-helper', op: m[1] === 'ping' ? 'status' : m[1] };
+      if (m[2] !== undefined) msg.v = Number(m[2]);
+      const r = await api.runtime.sendMessage(msg);
+      return r && r.ok && r.value && typeof r.value === 'object' ? r.value : null;
     };
     // ---------- Anfragen ----------
     // Binärdaten (ArrayBuffer/Uint8Array) als Base64 schicken – Nachrichten an den Hintergrund können nur Text/JSON

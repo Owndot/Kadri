@@ -1,4 +1,4 @@
-// Kadri – Helfer-Kanal (TEST-Stufe): Transport zum Android-Helfer.
+// Kadri – Helfer-Kanal: Transport zum Android-Helfer.
 // Bewegt nur undurchsichtige Bytes des geprüften Protokolls an genau eine feste Loopback-Adresse.
 //
 //  - nur POST an vier feste Pfade, nur 127.0.0.1:<Port>, keine Weiterleitung, keine Cookies, kein Referrer, kein Cache

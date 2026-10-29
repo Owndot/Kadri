@@ -1,4 +1,4 @@
-// Kadri – Helfer-Kanal (TEST-Stufe, nur Dummy-Daten): Kopplungsverwaltung.
+// Kadri – Helfer-Kanal: Kopplungsverwaltung.
 // Hält die eigene X25519-Testidentität und die eine gespeicherte Kopplung (Pin) mit dem Helfer.
 //
 // Speicherort im Hintergrund: IndexedDB des Erweiterungs-Ursprungs – NICHT storage.local, denn das könnten Kadris

@@ -1,8 +1,9 @@
-// Kadri – Helfer-Kanal (TEST-Stufe): Kopplung, authentisierter Kanal und die einzigen Befehle dieser Stufe.
+// Kadri – Helfer-Kanal: Kopplung, authentisierter Kanal und die einzigen Befehle (Steuerung von Helligkeit und Lautstärke).
 // Kryptografie ausschließlich im geprüften Rust/WASM-Kern (SPAKE2-Kopplung, Noise_KK-Kanal). Diese Datei verwaltet
 // nur Zustände und Reihenfolge.
 //
-// Befehle dieser Stufe: "ping" und begrenzte "dummy"-Daten. Keine Medien-URLs, Cookies, Header oder echten Medien.
+// Befehle: status, beat, end, vol (v 0…1, optional), bright (v 0,004…1) – dieselbe strenge Form, die der Helfer prüft.
+// Keine Medien-URLs, Cookies, Header oder Medien.
 //
 // Sicherheitsregeln:
 //  - Ein neuer Pin ersetzt den alten erst nach dem ersten erfolgreichen authentisierten Austausch (Review R4) und erst,
@@ -13,7 +14,8 @@
 //  - Jeder Fehler im Kanal beendet die Sitzung (keine Wiederverwendung nach Manipulation). Einzige automatische
 //    Wiederholung: Kennt der Helfer die Sitzung nicht (HTTP 404, z. B. nach seinem Neustart), wird EINMAL ein neuer
 //    authentisierter Handshake gemacht – der Record wurde dann nachweislich nicht verarbeitet. Das gilt nur für
-//    Befehle ohne Wirkung (ping, dummy); alle anderen melden den Fehler (Review I1).
+//    Befehle, deren Wiederholung nichts anderes bewirkt als die erste Ausführung (alle fünf Steuerbefehle setzen
+//    absolute Werte oder fragen nur ab); alles andere meldet den Fehler (Review I1).
 //  - Alle Aktionen laufen nacheinander (höchstens ein offener Record); die Warteschlange ist begrenzt.
 //  - Fristen der Kopplung auf der monotonen Uhr (performance.now, Review R3).
 (function (root) {
@@ -22,12 +24,23 @@
 
   const PAIR_TTL_MS = 60_000;
   const MAX_QUEUE = 32;
-  const RECORD_DATA_MAX = 60 * 1024;
-  const DUMMY_MAX = 8 * 1024 * 1024;
-  // Nur Befehle ohne Wirkung beim Helfer dürfen nach HTTP 404 (Sitzung unbekannt) einmal mit neuem Handshake
-  // wiederholt werden (Review I1). Künftige Befehle mit Wirkung kommen NICHT in diese Liste.
-  const IDEMPOTENT_OPS = new Set(['ping', 'dummy']);
+  // Nur Befehle, deren Wiederholung nichts anderes bewirkt (absolute Werte, Abfragen), dürfen nach HTTP 404 (Sitzung
+  // unbekannt) einmal mit neuem Handshake wiederholt werden (Review I1). Künftige Befehle mit anderer Wirkung (z. B.
+  // ein Download-Start) kommen NICHT in diese Liste.
+  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright']);
   const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);
+
+  // Steuerbefehl → Record-Inhalt, genau in der Form, die der Helfer annimmt (ControlCommands.java): nur "op" und "v",
+  // Zahlen ohne Exponent (auf 4 Nachkommastellen gerundet). Alles andere wird hier schon abgelehnt (null).
+  function controlMessage(op, v) {
+    if (op === 'status' || op === 'beat' || op === 'end') return v === undefined ? { op } : null;
+    if (op !== 'vol' && op !== 'bright') return null;
+    if (v === undefined) return op === 'vol' ? { op } : null;
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+    const r = Math.round(v * 1e4) / 1e4;
+    if (op === 'vol' ? !(r >= 0 && r <= 1) : !(r >= 0.004 && r <= 1)) return null;
+    return { op, v: r };
+  }
 
   class ChannelError extends Error {
     constructor(kind, message) { super(message); this.kind = kind; }
@@ -161,8 +174,7 @@
         const keep = previous ? 'vorherige Kopplung bleibt' : 'keine Kopplung gespeichert';
         try {
           await connect(candidate, identity);
-          const r = await exchange({ op: 'ping' });
-          if (r[0] !== 1) throw new ChannelError('protocol', 'unerwartete Bestätigung');
+          if (!replyOf(await exchange({ op: 'status' }))) throw new ChannelError('protocol', 'unerwartete Bestätigung');
         } catch (e) {
           drop();
           state = previous ? 'paired' : 'unpaired';
@@ -182,36 +194,23 @@
       });
     }
 
-    async function ping() {
-      const r = await request({ op: 'ping' });
-      if (r[0] !== 1) { drop(); throw fail('protocol'); }
+    // Antwort eines Steuer-Records: JSON-Objekt (Status des Helfers) oder null.
+    function replyOf(r) {
+      if (r[0] !== 1) return null;
       let reply;
-      try { reply = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(r.subarray(1))); } catch (e) { drop(); throw fail('protocol'); }
-      if (!reply || reply.ok !== true) { drop(); throw fail('protocol'); }
-      lastError = null;
-      return { ok: true, helper: String(reply.helper || '').slice(0, 40) };
+      try { reply = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(r.subarray(1))); } catch (e) { return null; }
+      return reply && typeof reply === 'object' && !Array.isArray(reply) ? reply : null;
     }
 
-    // Begrenzte Dummy-Daten (kein Medium): size Bytes in Records zu höchstens 60 KiB; Inhalt und Reihenfolge geprüft.
-    async function dummy(size, transfer = 1) {
-      if (!Number.isSafeInteger(size) || size < 1 || size > DUMMY_MAX) throw fail('input', 'Dummy-Größe 1 B … 8 MiB');
-      if (!Number.isInteger(transfer) || transfer < 1 || transfer > 1000) throw fail('input', 'ungültige Transfer-Nummer');
-      let offset = 0, records = 0;
-      const t0 = now();
-      for (;;) {
-        const r = await request({ op: 'dummy', transfer, size, offset });
-        const dv = new DataView(r.buffer, r.byteOffset, r.byteLength);
-        if (r[0] === 3 && r.length === 13) {
-          if (dv.getUint32(1) !== transfer || Number(dv.getBigUint64(5)) !== size || offset !== size) { drop(); throw fail('protocol', 'Ende passt nicht'); }
-          break;
-        }
-        const n = r.length - 13;
-        if (r[0] !== 2 || n < 1 || n > RECORD_DATA_MAX || dv.getUint32(1) !== transfer || Number(dv.getBigUint64(5)) !== offset || offset + n > size) { drop(); throw fail('protocol', 'Record passt nicht'); }
-        for (let i = 0; i < n; i++) if (r[13 + i] !== ((offset + i) * 31 + 7 + transfer) % 256) { drop(); throw fail('protocol', 'Dummy-Inhalt falsch'); }
-        offset += n; records++;
-      }
+    // Ein Steuerbefehl. Ergebnis: die Antwort des Helfers ({ok:true, …}); {ok:false} heißt „Befehl abgelehnt“
+    // (die Sitzung bleibt). Ungültige Befehle verlassen den Browser nicht.
+    async function command(op, v) {
+      const msg = controlMessage(op, v);
+      if (!msg) throw fail('input', 'ungültiger Steuerbefehl');
+      const reply = replyOf(await request(msg));
+      if (!reply || typeof reply.ok !== 'boolean') { drop(); throw fail('protocol'); }
       lastError = null;
-      return { bytes: offset, records, ms: Math.round(now() - t0) };
+      return reply;
     }
 
     async function forget() {
@@ -230,11 +229,11 @@
       return { state: st, paired: !!pin, reg: pin ? pin.reg.slice(0, 8) : null, helper: pin ? pin.helper.slice(0, 8) : null, pairedAt: pin ? pin.pairedAt : 0, lastError };
     }
 
-    return { pair, ping, dummy, forget, status, dropSession: () => serial(async () => { drop(); }) };
+    return { pair, command, forget, status, dropSession: () => serial(async () => { drop(); }) };
   }
 
   NS.ChannelError = ChannelError;
   NS.createChannel = createChannel;
-  NS.DUMMY_MAX = DUMMY_MAX;
+  NS.controlMessage = controlMessage;
   NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);
