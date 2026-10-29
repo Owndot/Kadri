@@ -94,11 +94,11 @@ async function runHeaderTests(source, runtime) {
     const a=h.req('https://a.test/page','https://a.test/hold');await tick();
     const b=h.req('https://b.test/page','https://b.test/check');b.abort();await tick();
     assert((await b.done).t==='error','queued abort missing');
-    const helper=h.req('https://a.test/page','http://127.0.0.1:47811/ping');await helper.done;
-    assert(h.calls.at(-1).o.redirect==='error','helper followed redirect');
+    const legacy=await h.req('https://a.test/page','http://127.0.0.1:47811/ping').done;
+    assert(legacy.t==='error'&&/eigenen Netz/.test(legacy.msg)&&!h.calls.some(c=>/47811/.test(c.u)),'legacy helper port reached');
     d.resolve();await a.done;
     assert(!h.calls.some(c=>c.u==='https://b.test/check'),'aborted queue fetched');
-    output.push('queued abort removed; helper bypass remains responsive');
+    output.push('queued abort removed; legacy helper port refused without a fetch');
   }
   {
     const h=setup([{id:1007,priority:20,action:{type:'allow'},condition:{regexFilter:'.*'}}]);await tick();

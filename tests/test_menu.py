@@ -19,11 +19,10 @@ with sync_playwright() as p:
         pg.reload(); pg.wait_for_function('document.getElementById("v").currentTime > 0.5', timeout=20000)
         pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.8)
         return pg.evaluate('() => !!document.querySelector("[data-kadri-test]")')
-    # 1) Menü: Seite, Schalter an, Helfer nicht gefunden
-    helper['on'] = False
+    # 1) Menü: Seite, Schalter an, Helfer nicht gekoppelt (verbunden: tests/test_helper.py mit dem echten Kanal-Helfer)
     m = popup()
     st = m.evaluate('() => [document.body.innerText, document.getElementById("siteOn") && document.getElementById("siteOn").checked]')
-    check('Menü: zeigt die Seite, Kadri hier an, Helfer-App nicht gefunden', '127.0.0.1' in st[0] and st[1] is True and 'nicht gefunden' in st[0], st)
+    check('Menü: zeigt die Seite, Kadri hier an, Helfer-App nicht gekoppelt', '127.0.0.1' in st[0] and st[1] is True and 'nicht gekoppelt' in st[0], st)
     # 2) ausschalten → nach dem Neuladen kein Kadri
     m.evaluate('() => document.querySelector(".sw span").click()'); time.sleep(0.6)
     lst = sw.evaluate('async () => ((await chrome.storage.local.get("gm:settings"))["gm:settings"] || {}).disabledSites')
@@ -34,11 +33,9 @@ with sync_playwright() as p:
     m = popup(); m.evaluate('() => document.querySelector(".sw span").click()'); time.sleep(0.6); m.close()
     a2 = kadri_active()
     check('… wieder eingeschaltet: Knopf ist wieder da', a2)
-    # 4) Helfer läuft → Menü zeigt „verbunden“
-    helper['on'] = True; helper['key'] = 'evp-1'
+    # 4) ein fremder Dienst auf dem alten Port 47811 macht keinen „verbundenen“ Helfer
     m = popup(); txt = m.evaluate('() => document.getElementById("helper").innerText'); m.close()
-    check('Menü: Helfer-App verbunden, wenn sie läuft', 'verbunden' in txt, txt)
-    helper['on'] = False
+    check('Menü: fremder Dienst auf dem alten Port gilt nicht als Helfer, nie angesprochen', 'verbunden' not in txt and not LEGACY_HITS, [txt, LEGACY_HITS])
     # 5) Einstellungsseite: Sprungweite 30 s → gilt im Player
     o = ctx.new_page(); o.goto('chrome-extension://%s/options.html' % ext_id); time.sleep(1.0)
     o.select_option('select[data-k=skipSeconds]', '30'); time.sleep(0.5)

@@ -60,15 +60,13 @@ with sync_playwright() as p:
     r = xhr(pg, {'method': 'GET', 'url': Bb + 'hdr?tag=b3'})
     h = hits('b3')
     check('direkt an b.test (fremde Seite): ohne Anmeldung', r.get('status') == 200 and h and h[0]['cookie'] == '', [r, h])
-    # ---- 2. Helfer-Abfrage + gleichzeitige fremde Weiterleitung ins eigene Netz ----
-    helper['on'] = True
+    # ---- 2. alter Helfer-Port + gleichzeitige fremde Weiterleitung ins eigene Netz ----
     del SECRET_HITS[:]
     res = pg.evaluate(PAR, [{'method': 'GET', 'url': 'http://127.0.0.1:47811/status', 'headers': {'X-EVP-Key': 'evp-1'}}] * 4 +
                       [{'method': 'GET', 'url': A + 'redir?to=' + urllib.parse.quote(LAN + 'secret')}] * 4)
     time.sleep(0.5)
-    check('Helfer-Abfragen gehen durch', all(x.get('status') == 200 for x in res[:4]), res[:4])
+    check('alter Helfer-Port: gesperrt, nie erreicht', all('error' in x for x in res[:4]) and not LEGACY_HITS, [res[:4], LEGACY_HITS[:]])
     check('gleichzeitige Weiterleitung ins eigene Netz: gesperrt, Ziel nie erreicht', all('error' in x for x in res[4:]) and not SECRET_HITS, [res[4:], SECRET_HITS[:]])
-    helper['on'] = False
     # ---- 3. Seite im eigenen Netz (Medienserver) ----
     lan = ctx.new_page(); lan.goto(LAN + 'direct.html'); time.sleep(1.5)
     del SECRET_HITS[:]
@@ -144,9 +142,8 @@ with sync_playwright() as p:
         d.updateSessionRules = () => Promise.reject(new Error('Test')); netReady = null; }''')
     r = xhr(pg, {'method': 'GET', 'url': A + 'hdr?tag=f1'})
     check('ohne Schutzregeln: keine Anfrage hinaus', 'error' in r and 'Schutzregeln' in r['error'] and not hits('f1'), [r, hits('f1')])
-    helper['on'] = True
     r = xhr(pg, {'method': 'GET', 'url': 'http://127.0.0.1:47811/status', 'headers': {'X-EVP-Key': 'evp-1'}})
-    check('… die Helfer-App bleibt erreichbar', r.get('status') == 200, r)
+    check('… auch nicht zum alten Helfer-Port', 'error' in r and not LEGACY_HITS, [r, LEGACY_HITS[:]])
     sw.evaluate('() => { chrome.declarativeNetRequest.updateSessionRules = globalThis.__upd; netReady = null; }')
     r = xhr(pg, {'method': 'GET', 'url': A + 'hdr?tag=f2'})
     check('Regeln wieder setzbar: Anfragen gehen wieder', r.get('status') == 200 and hits('f2'), r)

@@ -1,6 +1,6 @@
 // Mutationsprobe für den Helfer-Kanal: Jeder Mutant baut gezielt einen Sicherheitsfehler in eine KOPIE des Codes ein.
 // Die Tests müssen jeden Mutanten erkennen (fehlschlagen). Die echten Quellen werden nie verändert.
-//   HELPER_HOST_DIR=... node tests/channel/channel_mutation_check.js   (vorher: node tools/build.js --channel-poc --channel-only)
+//   HELPER_HOST_DIR=... node tests/channel/channel_mutation_check.js   (vorher: node tools/build.js --test)
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -15,11 +15,14 @@ const NODE_MUTANTS = [
   ['jeder Fehler wird wiederholt', 'channel-session.js', "if (e.kind !== 'stale-session') throw e;", "if (false) throw e;"],
   ['Sitzung nach Manipulation weiterverwendet', 'channel-session.js', "        if (session === s) drop();\n        state = 'paired';\n        throw fail('tampered'", "        state = 'paired';\n        throw fail('tampered'"],
   ['I1: jeder Befehl nach 404 wiederholt', 'channel-session.js', "const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);", "const retryableAfterStaleSession = (op) => true;"],
-  ['I1: auch ping nicht wiederholt', 'channel-session.js', "const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);", "const retryableAfterStaleSession = (op) => false;"],
+  ['I1: kein Befehl nach 404 wiederholt', 'channel-session.js', "const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);", "const retryableAfterStaleSession = (op) => false;"],
   ['Warteschlange unbegrenzt', 'channel-session.js', "if (queued >= MAX_QUEUE)", "if (false)"],
   ['Codeformat ungeprüft', 'channel-session.js', "if (!/^[0-9]{8}$/.test(code))", "if (false)"],
-  ['Dummy-Inhalt ungeprüft', 'channel-session.js', "if (r[13 + i] !== ((offset + i) * 31 + 7 + transfer) % 256)", "if (false)"],
-  ['Dummy-Größe unbegrenzt', 'channel-session.js', "size > DUMMY_MAX", "size > Infinity"],
+  ['Befehl: beliebige Befehle durchgelassen', 'channel-session.js', "    if (op !== 'vol' && op !== 'bright') return null;", "    if (op !== 'vol' && op !== 'bright') return { op };"],
+  ['Befehl: Helligkeit ohne Untergrenze', 'channel-session.js', "!(r >= 0.004 && r <= 1)", "!(r <= 1)"],
+  ['Befehl: Werte ungerundet (Exponent möglich)', 'channel-session.js', "const r = Math.round(v * 1e4) / 1e4;", "const r = v;"],
+  ['Befehl: Antwort ohne ok-Prüfung', 'channel-session.js', "if (!reply || typeof reply.ok !== 'boolean') { drop(); throw fail('protocol'); }", "if (!reply) { drop(); throw fail('protocol'); }"],
+  ['Befehl: Antwort anderer Record-Art angenommen', 'channel-session.js', "      if (r[0] !== 1) return null;", ""],
   ['stille Identität neben gespeichertem Pin', 'channel-store.js', "      if (await pin()) throw new StoreError('inconsistent'", "      if (false) throw new StoreError('inconsistent'"],
   ['Schreibfehler verschluckt', 'channel-store.js', "try { await backend.put(k, v); } catch (e) { throw new StoreError('storage', 'Speichern fehlgeschlagen – nichts geändert'); }", "try { await backend.put(k, v); } catch (e) { }"],
   ['beschädigter Pin stillschweigend verworfen', 'channel-store.js', "if (!validPin(p)) throw new StoreError('corrupt'", "if (!validPin(p)) return null; if (false) throw new StoreError('corrupt'"],
@@ -28,16 +31,17 @@ const NODE_MUTANTS = [
   ['beliebige Pfade', 'channel-transport.js', "if (!PATHS.has(path))", "if (false)"],
   ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(timeoutMs),", ""],
 ];
-const BROWSER_MUTANTS = [   // [Name, Build, Datei, alt, neu]
-  ['Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel-poc', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
-  ['Netzwerkfreigabe für alle Methoden', 'channel-poc', 'channel/channel-service.js', "requestMethods: ['post'], ", ""],
-  ['Minimal: Sandkasten lässt alles durch', 'channel-only', 'channel-only-background.js', "action: { type: 'block' }", "action: { type: 'allow' }"],
-  ['Minimal: Absenderprüfung entfernt', 'channel-only', 'channel/channel-service.js', "const fromPage = sender &&", "const fromPage = true || sender &&"],
-  ['N1: Sandkasten ohne Initiator (trifft fremde Service Worker)', 'channel-only', 'channel-only-background.js', "condition: { tabIds: [-1], initiatorDomains: [chrome.runtime.id] }", "condition: { tabIds: [-1] }"],
-  ['N1: Fehler beim Setzen der Regel verschluckt', 'channel-only', 'channel-only-background.js', "nicht gesetzt werden:', e); return false;", "nicht gesetzt werden:', e); return true;"],
-  ['N1: Vorbedingung im Kanal ignoriert', 'channel-only', 'channel/channel-service.js', "const precondition = () => (typeof NS.networkPrecondition === 'function' ?", "const precondition = () => (false ?"],
+const BROWSER_MUTANTS = [   // [Name, Datei in dist/test, alt, neu]
+  ['Verwaltung: Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel/channel-service.js', "if (!a || !a.pages.some((p) => isPage(sender, p)))", "if (!a)"],
+  ['Verwaltung: Menü darf koppeln', 'channel/channel-service.js', "pair: { pages: ['options.html'],", "pair: { pages: ['options.html', 'popup.html'],"],
+  ['Befehle: fremde Felder durchgelassen', 'channel/channel-service.js', "keys.every((k) => k === 't' || k === 'op' || k === 'v')", "true"],
+  // (Kein Mutant „Befehle ungeprüft weitergereicht“: channel.command() prüft dieselbe Form selbst noch einmal –
+  //  der Mutant wäre gleichwertig. Die Prüfung im Hintergrund deckt der Mutant „fremde Felder“ ab.)
+  ['Kanal-Regel für alle Methoden', 'background.js', ", requestMethods: ['post'] }, OWN())", " }, OWN())"],
+  ['Kanal-Regel für den ganzen Port', 'background.js', "47899/p1/(?:pair/m[02]|ch/(?:hs|rec))$'", "47899/'"],
+  ['Alte Freigabe für Port 47811 wieder da', 'background.js', "const NET_RULES = [CHANNEL_RULE]", "const NET_RULES = [CHANNEL_RULE, { id: 50, priority: 10, action: { type: 'allow' }, condition: Object.assign({ regexFilter: '^http://127\\\\.0\\\\.0\\\\.1:47811/' }, OWN()) }]"],
+  ['Vorbedingung im Kanal ignoriert', 'channel/channel-service.js', "const precondition = () => (typeof NS.networkPrecondition === 'function' ?", "const precondition = () => (false ?"],
 ];
-
 function mutate(srcFile, from, to) {
   const text = fs.readFileSync(srcFile, 'utf8');
   if (text.split(from).length !== 2) throw new Error('pattern not found exactly once in ' + srcFile + ': ' + from);
@@ -55,8 +59,7 @@ let survived = 0;
 if (!run('channel_unit_check.js', {}, 120000, true)) { console.log('baseline unit FAILED'); process.exit(1); }
 if (!run('channel_integration_check.js', {}, 600000, true)) { console.log('baseline integration FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', {}, 600000, true)) { console.log('baseline browser FAILED'); process.exit(1); }
-if (!run('channel_browser_check.js', { CHANNEL_DIST_DIR: path.join(ROOT, 'dist', 'channel-only') }, 600000, true)) { console.log('baseline minimal browser FAILED'); process.exit(1); }
-if (!run('channel_sandbox_failure_check.js', {}, 300000, true)) { console.log('baseline sandbox failure FAILED'); process.exit(1); }
+if (!run('channel_netguard_failure_check.js', {}, 300000, true)) { console.log('baseline netguard failure FAILED'); process.exit(1); }
 console.log('baselines pass');
 for (const [name, file, from, to] of NODE_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-'));
@@ -68,13 +71,13 @@ for (const [name, file, from, to] of NODE_MUTANTS) {
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);
 }
-for (const [name, build, file, from, to] of BROWSER_MUTANTS) {
+for (const [name, file, from, to] of BROWSER_MUTANTS) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-mutant-dist-'));
-  fs.cpSync(path.join(ROOT, 'dist', build), dir, { recursive: true });
+  fs.cpSync(path.join(ROOT, 'dist', 'test'), dir, { recursive: true });
   mutate(path.join(dir, file), from, to);
-  // Minimaler Build: zusätzlich der Fail-closed-Test; erkannt, wenn einer der Tests fehlschlägt.
+  // erkannt, wenn der Browser-Test oder der Fail-closed-Test fehlschlägt
   const passed = run('channel_browser_check.js', { CHANNEL_DIST_DIR: dir }, 300000) &&
-    (build !== 'channel-only' || run('channel_sandbox_failure_check.js', { CHANNEL_DIST_DIR: dir }, 300000));
+    run('channel_netguard_failure_check.js', { CHANNEL_DIST_DIR: dir }, 300000);
   fs.rmSync(dir, { recursive: true, force: true });
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);

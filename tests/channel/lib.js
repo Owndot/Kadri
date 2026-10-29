@@ -1,7 +1,8 @@
 // Gemeinsame Hilfen der Kanal-Tests (nur Tests).
 //  - loadChannel(): lädt den vendorten WASM-Kern und die Kanal-Module in Node – dieselben Dateien wie im Test-Build.
-//  - startHelper(): startet den Desktop-Host des unveränderten PocServer aus dem Helper-Repository
-//    (poc/android-capability/tools/build-desktop-helper.sh; Pfad in HELPER_HOST_DIR) und steuert ihn über stdin.
+//  - startHelper(): startet den echten ChannelServer der Helper-App auf dem Desktop (ChannelHarness aus dem
+//    Helper-Repository, tests/java/channel/build.sh; Ausgabe-Pfad in HELPER_HOST_DIR) und steuert ihn über stdin:
+//    open | list | revoke <id> | revoke-all | restart | reset-identity | device | rogue-on | rogue-off | fail-persist on|off
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -44,7 +45,7 @@ async function portFree(port, ms) {
 
 function startHelper() {
   const dir = process.env.HELPER_HOST_DIR;
-  if (!dir) throw new Error('HELPER_HOST_DIR not set (output of build-desktop-helper.sh)');
+  if (!dir) throw new Error('HELPER_HOST_DIR not set (output of the helper repository\'s tests/java/channel/build.sh)');
   const state = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-helper-'));
   const events = [], waiting = [];
   let p = null, buf = '';
@@ -53,7 +54,7 @@ function startHelper() {
     waiting.push((l) => { clearTimeout(t); res(l); });
   });
   const ready = portFree(47899, 15000).then(() => {
-    p = spawn('java', ['-Djava.library.path=' + path.join(dir, 'lib'), '-cp', path.join(dir, 'classes'), 'de.evp.pakepoc.DesktopHelperHost', state],
+    p = spawn('java', ['-Djava.library.path=' + path.join(dir, 'lib'), '-cp', path.join(dir, 'classes'), 'de.evp.helfer.ChannelHarness', state],
       { stdio: ['pipe', 'pipe', 'inherit'] });
     p.stdout.on('data', (d) => {
       buf += d;
@@ -72,6 +73,14 @@ function startHelper() {
   return {
     ready, events, cmd, state,
     async code() { const r = await cmd('open'); const m = /^CODE ([0-9]{8})$/.exec(r); if (!m) throw new Error('no code: ' + r); return m[1]; },
+    // Zustand des nachgebildeten Geräts (Helligkeit, Lautstärke, Zähler) als Objekt.
+    async device() {
+      const r = await cmd('device');
+      const o = {};
+      for (const [, k, v] of r.matchAll(/(\w+)=(\S+)/g)) o[k] = v === 'true' ? true : v === 'false' ? false : Number(v);
+      return o;
+    },
+    async regs() { const r = await cmd('list'); return r.split(' ').slice(1); },
     async stop() {
       if (p) {
         const exited = new Promise((r) => p.once('exit', r));

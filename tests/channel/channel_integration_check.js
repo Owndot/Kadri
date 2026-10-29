@@ -1,6 +1,6 @@
-// Integrationstests des Helfer-Kanals: Kanal-Module + vendorter WASM-Kern in Node gegen den unveränderten PocServer
-// der Android-Test-App (Desktop-Host). Keine Gerätetests. Nur Dummy-Daten.
-//   HELPER_HOST_DIR=<build-desktop-helper.sh OUT> node tests/channel/channel_integration_check.js
+// Integrationstests des Helfer-Kanals: Kanal-Module + vendorter WASM-Kern in Node gegen den echten ChannelServer der
+// Helper-App (Desktop, ChannelHarness; nur das Gerät ist nachgebildet). Keine Gerätetests, keine Medien.
+//   HELPER_HOST_DIR=<Helper-Repo: tests/java/channel/build.sh OUT> node tests/channel/channel_integration_check.js
 'use strict';
 const http = require('http');
 const { loadChannel, startHelper, check, expectError, summary } = require('./lib');
@@ -26,21 +26,46 @@ function fakeServer(handler) {
 async function main() {
   const h = startHelper();
   const ready = await h.ready;
-  check('Desktop-Host des PocServer gestartet', /^READY [0-9a-f]{8}$/.test(ready), ready);
+  check('Desktop-Helfer (ChannelServer) gestartet', /^READY [0-9a-f]{8}$/.test(ready), ready);
   try {
-    // ---------- erfolgreicher Handshake, Ping, Dummy ----------
+    // ---------- Kopplung und Steuerbefehle ----------
     {
       const { channel, backend } = setup();
       const r = await channel.pair(await h.code());
       check('Kopplung per Code: Pin erst nach authentisierter Bestätigung', r.reg.length === 8 && r.replacedPrevious === false);
-      const p = await channel.ping();
-      check('Ping über den authentisierten Kanal', p.ok && p.helper === 'android-test-app', JSON.stringify(p));
-      const d = await channel.dummy(1048576);
-      check('1 MiB Dummy-Daten in 18 Records, Inhalt geprüft', d.bytes === 1048576 && d.records === 18, JSON.stringify(d));
+      check('Helfer: Registrierung bestätigt', (await h.regs()).length === 1 && (await h.regs())[0].endsWith(':confirmed'));
+      const p = await channel.command('status');
+      check('Status über den authentisierten Kanal (Downloads aus)', p.ok === true && p.app === 'harness' && p.dl === false && p.proxy === false && p.dash === false, JSON.stringify(p));
+      const b = await channel.command('bright', 0.3);
+      const d0 = await h.device();
+      check('Helligkeit kommt am Gerät an', b.ok === true && d0.bright === 0.3 && d0.overriding === true, JSON.stringify(d0));
+      await channel.command('vol', 0.6);
+      check('Lautstärke kommt am Gerät an', (await h.device()).volStep === 9);
+      const vRead = await channel.command('vol');
+      check('vol ohne Wert ändert nichts', vRead.volStep === 9 && (await h.device()).vols === 1);
+      await channel.command('beat');
+      check('Lebenszeichen', (await h.device()).beats >= 2);
+      check('end gibt die Helligkeit zurück', (await channel.command('end')).ok === true && (await h.device()).overriding === false);
       const keys = Array.from(backend.dump().keys()).sort().join(',');
       check('Gespeichert werden nur Identität und Pin (kein Sitzungsmaterial)', keys === 'identity,pin', keys);
       check('Status verbunden', (await channel.status()).state === 'connected');
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
+    }
+
+    // ---------- Einzelwiderruf (hostRevoke): nur dieser Browser ----------
+    {
+      const a = setup(), b = setup();
+      const ra = await a.channel.pair(await h.code());
+      const rb = await b.channel.pair(await h.code());
+      const ids = await h.regs();
+      const idA = ids.map((x) => x.split(':')[0]).find((x) => x.startsWith(ra.reg));
+      check('Zwei Browser gekoppelt', ids.length === 2 && !!idA, ids.join(' '));
+      check('Einzelwiderruf gespeichert', (await h.cmd('revoke ' + idA)) === 'REVOKED saved');
+      check('Widerrufener Browser: "rejected"', await expectError(a.channel.command('status'), 'rejected') === true);
+      check('Anderer Browser arbeitet weiter', (await b.channel.command('status')).ok === true && (await h.regs()).length === 1 && (await h.regs())[0].startsWith(rb.reg));
+      await h.cmd('restart');
+      check('Einzelwiderruf übersteht Helfer-Neustart', await expectError(a.channel.command('status'), 'rejected') === true && (await b.channel.command('status')).ok === true);
+      await h.cmd('revoke-all');
     }
 
     // ---------- falscher Kopplungscode ----------
@@ -60,26 +85,29 @@ async function main() {
       const a = setup();
       await a.channel.pair(await h.code());
       const b = setup({ backend: a.backend });   // neuer Worker: gleicher Speicher, kein Sitzungszustand
-      check('Neuer Worker nutzt gespeicherte Kopplung (neuer Handshake)', (await b.channel.ping()).ok);
+      check('Neuer Worker nutzt gespeicherte Kopplung (neuer Handshake)', (await b.channel.command('status')).ok);
       check('Gespeicherte Kopplung bleibt nach Worker-Neustart gleich', (await b.channel.status()).reg === (await a.channel.status()).reg);
       await h.cmd('restart');
-      check('Nach Helfer-Neustart: alte Sitzung unbekannt → genau ein neuer Handshake', (await b.channel.ping()).ok);
-      await h.cmd('revoke');
+      check('Nach Helfer-Neustart: alte Sitzung unbekannt → genau ein neuer Handshake', (await b.channel.command('status')).ok);
+      await h.cmd('restart');
+      const br = await b.channel.command('bright', 0.42);
+      check('Nach Helfer-Neustart: Helligkeit genau einmal neu gesendet und angekommen', br.ok === true && (await h.device()).bright === 0.42);
+      await h.cmd('revoke-all');
     }
 
     // ---------- Widerruf ----------
     {
       const { channel } = setup();
       const first = await channel.pair(await h.code());
-      check('Widerruf (Helfer meldet gespeichert)', (await h.cmd('revoke')) === 'REVOKED saved');
-      check('Nach Widerruf: Zustand "rejected", keine Übertragung', await expectError(channel.ping(), 'rejected') === true);
+      check('Widerruf (Helfer meldet gespeichert)', (await h.cmd('revoke-all')) === 'REVOKED saved');
+      check('Nach Widerruf: Zustand "rejected", keine Übertragung', await expectError(channel.command('status'), 'rejected') === true);
       const st = await channel.status();
       check('Widerruf ändert den Pin nicht automatisch', st.paired && st.reg === first.reg && st.state === 'rejected', JSON.stringify(st));
       await h.cmd('restart');
-      check('Widerruf übersteht Helfer-Neustart', await expectError(channel.ping(), 'rejected') === true);
+      check('Widerruf übersteht Helfer-Neustart', await expectError(channel.command('status'), 'rejected') === true);
       const again = await channel.pair(await h.code());
-      check('Neue Kopplung nach Widerruf', again.replacedPrevious && !again.helperChanged && (await channel.ping()).ok);
-      await h.cmd('revoke');
+      check('Neue Kopplung nach Widerruf', again.replacedPrevious && !again.helperChanged && (await channel.command('status')).ok);
+      await h.cmd('revoke-all');
     }
 
     // ---------- unbekannte Helfer-Identität ----------
@@ -87,18 +115,20 @@ async function main() {
       const { channel } = setup();
       const first = await channel.pair(await h.code());
       await h.cmd('rogue-on');
-      check('Fremder Listener bei offener Sitzung: gefälschte Antwort erkannt ("tampered")', await expectError(channel.ping(), 'tampered') === true);
-      check('Fremder Listener beim neuen Handshake: "identity-mismatch"', await expectError(channel.ping(), 'identity-mismatch') === true);
+      const brightBefore = (await h.device()).brights;
+      check('Fremder Listener bei offener Sitzung: gefälschte Antwort erkannt ("tampered")', await expectError(channel.command('bright', 0.9), 'tampered') === true);
+      check('Fremder Listener beim neuen Handshake: "identity-mismatch"', await expectError(channel.command('status'), 'identity-mismatch') === true);
       check('Status zeigt den Identitätskonflikt', (await channel.status()).state === 'identity-mismatch');
       check('Fremder Listener: Pin unverändert', (await channel.status()).reg === first.reg);
       const off = await h.cmd('rogue-off');
-      check('Fremder Listener sah keinen Klartext', /plaintextHits=0$/.test(off), off);
-      check('Echter Helfer zurück: Kanal funktioniert ohne neue Kopplung', (await channel.ping()).ok);
+      check('Fremder Listener sah keinen Klartext (keinen Befehl, keinen Wert)', /plaintextHits=0 /.test(off) && !/0\.9/.test(off), off);
+      check('Kein Befehl am echten Gerät angekommen', (await h.device()).brights === brightBefore);
+      check('Echter Helfer zurück: Kanal funktioniert ohne neue Kopplung', (await channel.command('status')).ok);
       await h.cmd('reset-identity');
-      check('Helfer-Identität zurückgesetzt: alte Kopplung abgewiesen', await expectError(channel.ping(), 'rejected') === true);
+      check('Helfer-Identität zurückgesetzt: alte Kopplung abgewiesen', await expectError(channel.command('status'), 'rejected') === true);
       const again = await channel.pair(await h.code());
       check('Bewusste Neukopplung meldet den Identitätswechsel', again.helperChanged === true && again.helper !== first.helper);
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
     }
 
     // ---------- manipulierte und wiederholte Records ----------
@@ -120,22 +150,22 @@ async function main() {
       };
       const { channel } = setup({ tap });
       await channel.pair(await h.code());
-      await channel.ping();
+      await channel.command('status');
       mode = 'flip-in';
-      check('Manipulierte Antwort: Sitzung beendet ("tampered")', await expectError(channel.ping(), 'tampered') === true);
-      check('Danach neuer Handshake, Kanal wieder nutzbar', (await channel.ping()).ok);
+      check('Manipulierte Antwort: Sitzung beendet ("tampered")', await expectError(channel.command('status'), 'tampered') === true);
+      check('Danach neuer Handshake, Kanal wieder nutzbar', (await channel.command('status')).ok);
       mode = 'flip-out';
-      check('Manipulierte Anfrage: Helfer lehnt ab ("record-rejected")', await expectError(channel.ping(), 'record-rejected') === true);
-      check('Danach wieder nutzbar', (await channel.ping()).ok);
+      check('Manipulierte Anfrage: Helfer lehnt ab ("record-rejected")', await expectError(channel.command('status'), 'record-rejected') === true);
+      check('Danach wieder nutzbar', (await channel.command('status')).ok);
       mode = 'replay-in';
-      check('Wiederholte (alte) Antwort wird erkannt ("tampered")', await expectError(channel.ping(), 'tampered') === true);
-      await channel.ping();
+      check('Wiederholte (alte) Antwort wird erkannt ("tampered")', await expectError(channel.command('status'), 'tampered') === true);
+      await channel.command('status');
       const old = captured;
-      await channel.ping();
+      await channel.command('status');
       const r = await fetch('http://127.0.0.1:' + PORT + '/p1/ch/rec', { method: 'POST', body: old, headers: { 'Content-Type': 'application/octet-stream', 'X-Kadri-Helper': '2' } });
       check('Wiederholter Record (Replay) vom Helfer abgelehnt', r.status === 400, 'HTTP ' + r.status);
-      check('Nach Replay (bekanntes Risiko R2: Sitzung beendet) baut der Kanal neu auf', (await channel.ping()).ok);
-      await h.cmd('revoke');
+      check('Nach Replay (bekanntes Risiko R2: Sitzung beendet) baut der Kanal neu auf', (await channel.command('status')).ok);
+      await h.cmd('revoke-all');
     }
 
     // ---------- gescheiterte Bestätigung einer neuen Kopplung (R4) ----------
@@ -147,22 +177,22 @@ async function main() {
       flipHs = true;   // die neue Kopplung gelingt, ihr erster Handshake wird verfälscht
       const e = await expectError(channel.pair(await h.code()), 'confirm-failed');
       check('Neue Kopplung ohne erfolgreiche Bestätigung wird nicht übernommen', e === true, String(e));
-      check('… vorherige Kopplung bleibt gespeichert und funktioniert', (await channel.status()).reg === first.reg && (await channel.ping()).ok);
-      await h.cmd('revoke');
+      check('… vorherige Kopplung bleibt gespeichert und funktioniert', (await channel.status()).reg === first.reg && (await channel.command('status')).ok);
+      await h.cmd('revoke-all');
     }
 
     // ---------- konkurrierende Anfragen und Warteschlangen-Grenze ----------
     {
       const { channel } = setup();
       await channel.pair(await h.code());
-      const many = await Promise.allSettled(Array.from({ length: 20 }, () => channel.ping()).concat([channel.dummy(256 * 1024, 2)]));
-      check('20 parallele Pings + Dummy nacheinander abgearbeitet', many.every((x) => x.status === 'fulfilled'), many.filter((x) => x.status !== 'fulfilled').map((x) => x.reason && x.reason.kind).join(','));
-      const flood = await Promise.allSettled(Array.from({ length: 40 }, () => channel.ping()));
+      const many = await Promise.allSettled(Array.from({ length: 20 }, (_, i) => channel.command(i % 2 ? 'beat' : 'status')).concat([channel.command('bright', 0.2)]));
+      check('20 parallele Befehle + Helligkeit nacheinander abgearbeitet', many.every((x) => x.status === 'fulfilled'), many.filter((x) => x.status !== 'fulfilled').map((x) => x.reason && x.reason.kind).join(','));
+      const flood = await Promise.allSettled(Array.from({ length: 40 }, () => channel.command('status')));
       const busy = flood.filter((x) => x.status === 'rejected' && x.reason.kind === 'busy').length;
       check('Warteschlange begrenzt (32): Überlauf wird abgewiesen, Rest bedient', busy === 8 && flood.filter((x) => x.status === 'fulfilled').length === 32, 'busy=' + busy);
-      const pairs = await Promise.allSettled([channel.pair(await h.code()), channel.ping()]);
+      const pairs = await Promise.allSettled([channel.pair(await h.code()), channel.command('status')]);
       check('Kopplung und Anfrage gleichzeitig: nacheinander, beide erfolgreich', pairs.every((x) => x.status === 'fulfilled'));
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
     }
 
     // ---------- fehlgeschlagene Persistenz ----------
@@ -174,17 +204,17 @@ async function main() {
       a.backend.failWrites = 1;   // neuer Pin kann nicht gespeichert werden
       const e = await expectError(a.channel.pair(await h.code()), 'storage');
       check('Neuer Pin nicht speicherbar: Fehler gemeldet', e === true, String(e));
-      check('… vorherige Kopplung bleibt und funktioniert', (await a.channel.status()).reg === first.reg && (await a.channel.ping()).ok);
+      check('… vorherige Kopplung bleibt und funktioniert', (await a.channel.status()).reg === first.reg && (await a.channel.command('status')).ok);
       a.backend.failWrites = 1;
       check('Vergessen nicht speicherbar: Fehler, Kopplung bleibt', await expectError(a.channel.forget(), 'storage') === true && (await a.channel.status()).paired);
       await h.cmd('fail-persist on');
       check('Helfer kann Kopplung nicht speichern: kein M3, nichts gepinnt', await expectError(setup().channel.pair(await h.code()), 'pair-rejected') === true);
-      check('Helfer kann Widerruf nicht speichern: meldet das und stoppt', (await h.cmd('revoke')) === 'REVOKE_NOT_DURABLE server stopped');
-      const down = await expectError(a.channel.ping(), 'unreachable');
+      check('Helfer kann Widerruf nicht speichern: meldet das und stoppt', (await h.cmd('revoke-all')) === 'REVOKE_NOT_DURABLE server stopped');
+      const down = await expectError(a.channel.command('status'), 'unreachable');
       check('Kadri sieht danach "unreachable", keine Ausweichroute', down === true, String(down));
       await h.cmd('fail-persist off');
       await h.cmd('restart');
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
     }
 
     // ---------- Speicherzustände ohne stille Identitätsrotation ----------
@@ -195,10 +225,10 @@ async function main() {
       const corrupt = setup({ backend: NS.memoryBackend({ identity: id, pin: { reg: 'zz', helper: 'yy' } }) });
       check('Beschädigter Pin: Zustand gemeldet, nicht gelöscht', (await corrupt.channel.status()).state === 'storage-corrupt' && corrupt.backend.dump().has('pin'));
       const r = await corrupt.channel.pair(await h.code());
-      check('Bewusste Neukopplung ersetzt beschädigten Pin', !r.replacedPrevious && (await corrupt.channel.ping()).ok);
+      check('Bewusste Neukopplung ersetzt beschädigten Pin', !r.replacedPrevious && (await corrupt.channel.command('status')).ok);
       const badId = setup({ backend: NS.memoryBackend({ identity: new Uint8Array(10) }) });
       check('Beschädigte Identität wird nicht ersetzt', await expectError(badId.store.identity(), 'corrupt') === true);
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
     }
 
     // ---------- Zeitgrenzen und Ressourcengrenzen des Transports ----------
@@ -230,9 +260,9 @@ async function main() {
       check('Anfrage über Record-Größe abgewiesen', await tr2.post('/p1/ch/rec', new Uint8Array(65557)).then(() => 'no error', (x) => x.kind) === 'config');
       const { channel } = setup();
       await channel.pair(await h.code());
-      check('Dummy über 8 MiB abgewiesen', await expectError(channel.dummy(8 * 1024 * 1024 + 1), 'input') === true);
+      check('Ungültiger Befehl verlässt Kadri nicht', await expectError(channel.command('download'), 'input') === true);
       check('Port des alten Helfers ist kein Kanal-Port', (() => { try { NS.createTransport({ fetchImpl: fetch, port: 80 }); return false; } catch (x) { return x.kind === 'config'; } })());
-      await h.cmd('revoke');
+      await h.cmd('revoke-all');
     }
 
     const leaked = h.events.filter((l) => /[0-9]{8}/.test(l.replace(/reg=[0-9a-f]{8}…/, '')) && /CODE|code/.test(l));

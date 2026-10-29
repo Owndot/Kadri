@@ -84,10 +84,10 @@ with sync_playwright() as p:
     r = pg.evaluate('(o) => (%s)(o)' % XHR, {'method': 'GET', 'url': A + 'redir?to=' + urllib.parse.quote(LOCALHOST + 'hdr?tag=o2')})
     time.sleep(0.8)
     check('O2 Kadri: Weiterleitung zu localhost gesperrt', not hits('o2') and r.get('status') != 200, [r, hits('o2')])
-    rules = sw.evaluate('async () => (await chrome.declarativeNetRequest.getSessionRules()).filter((r) => r.id >= 50 && r.id <= 80).map((r) => [r.id, r.condition.initiatorDomains || null, r.condition.tabIds || null])')
+    rules = sw.evaluate('async () => (await chrome.declarativeNetRequest.getSessionRules()).filter((r) => r.id >= 40 && r.id <= 80).map((r) => [r.id, r.condition.initiatorDomains || null, r.condition.tabIds || null])')
     ext_id = sw.evaluate('() => chrome.runtime.id')
-    check('O3 Regeln 50–58, 70, 80 stehen nur für Kadri (Initiator = Erweiterung, kein Tab)',
-          sorted(x[0] for x in rules) == [50, 51, 52, 53, 54, 55, 56, 57, 58, 70, 80] and all(x[1] == [ext_id] and x[2] == [-1] for x in rules), rules)
+    check('O3 Regeln 40, 51–58, 70, 80 stehen nur für Kadri (Initiator = Erweiterung, kein Tab)',
+          sorted(x[0] for x in rules) == [40, 51, 52, 53, 54, 55, 56, 57, 58, 70, 80] and all(x[1] == [ext_id] and x[2] == [-1] for x in rules), rules)
     ctx.close()
 shutdown()
 done()

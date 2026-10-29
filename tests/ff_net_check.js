@@ -39,16 +39,16 @@ const H = (names) => names.map((name) => ({ name, value: 'x' }));
   const { L, ask, ctx } = load(true);
   let id = 1;
   // einzelne Anfragen (jeweils erste Adresse)
-  for (const [u, want] of [['https://example.com/a.vtt', false], ['http://192.168.1.1/', true], ['http://127.0.0.1:47811/x', false], ['https://rebind.example/x', true], ['http://user@10.0.0.1/', true]]) {
+  for (const [u, want] of [['https://example.com/a.vtt', false], ['http://192.168.1.1/', true], ['http://127.0.0.1:47811/x', true], ['http://127.0.0.1:47899/p1/ch/hs', true], ['https://rebind.example/x', true], ['http://user@10.0.0.1/', true]]) {
     const r = await L.req(own(id++, u)); say((!!(r && r.cancel)) === want, (want ? 'gesperrt: ' : 'erlaubt: ') + u, r);
   }
   const page = await L.req({ requestId: id++, tabId: 5, originUrl: 'https://site/', url: 'http://192.168.1.1/' });
   say(!(page && page.cancel), 'Anfragen der Seiten selbst unberührt', page);
-  // Weiterleitung einer öffentlichen Anfrage zur Helfer-App: gesperrt (Ausnahme nur als erste Adresse)
+  // Weiterleitung einer öffentlichen Anfrage zum alten Helfer-Port: gesperrt
   let rid = id++;
   await L.req(own(rid, 'https://evil.example/r'));
   let r = await L.req(own(rid, 'http://127.0.0.1:47811/download?u=x'));
-  say(r && r.cancel, 'Weiterleitung zur Helfer-App: gesperrt', r);
+  say(r && r.cancel, 'Weiterleitung zum alten Helfer-Port: gesperrt', r);
   // Medienserver: genau seine Adresse ist während der Anfrage frei – aber nur für die Anfrage, die dort BEGINNT
   ctx.allowExact('http://192.168.0.5:8096/Videos/1');
   r = await L.req(own(id++, 'http://192.168.0.5:8096/Videos/1'));
@@ -80,10 +80,10 @@ const H = (names) => names.map((name) => ({ name, value: 'x' }));
   h = L.hdr(Object.assign(own(rid, 'https://bob.eu.org/c'), { requestHeaders: H(['Cookie']) }));
   say(h.requestHeaders && h.requestHeaders.length === 0, 'eu.org: alice → bob gilt als andere Seite', h);
   L.done({ requestId: rid });
-  // ohne webRequest (Schutz nicht aktiv): keine Anfragen hinaus, außer an die Helfer-App
+  // ohne webRequest (Schutz nicht aktiv): keine Anfragen hinaus, auch nicht zum alten Helfer-Port
   const off = load(false);
   let msgs = await off.ask('https://www.example.com/', { url: 'https://www.example.com/a.vtt' });
   say(!off.fetched.length && msgs.some((x) => x.t === 'error' && /Schutzregeln/.test(x.msg)), 'Schutz nicht aktiv: Anfrage wird nicht gestellt', msgs);
   msgs = await off.ask('https://www.example.com/', { url: 'http://127.0.0.1:47811/version' });
-  say(off.fetched.length === 1, '… Helfer-App weiter erreichbar', msgs);
+  say(!off.fetched.length && msgs.some((x) => x.t === 'error'), '… alter Helfer-Port ebenfalls nicht', msgs);
 })();

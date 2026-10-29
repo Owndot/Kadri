@@ -18,7 +18,8 @@ const ctx = { chrome, globalThis: null, console, URL, AbortController, setTimeou
 ctx.globalThis = ctx;
 vm.createContext(ctx);
 const PSL = path.join(path.dirname(file), '..', 'vendor', 'psl.js');
-ctx.importScripts = (f) => vm.runInContext(fs.readFileSync(f === 'psl.js' ? PSL : f, 'utf8'), ctx);
+// Kanal-Module (channel/…) brauchen WASM und einen echten Service Worker – hier nicht geladen (eigene Tests in tests/channel).
+ctx.importScripts = (...fl) => fl.forEach((f) => { if (!/^channel\//.test(f)) vm.runInContext(fs.readFileSync(f === 'psl.js' ? PSL : f, 'utf8'), ctx); });
 if (/firefox/.test(file)) ctx.importScripts('psl.js');   // (Firefox lädt psl.js vor background.js)
 vm.runInContext(fs.readFileSync(file, 'utf8'), ctx);
 function req(from, m) {
@@ -49,16 +50,19 @@ function req(from, m) {
   await t('versteckt: 0x7f.1 (= 127.0.0.1): abgelehnt', 'https://www.example.com/', { url: 'http://0x7f.1:8080/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
   await t('versteckt: 2130706433 (= 127.0.0.1): abgelehnt', 'https://www.example.com/', { url: 'http://2130706433/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
   await t('versteckt: [::ffff:192.168.0.1]: abgelehnt', 'https://www.example.com/', { url: 'http://[::ffff:192.168.0.1]/' }, (f, c, e) => !f && /eigenen Netz/.test(e));
-  await t('Helfer-App 127.0.0.1:47811: erlaubt (auch POST), ohne Cookies', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/vol?v=1', method: 'POST' }, (f, c) => f && c.method === 'POST' && c.cred === 'omit');
+  await t('alter Helfer-Port 127.0.0.1:47811: abgelehnt (auch GET)', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/ping' }, (f, c, e) => !f && /eigenen Netz/.test(e));
+  await t('Kanal-Port 127.0.0.1:47899 über diesen Weg: abgelehnt', 'https://www.example.com/', { url: 'http://127.0.0.1:47899/p1/ch/hs', method: 'POST' }, (f, c, e) => !f && /eigenen Netz|nur GET/.test(e));
   await t('POST an fremde Server: abgelehnt', 'https://www.example.com/', { url: 'https://www.example.com/api', method: 'POST' }, (f, c, e) => !f && /nur GET/.test(e));
   await t('file:/data: abgelehnt', 'https://www.example.com/', { url: 'file:///etc/passwd' }, (f, c, e) => !f && /http/.test(e));
   await t('Seite selbst im eigenen Netz: dorthin erlaubt', 'http://192.168.0.5:8096/web', { url: 'http://192.168.0.5:8096/Videos/1' }, (f, c) => f && c.cred === 'include');
   await t('eu.org (Public Suffix List): fremde Unterseite bekommt keine Anmeldung', 'https://alice.eu.org/video', { url: 'https://bob.eu.org/x.vtt' }, (f, c) => f && c.cred === 'omit');
-  await t('Helfer-App: folgt keiner Weiterleitung', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/version' }, (f, c) => f && c.redirect === 'error');
   await t('andere Anfragen folgen Weiterleitungen (Video-CDNs)', 'https://www.example.com/', { url: 'https://cdn.example.net/a.vtt' }, (f, c) => f && c.redirect === 'follow');
   if (!/firefox/.test(file)) {
     const ids = Array.from(rules.keys());
-    out.push(['Schutzregeln stehen (50, 51–58, 70, 80)', [50, 51, 58, 70, 80].every((i) => ids.includes(i)), JSON.stringify(ids)]);
+    out.push(['Schutzregeln stehen (40, 51–58, 70, 80), keine Freigabe 50 für den alten Port', [40, 51, 58, 70, 80].every((i) => ids.includes(i)) && !ids.includes(50), JSON.stringify(ids)]);
+    const r40 = rules.get(40), rx = r40 && new RegExp(r40.condition.regexFilter);
+    out.push(['Regel 40: nur POST an die vier Kanal-Pfade, nur eigene Anfragen', !!rx && rx.test('http://127.0.0.1:47899/p1/ch/rec') && rx.test('http://127.0.0.1:47899/p1/pair/m0') && !rx.test('http://127.0.0.1:47899/p1/ch/rec2') && !rx.test('http://127.0.0.1:47811/ping') && !rx.test('http://127.0.0.1:47899/status') &&
+      r40.condition.requestMethods.join() === 'post' && r40.condition.tabIds.join() === '-1' && r40.condition.initiatorDomains.join() === 'x', JSON.stringify(r40)]);
     const strip = rules.get(80);
     out.push(['Regel 80 entfernt Cookie und Authorization', strip && JSON.stringify(strip.action).includes('cookie') && JSON.stringify(strip.action).includes('authorization'), JSON.stringify(strip)]);
     // Medienserver: nur GENAU die Adresse wird freigegeben (keine Freigabe für den ganzen Server oder Port)
@@ -69,11 +73,11 @@ function req(from, m) {
     chrome.declarativeNetRequest.updateSessionRules = upd;
     const re = seen && new RegExp(seen.condition.regexFilter);
     out.push(['Medienserver: Freigabe nur für genau diese Adresse', re && re.test('http://192.168.0.5:8096/Videos/1?x=1') && !re.test('http://192.168.0.5:8096/admin') && !re.test('http://192.168.0.5:8080/Videos/1?x=1'), JSON.stringify(seen && seen.condition)]);
-    // Schutzregeln lassen sich nicht setzen: keine Anfragen hinaus, außer an die Helfer-App
+    // Schutzregeln lassen sich nicht setzen: keine Anfragen hinaus
     failRules = true; rules.clear(); ctx.eval && 0;
     vm.runInContext('netReady = null;', ctx);
     await t('Schutzregeln fehlen: Anfrage wird nicht gestellt', 'https://www.example.com/', { url: 'https://www.example.com/a.vtt' }, (f, c, e) => !f && /Schutzregeln/.test(e));
-    await t('… Helfer-App weiter erreichbar (ohne Weiterleitung)', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/version' }, (f, c) => f && c.redirect === 'error');
+    await t('… auch nicht zum alten Helfer-Port', 'https://www.example.com/', { url: 'http://127.0.0.1:47811/version' }, (f, c, e) => !f);
     failRules = false;
   }
   out.forEach((o) => console.log((o[1] ? 'OK   ' : 'FAIL ') + o[0] + (o[1] ? '' : '  – ' + o[2])));

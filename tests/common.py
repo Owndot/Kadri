@@ -1,4 +1,4 @@
-# Gemeinsames für die Tests der Erweiterung: Webserver mit den Testseiten, nachgebaute Helfer-App,
+# Gemeinsames für die Tests der Erweiterung: Webserver mit den Testseiten, Zähler für den alten Helfer-Port, echter Kanal-Helfer,
 # Chromium mit geladener Erweiterung (dist/test – wie dist/chrome, nur mit offenem Shadow-DOM).
 import http.server, threading, functools, json, os, re, sys, tempfile, time, urllib.parse
 from playwright.sync_api import sync_playwright
@@ -99,40 +99,56 @@ class Q(http.server.SimpleHTTPRequestHandler):
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', PORT), functools.partial(Q, directory=WEB))
 threading.Thread(target=srv.serve_forever, daemon=True).start()
 
-# ---------- nachgebaute Helfer-App (127.0.0.1:47811) ----------
-helper = {'on': False, 'key': 'evp-1', 'calls': [], 'vol': 0.4, 'bright': 0.5, 'max': 15, 'pulls': [], 'pushed': []}
+# ---------- alter Klartext-Port der Helfer-App (127.0.0.1:47811) ----------
+# Die Helfer-App lauscht dort nicht mehr. Ein fremder Dienst könnte es tun – dieser hier zählt jede Anfrage und gibt
+# sich als Helfer aus. Kadri darf ihn nie erreichen (LEGACY_HITS bleibt leer).
+LEGACY_HITS = []
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
-    def _send(self, code, body, ctype='application/json'):
-        b = body.encode('utf-8')
-        self.send_response(code); self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(b))); self.end_headers()
-        self.wfile.write(b)
     def do_GET(self):
-        u = urllib.parse.urlparse(self.path); q = dict(urllib.parse.parse_qsl(u.query))
-        if u.path == '/pair':   # Koppel-Seite: das Skript liest den Schlüssel aus dem #-Teil
-            self._send(200, '<!doctype html><html><body><p id="evp-pair">…</p></body></html>', 'text/html; charset=utf-8'); return
-        if not helper['on'] or self.headers.get('X-EVP-Key') != helper['key']:
-            self._send(403, '{"ok":false}'); return
-        helper['calls'].append((u.path, q.get('v'), self.headers.get('X-EVP-Key')))
-        # Laden über den Browser: der Helfer verlangt Stücke (/pull), der Browser liefert sie (/push)
-        if u.path == '/download' and q.get('p') == '1': self._send(200, json.dumps({'ok': True, 'id': 'j1'})); return
-        # Seit der Proxy-Speicher-Korrektur fragt Kadri vor jeder abgeholten Arbeit den Zustand des Downloads ab
-        # (proxyLoop → /dlstate) und bricht ohne gültigen Zustand sicher ab. Der nachgebaute Helfer meldet ihn.
-        if u.path == '/dlstate': self._send(200, json.dumps({'ok': True, 'state': 'läuft'})); return
-        if u.path == '/pull':
-            self._send(200, json.dumps(helper['pulls'].pop(0) if helper['pulls'] else {'done': True})); return
-        if u.path == '/push':
-            n = int(self.headers.get('Content-Length') or 0)
-            helper['pushed'].append((q.get('id'), q.get('st'), self.rfile.read(n) if n else b''))
-            self._send(200, '{"ok":true}'); return
-        if u.path == '/vol' and 'v' in q: helper['vol'] = round(float(q['v']) * helper['max']) / helper['max']
-        if u.path == '/bright' and 'v' in q: helper['bright'] = float(q['v'])
-        self._send(200, json.dumps({'ok': True, 'overlay': True, 'write': False, 'dl': True, 'proxy': True, 'dash': True,
-                                    'vol': helper['vol'], 'volMax': helper['max'], 'bright': helper['bright']}))
+        LEGACY_HITS.append((self.command, self.path, self.headers.get('X-EVP-Key')))
+        b = b'{"ok":true,"overlay":true,"write":true,"dl":true,"proxy":true,"dash":true,"vol":1,"volMax":15,"bright":1}'
+        self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b))); self.end_headers()
+        self.wfile.write(b)
     do_POST = do_GET
 hsrv = http.server.ThreadingHTTPServer(('127.0.0.1', 47811), H)
 threading.Thread(target=hsrv.serve_forever, daemon=True).start()
-def hcalls(path): return [c for c in helper['calls'] if c[0] == path]
+
+# ---------- echte Helfer-Seite des sicheren Kanals (ChannelServer der Helper-App auf dem Desktop) ----------
+# HELPER_HOST_DIR: Ausgabe von tests/java/channel/build.sh im Helper-Repository. Gerät (Helligkeit, Lautstärke) nachgebildet.
+class ChannelHelper:
+    def __init__(self):
+        import subprocess
+        d = os.environ.get('HELPER_HOST_DIR')
+        if not d: raise RuntimeError('HELPER_HOST_DIR fehlt (Helper-Repository: tests/java/channel/build.sh)')
+        self.state = tempfile.mkdtemp(prefix='kadri-helper-')
+        self.p = subprocess.Popen(['java', '-Djava.library.path=' + os.path.join(d, 'lib'), '-cp', os.path.join(d, 'classes'),
+                                   'de.evp.helfer.ChannelHarness', self.state], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+        self.ready = self._line()
+    def _line(self):
+        while True:
+            l = self.p.stdout.readline()
+            if not l: raise RuntimeError('Helfer beendet')
+            l = l.strip()
+            if l and not l.startswith('EVENT ') and not l.startswith('Picked up'): return l
+    def cmd(self, c):
+        self.p.stdin.write(c + '\n'); self.p.stdin.flush(); return self._line()
+    def code(self):
+        r = self.cmd('open'); assert re.match(r'^CODE [0-9]{8}$', r), r; return r[5:]
+    def device(self):
+        return {k: (v == 'true' if v in ('true', 'false') else float(v)) for k, v in re.findall(r'(\w+)=(\S+)', self.cmd('device'))}
+    def stop(self):
+        try: self.cmd('quit')
+        except Exception: pass
+        self.p.wait(10)
+
+def pair_helper(ctx, ext_id, helper):
+    """Koppelt Kadri über die echte Einstellungsseite mit dem Code des Helfers."""
+    o = ctx.new_page(); o.goto('chrome-extension://%s/options.html' % ext_id)
+    o.fill('#pairCode', helper.code()); o.click('#pairBtn')
+    o.wait_for_function('() => /Verbunden|Connected|abgelehnt|fehl/i.test(document.getElementById("pairMsg").textContent)', timeout=30000)
+    msg = o.text_content('#pairMsg'); o.close()
+    return msg
 
 # ---------- Chromium mit der Erweiterung ----------
 def launch(p, user_dir=None, extra_args=None):
