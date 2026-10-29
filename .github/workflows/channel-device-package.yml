@@ -1,0 +1,167 @@
+name: Kadri channel device package (Chrome/Vivaldi test package, upload gated twice)
+
+# Baut das Testpaket für Vivaldi Android (Samsung Galaxy S26 Ultra): die normale Chrome-Fassung dist/chrome mit genau
+# einer Änderung – Name „Kadri TEST – Helfer-Kanal“ im Manifest, damit sie neben einer bestehenden Kadri-Installation
+# erkennbar ist (eigene Erweiterungs-ID, eigener Speicher; nichts wird überschrieben). Zweimal aus verschiedenen
+# Pfaden gebaut und als deterministisches ZIP verglichen; der Kanal-Browsertest läuft gegen GENAU dieses Paket und den
+# echten ChannelServer der Helper-App (Commit in vendor/kadri-pairing-poc/SOURCE).
+#
+# Das Repository ist ÖFFENTLICH. Das ZIP wird nur hochgeladen, wenn BEIDE Freigaben vorliegen:
+#   1. .github/CHANNEL-DEVICE-ARTIFACTS-APPROVED ist committet (Vorlage: …APPROVED.template).
+#   2. Handstart (workflow_dispatch) mit confirm_upload = "UPLOAD-TEST-ZIP".
+# Sonst verlässt nichts Installierbares den Runner. Kein Release, kein Store-Upload.
+on:
+  push:
+    branches: [feature/helper-channel-control]
+    paths: ['.github/workflows/channel-device-package.yml', '.github/CHANNEL-DEVICE-ARTIFACTS-APPROVED']
+  workflow_dispatch:
+    inputs:
+      confirm_upload:
+        description: 'Nur mit Freigabedatei: "UPLOAD-TEST-ZIP" lädt das Testpaket für 1 Tag hoch. Leer = nur bauen und prüfen.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kadri-channel-device-package
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Pinned helper commit; upload decision
+        id: pin
+        env:
+          CONFIRM: ${{ github.event.inputs.confirm_upload }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          sha=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/kadri-pairing-poc/SOURCE)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          upload=no
+          if [ -f .github/CHANNEL-DEVICE-ARTIFACTS-APPROVED ] && [ "$EVENT" = workflow_dispatch ] && [ "$CONFIRM" = "UPLOAD-TEST-ZIP" ]; then upload=yes; fi
+          echo "upload=$upload" >> "$GITHUB_OUTPUT"
+          echo "helper commit $sha; upload: $upload"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pin.outputs.sha }}
+          path: helper
+          persist-credentials: false
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Toolchains (Rust 1.97.0 via the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+        run: |
+          set -euo pipefail
+          (cd helper/poc/pake-channel/core && rustc -V)
+          cargo install wasm-bindgen-cli --version 0.2.104 --locked
+      - name: WASM provenance - rebuild from the pinned helper commit, byte-compare; production policy UNAPPROVED
+        run: |
+          set -euo pipefail
+          grep -q '"status": "UNAPPROVED"' helper/release/production-policy.json
+          bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+          for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+          echo 'PASS: vendored WASM rebuilt bit-identically'
+      - name: Build A (checkout) and B (other path); deterministic test-package ZIPs must be identical
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/src-b" && git archive HEAD | tar -x -C "$RUNNER_TEMP/src-b"
+          cat > "$RUNNER_TEMP/pack.py" <<'PY'
+          # pack.py DIST ZIP: Testpaket = DIST mit geändertem Namen; feste Zeitstempel, sortierte Einträge, feste Rechte.
+          import json, os, sys, zipfile
+          dist, out = sys.argv[1], sys.argv[2]
+          m = json.load(open(os.path.join(dist, 'manifest.json'), encoding='utf-8'))
+          m['name'] = 'Kadri TEST – Helfer-Kanal'
+          m['description'] = 'TEST-PAKET, nicht veröffentlichen: Kadri mit sicherem Kanal zur Helfer-App (Gerätetest).'
+          files = sorted(os.path.relpath(os.path.join(r, f), dist) for r, _, fs in os.walk(dist) for f in fs)
+          with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+              for f in files:
+                  data = (json.dumps(m, indent=2, ensure_ascii=False) + '\n').encode() if f == 'manifest.json' else open(os.path.join(dist, f), 'rb').read()
+                  info = zipfile.ZipInfo(f, date_time=(1980, 1, 1, 0, 0, 0))
+                  info.external_attr = 0o644 << 16
+                  info.compress_type = zipfile.ZIP_DEFLATED
+                  z.writestr(info, data)
+          PY
+          node tools/build.js
+          (cd "$RUNNER_TEMP/src-b" && node tools/build.js)
+          python3 "$RUNNER_TEMP/pack.py" dist/chrome "$RUNNER_TEMP/a.zip"
+          python3 "$RUNNER_TEMP/pack.py" "$RUNNER_TEMP/src-b/dist/chrome" "$RUNNER_TEMP/b.zip"
+          sha256sum "$RUNNER_TEMP/a.zip" "$RUNNER_TEMP/b.zip"
+          cmp "$RUNNER_TEMP/a.zip" "$RUNNER_TEMP/b.zip"
+          echo 'PASS: test package reproducible (byte-identical from two paths)'
+      - name: Package facts - only the name differs from dist/chrome; no new permissions; no legacy helper path
+        run: |
+          set -euo pipefail
+          P="$RUNNER_TEMP/pkg"; mkdir -p "$P" && (cd "$P" && unzip -q "$RUNNER_TEMP/a.zip")
+          node - "$P" <<'JS'
+          const fs = require('fs'), path = require('path');
+          const p = process.argv[2], m = JSON.parse(fs.readFileSync(path.join(p, 'manifest.json'), 'utf8'));
+          const base = JSON.parse(fs.readFileSync('dist/chrome/manifest.json', 'utf8'));
+          for (const k of new Set(Object.keys(m).concat(Object.keys(base)))) {
+            if (k === 'name' || k === 'description') continue;
+            if (JSON.stringify(m[k]) !== JSON.stringify(base[k])) throw new Error('manifest differs from dist/chrome: ' + k);
+          }
+          if (JSON.stringify(m.permissions) !== '["storage","declarativeNetRequestWithHostAccess","scripting"]') throw new Error('permissions');
+          if (m.content_security_policy.extension_pages !== "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';") throw new Error('csp');
+          for (const k of ['key', 'update_url', 'externally_connectable']) if (k in m) throw new Error('unexpected manifest key ' + k);
+          console.log('name: ' + m.name + '  version: ' + m.version);
+          JS
+          if grep -rnE "'X-EVP-Key' *:|['\"]http://127\.0\.0\.1:47811|KADRI_HELPER_KEY" "$P" --include=*.js | grep -vE '^[^:]+:[0-9]+: *//'; then echo 'legacy helper client in the package'; exit 1; fi
+          echo 'PASS: package = dist/chrome + test name; no new permissions; no legacy helper client'
+      - name: Desktop helper (real ChannelServer) and Playwright
+        run: |
+          set -euo pipefail
+          bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+          npx playwright install --with-deps chromium
+      - name: Channel browser test against EXACTLY the packaged extension
+        env:
+          HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+          CHANNEL_DIST_DIR: ${{ runner.temp }}/pkg
+        run: |
+          set -euo pipefail
+          sha_before=$(sha256sum < "$RUNNER_TEMP/a.zip" | cut -d' ' -f1)
+          node tests/channel/channel_browser_check.js
+          node tests/channel/channel_netguard_failure_check.js
+          test "$(sha256sum < "$RUNNER_TEMP/a.zip" | cut -d' ' -f1)" = "$sha_before"
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          D="$RUNNER_TEMP/deliver"; mkdir -p "$D"
+          cp "$RUNNER_TEMP/a.zip" "$D/kadri-channel-test.zip"
+          (cd "$D" && sha256sum kadri-channel-test.zip > SHA256SUMS)
+          (cd "$RUNNER_TEMP/pkg" && sha256sum channel/kadri_pairing_poc_bg.wasm manifest.json) >> "$D/SHA256SUMS"
+          printf 'kadri_commit=%s\nhelper_commit=%s\nworkflow_run=%s\n' "$GITHUB_SHA" "${{ steps.pin.outputs.sha }}" "${{ github.run_id }}" >> "$D/SHA256SUMS"
+          chmod a-w "$D"/*
+          cat "$D/SHA256SUMS"
+      - name: Upload is gated (text report only)
+        if: steps.pin.outputs.upload != 'yes'
+        run: |
+          echo "Not uploaded: needs .github/CHANNEL-DEVICE-ARTIFACTS-APPROVED AND a manual run with confirm_upload=UPLOAD-TEST-ZIP."
+          mkdir -p "$RUNNER_TEMP/text" && cp "$RUNNER_TEMP/deliver/SHA256SUMS" "$RUNNER_TEMP/text/"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.pin.outputs.upload != 'yes'
+        with:
+          name: kadri-channel-device-package-report-text-only
+          path: ${{ runner.temp }}/text
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: steps.pin.outputs.upload == 'yes'
+        with:
+          name: kadri-channel-test-${{ github.run_id }}
+          path: ${{ runner.temp }}/deliver
+          retention-days: 1
+          if-no-files-found: error

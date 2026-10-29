@@ -16,6 +16,6 @@ if len(lines) < 6: check('firefox Netz: Prüfung lief', False, out.stdout[-300:]
 out = subprocess.run(['node', os.path.join(HERE, 'header_context_check.js')], capture_output=True, text=True, timeout=60)
 lines = [l for l in out.stdout.splitlines() if l.startswith('OK')]
 check('Chrome header contexts: process succeeded', out.returncode == 0, out.stderr[-500:])
-check('Chrome header contexts: all scenarios executed', len(lines) == 15, lines)
+check('Chrome header contexts: all scenarios executed', len(lines) == 16, lines)   # 15 + alter Helfer-Port gesperrt
 shutdown()
 done()

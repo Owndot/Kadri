@@ -15,14 +15,6 @@
       cache['gm:' + k] = v;
       try { const p = api.storage.local.set({ ['gm:' + k]: v }); if (p && p.catch) p.catch(() => {}); } catch (e) {}
     };
-    // Helper requests alone read the authoritative persistent value, independent
-    // of this document's initial snapshot and storage.onChanged event delivery.
-    const KADRI_HELPER_KEY = async () => {
-      const stored = await api.storage.local.get('gm:helperKey');
-      const key = stored && stored['gm:helperKey'];
-      if (typeof key !== 'string' || !/^[0-9a-f]{32}$/.test(key)) throw new Error('Helper key unavailable');
-      return key;
-    };
     // ---------- Anfragen ----------
     // Binärdaten (ArrayBuffer/Uint8Array) als Base64 schicken – Nachrichten an den Hintergrund können nur Text/JSON
     // (vorher wurde daraus der Text „[object ArrayBuffer]“ – „Über den Browser laden“ kam beim Helfer kaputt an)

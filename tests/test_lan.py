@@ -1,6 +1,6 @@
 # Schutz auf Netzwerk-Ebene (Chrome): Kadris eigene Anfragen (aus dem Hintergrund) erreichen nie das eigene Netz –
 # auch nicht, wenn eine öffentliche Adresse dorthin WEITERLEITET (die Prüfung vor der Anfrage sieht nur die erste
-# Adresse). Die Helfer-App auf 127.0.0.1:47811 bleibt erreichbar. „public.test“ zeigt im Test auf 127.0.0.1, gilt für
+# Adresse). Der alte Helfer-Port 127.0.0.1:47811 ist gesperrt (die Helfer-App spricht nur den sicheren Kanal). „public.test“ zeigt im Test auf 127.0.0.1, gilt für
 # Kadri aber als öffentliche Adresse.
 import time
 from common import *
@@ -12,7 +12,7 @@ with sync_playwright() as p:
     pub = 'http://public.test:%d/' % PORT
     # Regeln stehen (der Hintergrund setzt sie beim Start)
     rules = sw.evaluate('async () => (await chrome.declarativeNetRequest.getSessionRules()).map((r) => r.id)')
-    check('Netzwerk-Regeln aktiv (Helfer erlaubt, eigenes Netz gesperrt)', 50 in rules and 51 in rules, rules)
+    check('Netzwerk-Regeln aktiv (Kanal zur Helfer-App erlaubt, eigenes Netz gesperrt, keine Regel 50 für den alten Port)', 40 in rules and 51 in rules and 50 not in rules, rules)
     ok = sw.evaluate('async (u) => { try { const r = await fetch(u); return r.status; } catch (e) { return "Fehler"; } }', pub + 'direct.html')
     check('öffentliche Adresse: erreichbar', ok == 200, ok)
     del SECRET_HITS[:]

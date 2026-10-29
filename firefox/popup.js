@@ -39,17 +39,8 @@
   // Helfer-App
   const hs = el('div', { class: 'row', id: 'helper' }, el('div', { class: 'lab' }, el('span', { class: 'dot' }), '…'));
   card.append(hs);
-  (async () => {
-    const all = await store.all();
-    const key = all['gm:helperKey'] || 'evp-1';
-    let ok = false;
-    try {
-      const ac = new AbortController(); setTimeout(() => ac.abort(), 1500);
-      const r = await fetch('http://127.0.0.1:47811/ping', { headers: { 'X-EVP-Key': key }, signal: ac.signal, cache: 'no-store' });
-      ok = r.ok && !!(await r.json()).ok;
-    } catch (e) { ok = false; }
-    hs.firstChild.replaceChildren(el('span', { class: 'dot ' + (ok ? 'ok' : '') }), t(ok ? 'Helfer-App: verbunden' : 'Helfer-App: nicht gefunden'));
-  })();
+  // Die Helfer-App spricht nur noch den sicheren Kanal, den die Firefox-Fassung noch nicht hat.
+  hs.firstChild.replaceChildren(el('span', { class: 'dot' }), t('Helfer-App: in Firefox vorübergehend nicht verfügbar'));
   // Knöpfe
   const btns = el('div', { class: 'btns' });
   if (host) {

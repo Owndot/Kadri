@@ -39,16 +39,18 @@
   // Helfer-App
   const hs = el('div', { class: 'row', id: 'helper' }, el('div', { class: 'lab' }, el('span', { class: 'dot' }), '…'));
   card.append(hs);
+  // Über den sicheren Kanal im Hintergrund (nur wenn gekoppelt; der Hintergrund fragt den gekoppelten Helfer).
   (async () => {
-    const all = await store.all();
-    const key = all['gm:helperKey'] || 'evp-1';
-    let ok = false;
+    let ok = false, text = 'Helfer-App: nicht gekoppelt';
     try {
-      const ac = new AbortController(); setTimeout(() => ac.abort(), 1500);
-      const r = await fetch('http://127.0.0.1:47811/ping', { headers: { 'X-EVP-Key': key }, signal: ac.signal, cache: 'no-store' });
-      ok = r.ok && !!(await r.json()).ok;
+      const st = await api.runtime.sendMessage({ t: 'kadri-channel', op: 'status' });
+      if (st && st.ok && st.value && st.value.paired) {
+        const r = await api.runtime.sendMessage({ t: 'kadri-channel', op: 'check' });
+        ok = !!(r && r.ok && r.value && r.value.ok === true);
+        text = ok ? 'Helfer-App: verbunden' : 'Helfer-App: gekoppelt, nicht erreichbar';
+      }
     } catch (e) { ok = false; }
-    hs.firstChild.replaceChildren(el('span', { class: 'dot ' + (ok ? 'ok' : '') }), t(ok ? 'Helfer-App: verbunden' : 'Helfer-App: nicht gefunden'));
+    hs.firstChild.replaceChildren(el('span', { class: 'dot ' + (ok ? 'ok' : '') }), t(text));
   })();
   // Knöpfe
   const btns = el('div', { class: 'btns' });

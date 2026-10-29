@@ -1,7 +1,7 @@
 // Kadri – Hintergrund der Erweiterung.
 // Ersetzt, was im Userscript der Manager (Violentmonkey) erledigt hat:
 //  1. Anfragen an andere Server (GM_xmlhttpRequest) – ohne die Sperre der Seite (CORS): Untertitel, Weiterleitungen,
-//     die Helfer-App auf 127.0.0.1, Laden über den Browser.
+//     Laden über den Browser. (Die Helfer-App erreicht Kadri nur über den sicheren Kanal, channel/channel-service.js.)
 //  2. Den Menüeintrag „Diagnose anzeigen“ (Tipp auf das Kadri-Symbol bei den Erweiterungen).
 //  3. hls.js und Kadri in eingebetteten Fenstern erst bei Bedarf nachladen.
 'use strict';
@@ -14,7 +14,7 @@ const api = globalThis.browser || globalThis.chrome;
 const OWN = () => ({ tabIds: [-1], initiatorDomains: [api.runtime.id] });
 
 // Only the redirect/header phase owns global DNR exceptions. Bodies remain parallel.
-// No other non-helper fetch may start until exception removal has completed.
+// No other fetch may start until exception removal has completed.
 const HEADER_TIMEOUT_MS = 15000, QUEUE_TIMEOUT_MS = 60000;
 function createHeaderGate(limit = 128) {
   let busy = false;
@@ -97,11 +97,11 @@ async function refererRule(url, ref) {
 // ---------- Schutz: welche Anfragen Kadri überhaupt stellt ----------
 // Die Adressen kommen oft aus den Daten der Webseite. Eine böse Seite soll Kadri damit nichts tun lassen, was sie selbst
 // nicht dürfte:
-//  - nur http(s); keine Adressen im eigenen Netz (Router, NAS …) – außer der Helfer-App auf 127.0.0.1:47811
-//  - nur GET/HEAD; POST nur an die Helfer-App
+//  - nur http(s); keine Adressen im eigenen Netz (Router, NAS …) – auch nicht 127.0.0.1 (die Helfer-App spricht nur
+//    den sicheren Kanal, nie über diesen Weg)
+//  - nur GET/HEAD
 //  - Anmeldung (Cookies) nur an die Seite selbst (gleiche Domain wie das Fenster, aus dem die Anfrage kommt) –
 //    Video-Server, Untertitel-Server usw. bekommen sie nicht
-const HELPER_ORIGIN = 'http://127.0.0.1:47811';
 // Welche Adressen gehören zur selben Seite? Nach der offiziellen Public Suffix List (vendor/psl.js): www.bbc.co.uk und
 // cdn.bbc.co.uk ja – angreifer.github.io und opfer.github.io, alice.eu.org und bob.eu.org nicht. IP-Adressen nur sich selbst.
 const baseDomain = (host) => pslBase(host);
@@ -120,8 +120,8 @@ function privateHost(h) {
 // ohne Tab UND von dieser Erweiterung) dürfen keine Adresse im eigenen Netz erreichen – auch nicht nach einer
 // Weiterleitung (der Initiator bleibt über alle Schritte derselbe). Anfragen von Webseiten, auch die ihrer Service
 // Worker, bleiben unberührt.
-// Ausnahmen: die Helfer-App (genau 127.0.0.1:47811 – ihre Anfragen folgen keiner Weiterleitung), und für die Dauer einer
-// Anfrage GENAU deren Adresse, wenn die Seite selbst im eigenen Netz liegt (Medienserver zu Hause). Eine Freigabe für
+// Ausnahmen: der sichere Kanal zur Helfer-App (Regel 40: nur POST an seine vier Pfade auf 127.0.0.1:47899; der alte
+// Port 47811 bleibt gesperrt), und für die Dauer einer Anfrage GENAU deren Adresse, wenn die Seite selbst im eigenen Netz liegt (Medienserver zu Hause). Eine Freigabe für
 // den ganzen Server oder Port gälte auch für gleichzeitige fremde Anfragen, die eine böse Seite dorthin umleitet –
 // Chrome kann eine Regel nicht an eine einzelne Anfrage binden. Darum nur die genaue Adresse: Leitet der Medienserver
 // selbst weiter, wird das (als unerwartet) gesperrt.
@@ -131,7 +131,9 @@ const O = '[0-9]{1,3}', E = '(?:[:/?#]|$)';
 const PRIVATE_RES = ['127\\.' + O + '\\.' + O + '\\.' + O + E, '10\\.' + O + '\\.' + O + '\\.' + O + E, '192\\.168\\.' + O + '\\.' + O + E,
   '172\\.(?:1[6-9]|2[0-9]|3[01])\\.' + O + '\\.' + O + E, '169\\.254\\.' + O + '\\.' + O + E, '0\\.' + O + '\\.' + O + '\\.' + O + E,
   '100\\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\\.' + O + '\\.' + O + E, '\\[(?:::1|::|::ffff:[^\\]]*|f[cd][0-9a-f]{2}:[^\\]]*|fe80:[^\\]]*)\\]' + E];
-const NET_RULES = [{ id: 50, priority: 10, action: { type: 'allow' }, condition: Object.assign({ regexFilter: '^http://127\\.0\\.0\\.1:47811/' }, OWN()) }]
+const CHANNEL_RULE = { id: 40, priority: 10, action: { type: 'allow' },
+  condition: Object.assign({ regexFilter: '^http://127\\.0\\.0\\.1:47899/p1/(?:pair/m[02]|ch/(?:hs|rec))$', requestMethods: ['post'] }, OWN()) };
+const NET_RULES = [CHANNEL_RULE]
   .concat(PRIVATE_RES.map((re, i) => ({ id: 51 + i, priority: 5, action: { type: 'block' }, condition: Object.assign({ regexFilter: UI + re }, OWN()) })))
   .concat([{ id: 70, priority: 5, action: { type: 'block' }, condition: Object.assign({ requestDomains: ['localhost', 'local', 'internal', 'lan'] }, OWN()) }]);
 // Anmeldung nie an eine fremde Seite weiterreichen: Cookies und Authorization nehmen Kadris Anfragen nur zu Seiten mit,
@@ -146,8 +148,8 @@ const stripRule = () => {
 };
 let stripChain = Promise.resolve();
 const stripUpdate = () => (stripChain = stripChain.catch(() => {}).then(() => api.declarativeNetRequest.updateSessionRules({ removeRuleIds: [STRIP], addRules: [stripRule()] })));
-// Schutzregeln setzen und prüfen, ob sie wirklich stehen. Klappt das nicht, gehen KEINE Anfragen hinaus (außer an
-// die Helfer-App, und die ohne Weiterleitung) – lieber kein Untertitel als ein ungeschützter Zugriff.
+// Schutzregeln setzen und prüfen, ob sie wirklich stehen. Klappt das nicht, gehen KEINE Anfragen hinaus (auch nicht
+// der Kanal zur Helfer-App) – lieber kein Untertitel als ein ungeschützter Zugriff.
 let netReady = null;
 function netGuard() {
   const dnr = api.declarativeNetRequest;
@@ -193,14 +195,13 @@ function guard(m, fromUrl) {
   let u;
   try { u = new URL(m.url); } catch (e) { return 'ungültige Adresse'; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'nur http(s)';
-  const helper = u.origin === HELPER_ORIGIN;
   let site = '';
   try { site = new URL(fromUrl).hostname; } catch (e) {}
   // (eigenes Netz nur, wenn die Seite selbst dort liegt – z. B. ein Medienserver zu Hause)
-  if (!helper && privateHost(u.hostname) && u.hostname !== site) return 'Adresse im eigenen Netz';
+  if (privateHost(u.hostname) && u.hostname !== site) return 'Adresse im eigenen Netz';
   const meth = String(m.method || 'GET').toUpperCase();
-  if (meth !== 'GET' && meth !== 'HEAD' && !helper) return 'nur GET';
-  if (!helper && (!site || baseDomain(site) !== baseDomain(u.hostname))) m.anonymous = true;
+  if (meth !== 'GET' && meth !== 'HEAD') return 'nur GET';
+  if (!site || baseDomain(site) !== baseDomain(u.hostname)) m.anonymous = true;
   m.site = site ? baseDomain(site) : '';
   return '';
 }
@@ -245,29 +246,26 @@ api.runtime.onConnect.addListener((port) => {
       } catch (e) { credSites.clear(); netReady = null; ac.abort(); unlock(false); throw e; }
     };
     try {
-      const helper = new URL(m.url).origin === HELPER_ORIGIN;
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
-      if (!helper) {
-        phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, QUEUE_TIMEOUT_MS);
-        try { release = await headerGate.acquire(ac.signal, m.purpose === 'player-resolve'); }
-        finally { clearTimeout(phaseTimer); }
-        phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, HEADER_TIMEOUT_MS);
-      }
+      phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, QUEUE_TIMEOUT_MS);
+      try { release = await headerGate.acquire(ac.signal, m.purpose === 'player-resolve'); }
+      finally { clearTimeout(phaseTimer); }
+      phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, HEADER_TIMEOUT_MS);
       if (ac.signal.aborted) throw new Error('abgebrochen');
-      if (!helper && !(await netGuard())) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
-      if (!helper) headersChanged = true; // even a rejected mutation is treated as uncertain
+      if (!(await netGuard())) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Schutzregeln fehlen' }); return; }
+      headersChanged = true; // even a rejected mutation is treated as uncertain
       // (Prüfung oben hat es schon erlaubt: Seite liegt selbst dort) – nur genau diese Adresse, ohne Weiterleitung
-      try { if (!helper && privateHost(new URL(m.url).hostname)) { allowId = await allowExact(m.url); if (!allowId) throw new Error('Freigabe'); } } catch (e) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Freigabe fehlt' }); return; }
-      if (!helper && !m.anonymous && m.site) { credSites.set(m.site, 1); await stripUpdate(); }
-      if (!helper && ref && /^https?:/i.test(ref)) { rule = await refererRule(m.url, ref); if (mediaReferrer(m.url, ref) && !rule) throw new Error('Referrer protection unavailable'); }
+      try { if (privateHost(new URL(m.url).hostname)) { allowId = await allowExact(m.url); if (!allowId) throw new Error('Freigabe'); } } catch (e) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Freigabe fehlt' }); return; }
+      if (!m.anonymous && m.site) { credSites.set(m.site, 1); await stripUpdate(); }
+      if (ref && /^https?:/i.test(ref)) { rule = await refererRule(m.url, ref); if (mediaReferrer(m.url, ref) && !rule) throw new Error('Referrer protection unavailable'); }
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: helper || m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: helper ? 'error' : 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
+        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       clearTimeout(phaseTimer); // body lifetime is governed only by the caller's timeout
       await resetHeaders();   // fetch resolved at final headers, before consuming the response body
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
-      try { const fu = new URL(res.url || m.url); if (fu.origin !== HELPER_ORIGIN && privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
+      try { const fu = new URL(res.url || m.url); if (privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
       const hdr = [];
       res.headers.forEach((v, k) => hdr.push(k + ': ' + v));
       const head = { status: res.status, statusText: res.statusText, finalUrl: res.url || m.url, headers: hdr.join('\r\n'), type: res.headers.get('content-type') || '' };
@@ -338,3 +336,11 @@ if (action && action.onClicked) {
     } catch (e) {}
   });
 }
+
+// ---------- Helfer-App: nur über den sicheren Kanal (SPAKE2-Kopplung, Noise KK; channel/) ----------
+// Netzwerk nur, wenn Kadris Schutzregeln stehen (darunter Regel 40 für den Kanal). Ein früher gespeicherter Schlüssel
+// des alten Klartext-Ports wird gelöscht.
+try { const p = api.storage.local.remove('gm:helperKey'); if (p && p.catch) p.catch(() => {}); } catch (e) {}
+globalThis.KadriChannel = { networkPrecondition: netGuard };
+importScripts('channel/kadri_pairing_poc.js', 'channel/channel-store.js', 'channel/channel-transport.js',
+  'channel/channel-session.js', 'channel/channel-service.js');

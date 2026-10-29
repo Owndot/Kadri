@@ -91,11 +91,21 @@ function write(dir, target, test) {
   fs.copyFileSync(path.join(ROOT, 'vendor', 'psl.LICENSE'), path.join(dir, 'psl.LICENSE'));
   fs.copyFileSync(path.join(ROOT, 'LICENSE'), path.join(dir, 'LICENSE'));
   for (const s of [16, 32, 48, 128]) fs.copyFileSync(path.join(SRC, 'icons', s + '.png'), path.join(dir, 'icons', s + '.png'));
+  if (target === 'chrome') copyChannel(dir);
   // Syntax prüfen (alle Skripte)
-  for (const f of fs.readdirSync(dir).filter((x) => /\.js$/.test(x) && x !== 'hls.min.js')) {
+  for (const f of fs.readdirSync(dir).filter((x) => /\.js$/.test(x) && x !== 'hls.min.js').concat(target === 'chrome' ? CHANNEL_JS.map((x) => path.join('channel', x)) : [])) {
     try { execFileSync(process.execPath, ['--check', path.join(dir, f)], { stdio: 'pipe' }); }
     catch (e) { console.error('Syntaxfehler in ' + f + ':\n' + String(e.stderr || e.message)); process.exit(1); }
   }
+}
+// Sicherer Kanal zur Helfer-App (nur Chrome/Vivaldi): Kanal-Module und der geprüfte WASM-Kern (vendor/kadri-pairing-poc,
+// Herkunft in PROVENANCE.md/SOURCE). background.js lädt sie mit importScripts. Firefox hat den Kanal noch nicht.
+const CHANNEL_JS = ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-service.js', 'kadri_pairing_poc.js'];
+function copyChannel(dir) {
+  const CH = path.join(ROOT, 'channel'), VW = path.join(ROOT, 'vendor', 'kadri-pairing-poc');
+  fs.mkdirSync(path.join(dir, 'channel'));
+  for (const f of CHANNEL_JS.slice(0, 4)) fs.copyFileSync(path.join(CH, f), path.join(dir, 'channel', f));
+  for (const f of ['kadri_pairing_poc.js', 'kadri_pairing_poc_bg.wasm', 'PROVENANCE.md']) fs.copyFileSync(path.join(VW, f), path.join(dir, 'channel', f));
 }
 function zip(dir, out) {
   rmrf(out);
@@ -108,6 +118,7 @@ write(path.join(DIST, 'firefox'), 'firefox', false);
 zip(path.join(DIST, 'chrome'), path.join(DIST, 'kadri-chrome-' + VERSION + '.zip'));
 zip(path.join(DIST, 'firefox'), path.join(DIST, 'kadri-firefox-' + VERSION + '.zip'));
 if (process.argv.includes('--test')) write(path.join(DIST, 'test'), 'chrome', true);
+
 // Firefox-Fassung mit denselben Test-Öffnungen (nur für den Firefox-Test der Schutzregeln, tests/firefox_dnr_scope.py)
 if (process.argv.includes('--test-firefox')) write(path.join(DIST, 'test-firefox'), 'firefox', true);
 console.log('Gebaut: Kadri ' + VERSION + ' (Skript ' + base + ', ' + parts.length + ' Teile) → dist/chrome, dist/firefox' + (process.argv.includes('--test') ? ', dist/test' : ''));
