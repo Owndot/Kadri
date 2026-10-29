@@ -20,7 +20,7 @@ const T = {
   'Gekoppelt mit Helfer': 'Paired with helper', 'Nicht gekoppelt': 'Not paired', 'Verbunden': 'Connected', 'Nicht erreichbar': 'Not reachable',
   'Kopplung entfernt': 'Pairing removed', 'Koppelt …': 'Pairing …',
   'In der Helfer-App „Code anzeigen“ tippen und den Code hier eingeben. Der Code gilt 2 Minuten und nur für einen Versuch.': 'In the helper app tap “Show code” and enter it here. The code is valid for 2 minutes and one attempt.',
-  'Achtung: neue Helfer-Identität – nur bestätigen, wenn du die Helfer-App selbst zurückgesetzt hast.': 'Note: new helper identity – only fine if you reset the helper app yourself.',
+  'Neue Helfer-Identität. Wenn du den Helper nicht selbst zurückgesetzt hast, entferne die Kopplung und überprüfe die Verbindung.': 'New helper identity. If you did not reset the helper yourself, remove the pairing and check the connection.',
   'Helligkeit und Lautstärke über die Helfer-App; Downloads über die App sind vorübergehend aus': 'Brightness and volume via the helper app; downloads via the app are temporarily off',
   'in Firefox vorübergehend nicht verfügbar': 'temporarily unavailable in Firefox',
   'Hier läuft keine Webseite': 'No web page here', 'Player': 'Player', 'Gesten': 'Gestures', 'Download & Helfer': 'Download & helper',

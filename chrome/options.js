@@ -55,7 +55,7 @@
       pairBtn.disabled = true; msg.textContent = t('Koppelt …');
       const r = await ask('pair', { code: c });
       pairBtn.disabled = false; code.value = '';
-      msg.textContent = r && r.ok ? t('Verbunden') + (r.value.helperChanged ? ' – ' + t('Achtung: neue Helfer-Identität – nur bestätigen, wenn du die Helfer-App selbst zurückgesetzt hast.') : '')
+      msg.textContent = r && r.ok ? t('Verbunden') + (r.value.helperChanged ? ' – ' + t('Neue Helfer-Identität. Wenn du den Helper nicht selbst zurückgesetzt hast, entferne die Kopplung und überprüfe die Verbindung.') : '')
         : (r && r.error ? r.error.message : '–');
       show();
     } }, t('Koppeln'));

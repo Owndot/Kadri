@@ -193,6 +193,17 @@ async function main() {
     check('Content-Script: Kadris Anfrage-Weg erlaubt weder POST an den Kanal noch den alten Port', /nicht erlaubt/.test(cs.xhrChannel) && /nicht erlaubt/.test(cs.xhrLegacy), cs.xhrChannel + ' / ' + cs.xhrLegacy);
     check('Kopplung nach dem Angriff unverändert nutzbar', (await cmd('status')).ok);
 
+    // Neue Helfer-Identität (F2): bewusste Neukopplung über die Einstellungsseite zeigt einen Hinweis, der keine
+    // Bestätigung verlangt (es gibt keine), sondern zum Entfernen der Kopplung rät, falls der Reset nicht vom Nutzer kam.
+    await h.cmd('reset-identity');
+    await options.fill('#pairCode', await h.code());
+    await options.click('#pairBtn');
+    await options.waitForFunction(() => /Verbunden|Connected|abgelehnt|fehl/i.test(document.getElementById('pairMsg').textContent), null, { timeout: 30000 });
+    const changedMsg = await options.textContent('#pairMsg');
+    check('Neue Helfer-Identität: Hinweis ohne Bestätigungsaufforderung',
+      /Neue Helfer-Identität\. Wenn du den Helper nicht selbst zurückgesetzt hast, entferne die Kopplung und überprüfe die Verbindung\.|New helper identity\. If you did not reset the helper yourself, remove the pairing and check the connection\./.test(changedMsg)
+      && !/bestätig|confirm|only fine/i.test(changedMsg), changedMsg);
+
     // Kopplung entfernen über die Oberfläche
     options.once('dialog', (d) => d.accept());
     await options.click('#forgetBtn');
