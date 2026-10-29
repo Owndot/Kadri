@@ -17,6 +17,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Kanal-Integration: keine installierbare Erweiterung veröffentlichen (Freigabe des Eigentümers fehlt). Die Sperre
+      # gilt für jedes Ereignis (pull_request, push, workflow_dispatch …): Markierungsdatei im Stand ODER head_ref/ref_name.
+      - name: Extension ZIP upload gate (all event types)
+        id: package_upload_gate
+        run: |
+          bash tests/package_upload_gate_check.sh
+          bash .github/scripts/package-upload-gate.sh
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -64,15 +71,14 @@ jobs:
           echo '### Ergebnis' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
-        # Kanal-Integrationszweig: keine installierbare Erweiterung veröffentlichen (Freigabe des Eigentümers fehlt).
-        if: always() && github.head_ref != 'feature/helper-channel-control'
+        if: always() && steps.package_upload_gate.outputs.allow == 'yes'
         with:
           name: kadri
           path: |
             dist/kadri-*.zip
             tests/out/*.log
       - uses: actions/upload-artifact@v4
-        if: always() && github.head_ref == 'feature/helper-channel-control'
+        if: always() && steps.package_upload_gate.outputs.allow != 'yes'
         with:
           name: kadri-test-logs-only
           path: tests/out/*.log
