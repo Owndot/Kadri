@@ -65,8 +65,8 @@ jobs:
       - name: Remaining Chromium tests
         shell: bash
         run: |
-          # test_helper.py braucht den echten Kanal-Helfer (Desktop) und läuft im Job helper-channel.
-          export TESTS="$(python3 -c 'import glob,os; print(" ".join(os.path.basename(p) for p in sorted(glob.glob("tests/test_*.py")) if os.path.basename(p) not in {"test_abort.py","test_guard.py","test_redirect.py","test_worker_restart.py","test_helper.py"}))')"
+          # test_helper.py und test_mp4.py brauchen den echten Kanal-Helfer (Desktop) und laufen im Job helper-channel.
+          export TESTS="$(python3 -c 'import glob,os; print(" ".join(os.path.basename(p) for p in sorted(glob.glob("tests/test_*.py")) if os.path.basename(p) not in {"test_abort.py","test_guard.py","test_redirect.py","test_worker_restart.py","test_helper.py","test_mp4.py"}))')"
           tests/run_all.sh | tee ergebnis.txt
           echo '### Ergebnis' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis.txt >> "$GITHUB_STEP_SUMMARY"
@@ -252,20 +252,25 @@ jobs:
           if unzip -l dist/kadri-firefox-*.zip | grep -qE 'channel|wasm'; then echo 'channel in the Firefox zip'; exit 1; fi
           if grep -rnE "'X-EVP-Key' *:|['\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome dist/firefox --include=*.js | grep -vE '^[^:]+:[0-9]+: *//'; then echo 'legacy helper client in a build'; exit 1; fi
           echo 'PASS: channel in dist/chrome only; no legacy helper client, key or port in any build'
-      - name: Channel unit, integration, browser, fail-closed and mutation tests
+      - name: Channel and download unit, integration, browser, fail-closed and mutation tests
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         run: |
           set -euo pipefail
           node tests/channel/channel_unit_check.js
+          node tests/channel/download_unit_check.js
+          # The fixed commit is fetched explicitly for the regression proof (default checkout is shallow).
+          git fetch --no-tags origin e044acad5b427ea4a008fed468201e6c6f19cb8a
+          node tests/channel/download_regression_check.js
           node tests/channel/channel_integration_check.js
+          node tests/channel/download_integration_check.js
           node tests/channel/channel_browser_check.js
           node tests/channel/channel_netguard_failure_check.js
           node tests/channel/channel_mutation_check.js
-      - name: Player with the real channel helper (gestures, menu, downloads off, legacy port never reached)
+      - name: Player with the real channel helper (gestures, menu, direct MP4 downloads via the real engine, legacy port never reached)
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
-        run: TESTS="test_helper.py test_menu.py" tests/run_all.sh
+        run: TESTS="test_helper.py test_menu.py test_mp4.py" tests/run_all.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

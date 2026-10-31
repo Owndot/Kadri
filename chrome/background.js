@@ -343,4 +343,4 @@ if (action && action.onClicked) {
 try { const p = api.storage.local.remove('gm:helperKey'); if (p && p.catch) p.catch(() => {}); } catch (e) {}
 globalThis.KadriChannel = { networkPrecondition: netGuard };
 importScripts('channel/kadri_pairing_poc.js', 'channel/channel-store.js', 'channel/channel-transport.js',
-  'channel/channel-session.js', 'channel/channel-service.js');
+  'channel/channel-session.js', 'channel/channel-downloads.js', 'channel/channel-service.js');

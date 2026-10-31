@@ -52,6 +52,33 @@
     } catch (e) { ok = false; }
     hs.firstChild.replaceChildren(el('span', { class: 'dot ' + (ok ? 'ok' : '') }), t(text));
   })();
+  // Downloads über die Helfer-App (Phase C3): Liste aus dem Hintergrund (ohne URL), Stand und Abbrechen. Abgefragt wird
+  // nur, solange das Menü offen ist; laufende Aufträge fragen den Helfer (dlstatus).
+  const dls = el('div', { class: 'card', id: 'downloads', style: 'display:none' });
+  app.append(dls);
+  const send = (m) => api.runtime.sendMessage(Object.assign({ t: 'kadri-download' }, m)).catch(() => null);
+  const ACTIVE = ['starting', 'unconfirmed', 'running', 'cancelling'];
+  async function downloads() {
+    const r = await send({ op: 'list' });
+    let jobs = r && r.ok && Array.isArray(r.value) ? r.value : [];
+    if (jobs.some((j) => ACTIVE.includes(j.state))) {
+      for (const j of jobs.filter((x) => ACTIVE.includes(x.state))) await send({ op: 'status', id: j.id });
+      const r2 = await send({ op: 'list' });
+      if (r2 && r2.ok && Array.isArray(r2.value)) jobs = r2.value;
+    }
+    dls.style.display = jobs.length ? '' : 'none';
+    dls.replaceChildren(el('div', { class: 'row' }, el('div', { class: 'lab' }, t('Downloads über die Helfer-App'))),
+      ...jobs.slice(0, 8).map((j) => el('div', { class: 'row dl', 'data-state': j.state },
+        el('div', { class: 'lab' }, j.name, el('small', {}, t(j.label) + (j.progress ? ' · ' + j.progress : ''))),
+        ACTIVE.includes(j.state) && j.state !== 'cancelling'
+          ? el('button', { onclick: async () => { await send({ op: 'cancel', id: j.id }); downloads(); } }, t('Abbrechen')) : null)));
+    return jobs.some((j) => ACTIVE.includes(j.state));
+  }
+  (async function loop() {
+    let active = false;
+    try { active = await downloads(); } catch (e) {}
+    setTimeout(loop, active ? 1500 : 5000);
+  })();
   // Knöpfe
   const btns = el('div', { class: 'btns' });
   if (host) {

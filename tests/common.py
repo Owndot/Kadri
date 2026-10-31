@@ -117,13 +117,15 @@ threading.Thread(target=hsrv.serve_forever, daemon=True).start()
 # ---------- echte Helfer-Seite des sicheren Kanals (ChannelServer der Helper-App auf dem Desktop) ----------
 # HELPER_HOST_DIR: Ausgabe von tests/java/channel/build.sh im Helper-Repository. Gerät (Helligkeit, Lautstärke) nachgebildet.
 class ChannelHelper:
-    def __init__(self):
+    # state: Zustand eines früheren Prozesses weiterverwenden (Neustart des Helfers, Phase C3)
+    def __init__(self, state=None):
         import subprocess
         d = os.environ.get('HELPER_HOST_DIR')
         if not d: raise RuntimeError('HELPER_HOST_DIR fehlt (Helper-Repository: tests/java/channel/build.sh)')
-        self.state = tempfile.mkdtemp(prefix='kadri-helper-')
+        self.state = state or tempfile.mkdtemp(prefix='kadri-helper-')
         self.p = subprocess.Popen(['java', '-Djava.library.path=' + os.path.join(d, 'lib'), '-cp', os.path.join(d, 'classes'),
-                                   'de.evp.helfer.ChannelHarness', self.state], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+                                   'de.evp.helfer.ChannelHarness', self.state], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+                                  env=dict(os.environ, LC_ALL='C.UTF-8'))   # UTF-8-Dateinamen in der Desktop-Ablage
         self.ready = self._line()
     def _line(self):
         while True:
@@ -141,6 +143,9 @@ class ChannelHelper:
         try: self.cmd('quit')
         except Exception: pass
         self.p.wait(10)
+    def kill(self):
+        # hart beenden (wie ein Absturz bzw. Android beendet die App) – Zustand bleibt für einen Neustart
+        self.p.kill(); self.p.wait(10)
 
 def pair_helper(ctx, ext_id, helper):
     """Koppelt Kadri über die echte Einstellungsseite mit dem Code des Helfers."""
@@ -154,7 +159,7 @@ def pair_helper(ctx, ext_id, helper):
 def launch(p, user_dir=None, extra_args=None):
     user_dir = user_dir or tempfile.mkdtemp(prefix='kadri-')
     ctx = p.chromium.launch_persistent_context(
-        user_dir, headless=False,
+        user_dir, headless=False, executable_path=os.environ.get('KADRI_CHROMIUM') or None,   # (lokal: anderes Chromium)
         args=['--disable-extensions-except=' + EXT, '--load-extension=' + EXT, '--autoplay-policy=no-user-gesture-required'] + (extra_args or []),
         viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale='de-DE')
     # Hintergrund der Erweiterung abwarten (startet manchmal erst spät – dann einmal eine Seite öffnen und weiter warten)

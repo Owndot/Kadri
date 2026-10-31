@@ -129,72 +129,98 @@
     // Läuft eine echte Videodatei (MP4/WebM, kein Stream)? Dann lässt sie sich direkt speichern.
     const directUrl = () => (st.mode === 'own' && !st.hls && st.cur && /^https?:/i.test(st.cur) && !PLAYLIST_RE.test(st.cur) && !/\.mpd(\?|#|$)/i.test(st.cur)) ? st.cur : '';
     // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
-    // Download = Datei zum Speichern oder ein Link genau dieses Videos für YTDLnis (nicht die Feed-Adresse)
-    // Teilen   = eine Adresse, die eine andere App abspielen kann
-    // Was der Helfer-App zum Speichern übergeben werden kann: die laufende Datei, ein HLS- oder DASH-Stream (kein blob:)
-    const kindOf = (u) => /\.mpd(\?|#|$)/i.test(u) ? 'dash' : /\.m3u8(\?|#|$)/i.test(u) ? 'hls' : 'file';
-    const helperSrc = () => {
-      if (st.mode === 'own' && st.cur && /^https?:/i.test(st.cur)) return { u: st.cur, k: st.hls ? 'hls' : kindOf(st.cur) };
-      if (st.igUrl) return { u: st.igUrl, k: 'file' };
-      if (st.ttUrl) return { u: st.ttUrl, k: 'file' };
-      // Bild kommt gespiegelt vom Player der Seite (z. B. DASH, den wir nicht selbst abspielen): gefundene Stream-Adresse
-      const s2 = (st.sources || []).find((u) => /^https?:/i.test(u) && PLAYLIST_RE.test(u));
-      if (s2 && !FB_MIRROR) return { u: s2, k: kindOf(s2) };
-      return null;
-    };
-    const helperCanDl = () => { const h = helperSrc(); return !!(st.sys && st.sys.dl && h && (h.k !== 'dash' || st.sys.dash)); };
-    // Download und Teilen nur zeigen, wenn sie für DIESES Video auch funktionieren:
-    // Download = Datei zum Speichern, ein Stream für den Helfer oder ein Link genau dieses Videos für YTDLnis
+    // Download = Datei zum Speichern oder ein Link genau dieses Videos für YTDLnis (dazu ggf. die Helfer-App, hdlProbe)
     // Teilen   = eine Adresse, die eine andere App abspielen kann
     st.refreshDl = () => {
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
-      bDl.hidden = !(directUrl() || link || helperCanDl());
+      bDl.hidden = !(directUrl() || link);
+      hdlProbe();
       if (bExt) bExt.hidden = !((st.mode === 'own' && st.cur) || st.igUrl || st.ttUrl);
     };
-    // Helfer-App speichert: Datei über Androids Download-Manager, Stream Stück für Stück → MP4 (mit der Seite als Referer).
-    // Weist der Server den Helfer ab (401/403 – will die Sitzung des Browsers), lädt das Skript automatisch über den Browser.
-    // via = 'browser': gleich über den Browser laden
-    function helperDownload(src, via) {
-      const send = (u) => {
-        let ck = '';
-        try { if (baseDomain(hostOf(u)) === baseDomain(location.hostname)) ck = document.cookie || ''; } catch (e) {}   // nur Cookies der eigenen Seite
-        const q = (proxy) => '/download?u=' + encodeURIComponent(u) + '&ref=' + encodeURIComponent(location.href) +
-          '&ua=' + encodeURIComponent(navigator.userAgent) + '&t=' + encodeURIComponent((pageTitle() || 'Video').slice(0, 100)) +
-          '&k=' + src.k + (ck ? '&c=' + encodeURIComponent(ck) : '') + (proxy ? '&p=1' : '');
-        const viaBrowser = (why) => {
-          if (!(st.sys && st.sys.proxy)) { toast(why || 'Der Server lehnt den Helper ab'); return; }
-          helper(q(true)).then((r) => {
-            if (!r || !r.ok) { toast('Helper konnte den Download nicht starten'); return; }
-            toast((why ? why + ' – ' : '') + 'lädt über den Browser, Seite offen lassen');
-            proxyLoop(r.id, [baseDomain(location.hostname), baseDomain(hostOf(u))]);
-          });
-        };
-        if (via === 'browser') { viaBrowser(''); return; }
-        helper(q(false)).then((r) => {
-          if (!r || !r.ok) { toast('Helper konnte den Download nicht starten' + (r && r.error ? ' (' + r.error + ')' : '')); return; }
-          toast(src.k === 'file' ? 'Download läuft – siehe Benachrichtigung' : 'Helper lädt den Stream – Fortschritt in der Benachrichtigung');
-          // die ersten Sekunden beobachten: verlangt der Server die Browser-Sitzung? Dann von selbst den anderen Weg
-          let n = 0;
-          const iv = setInterval(() => {
-            if (++n > 18) { clearInterval(iv); return; }
-            helper('/dlstate?id=' + r.id).then((s2) => {
-              const t = s2 && s2.state || '';
-              if (/^Fehler: HTTP 40[13]/.test(t)) { clearInterval(iv); viaBrowser('Server verlangt die Browser-Sitzung'); }
-              else if (/^(fertig|läuft|\d+\/\d+|zusammensetzen)/.test(t) && n > 6) clearInterval(iv);
-              else if (/^Fehler/.test(t)) clearInterval(iv);
-            });
-          }, 1500);
+    // ---------- Helfer-App: direkte MP4-Downloads (Phase C3) ----------
+    // Nur MP4-Dateien, die der Player selbst direkt abspielt (directUrl, kein Stream, kein blob:). Erst ein Tipp auf
+    // „Mit der Helfer-App speichern“ startet; der Helfer lädt die Datei ohne Cookies, Referer oder Sitzung des Browsers
+    // über den verschlüsselten Kanal. Verlangt der Server eine Anmeldung, scheitert es mit Hinweis – kein anderer Weg.
+    // Der Auftrag liegt im Hintergrund (überdauert Browser- und Helfer-Neustart); der Player fragt nur nach dem Stand,
+    // solange er offen und sichtbar ist.
+    const hdlUrl = () => { const d = directUrl(); return d && !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : ''; };
+    st.hdl = { ok: false, probed: '', job: null, url: '', busy: false, timer: 0 };
+    const hdlShown = () => !!(st.hdl.ok && hdlUrl());
+    const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
+    const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
+    function hdlSet(j, quiet) {
+      const before = st.hdl.job;
+      st.hdl.job = j || null;
+      bDl.classList.toggle('on', hdlActive(j));
+      if (!quiet && j && before && before.id === j.id && before.state !== j.state && !hdlActive(j)) toast(j.label);
+      if (menuOpen() && st.hdl.menu) dlMenu(false, true);   // offenes Menü zeigt den Stand live
+      if (hdlActive(j)) hdlWatch(); else hdlStop();
+    }
+    function hdlStop() { clearTimeout(st.hdl.timer); st.hdl.timer = 0; }
+    // Stand abfragen: alle 1,5 s, nur solange der Player offen und die Seite sichtbar ist (Android: Tab im
+    // Hintergrund → keine Abfragen; beim Zurückkommen geht es weiter, der Helfer lädt unabhängig davon).
+    function hdlWatch() {
+      if (st.hdl.timer) return;
+      st.hdl.timer = setTimeout(function tick() {
+        st.hdl.timer = 0;
+        const j = st.hdl.job;
+        if (vp !== st || !hdlActive(j)) return;
+        if (document.hidden) { st.hdl.timer = setTimeout(tick, 1500); return; }
+        helperDl('status', { id: j.id }).then((r) => {
+          if (vp !== st || !st.hdl.job || st.hdl.job.id !== j.id) return;
+          if (r && r.ok && r.value && r.value.job) { hdlSet(r.value.job); if (!r.value.reachable) hdlWatch(); }
+          else hdlWatch();
         });
-      };
-      // geschützte Adressen der Seite (/get_file/…) leiten nur MIT Browsersitzung weiter: Endadresse vorher holen
-      if (src.k === 'file' && needsResolve(src.u)) {
-        if (st.extUrl && st.extFor === src.u) { send(st.extUrl); return; }
-        toast('Bereite Download vor …');
-        finalUrl(src.u).then(send, () => send(src.u));
-        return;
-      }
-      send(src.u);
+      }, 1500);
+    }
+    const onHdlVis = () => { if (!document.hidden && hdlActive(st.hdl.job)) { hdlStop(); hdlWatch(); } };
+    onVisChange(onHdlVis);
+    st.cleanup.push(() => { hdlStop(); offVisChange(onHdlVis); });
+    // Kann der gekoppelte Helfer das? Und läuft für diese Datei schon ein Auftrag (z. B. nach Neustart des Browsers)?
+    function hdlProbe() {
+      const u = hdlUrl();
+      if (!u || st.hdl.probed === u || typeof KADRI_DOWNLOAD !== 'function') return;
+      st.hdl.probed = u;
+      helperDl('caps').then((r) => {
+        if (vp !== st || hdlUrl() !== u) return;
+        st.hdl.ok = !!(r && r.ok && r.value && r.value.supported);
+        if (!st.hdl.ok) return;
+        st.refreshDl();
+        helperDl('find', { url: u }).then((f) => {
+          if (vp !== st || hdlUrl() !== u || !(f && f.ok)) return;
+          st.hdl.url = u;
+          hdlSet(f.value && hdlActive(f.value) ? f.value : null, true);
+        });
+      });
+    }
+    // Start nach Tipp. Doppelte Tipps: solange ein Start läuft, nichts; dieselbe Datei im Hintergrund → derselbe Auftrag.
+    function hdlStart() {
+      const u = hdlUrl();
+      if (!u || st.hdl.busy) return;
+      if (hdlActive(st.hdl.job) && st.hdl.url === u) { toast(hdlText(st.hdl.job)); return; }
+      st.hdl.busy = true;
+      toast('Helfer-App startet den Download …');
+      helperDl('start', { url: u, name: (pageTitle() || 'Video').slice(0, 100) }).then((r) => {
+        st.hdl.busy = false;
+        if (vp !== st) return;
+        if (!r) { toast('Helfer-App nicht erreichbar'); return; }
+        if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
+        st.hdl.url = u;
+        hdlSet(r.value.job, true);
+        toast(r.value.existing ? tr('Läuft schon') + ': ' + hdlText(r.value.job) : (r.value.job.state === 'unconfirmed'
+          ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – Fortschritt hier im Menü und in der Benachrichtigung'));
+      });
+    }
+    function hdlCancel() {
+      const j = st.hdl.job;
+      if (!hdlActive(j)) return;
+      helperDl('cancel', { id: j.id }).then((r) => {
+        if (vp !== st) return;
+        if (!r || !r.ok) { toast((r && r.error && r.error.message) || 'Helfer-App nicht erreichbar'); return; }
+        hdlSet(r.value.job, true);
+        toast(r.value.reachable ? hdlText(r.value.job) : 'Helfer-App nicht erreichbar – Abbruch wird nachgeholt');
+      });
     }
     function browserSave(d) {
       toast('Download wird vorbereitet …');
@@ -213,13 +239,22 @@
       // Teilen-Menü abgebrochen? Dann bleibt der Player offen
       if (r && r.then) r.then((ok) => { if (!ok) { st.dlCancel = true; st.dlAt = 0; } });
     };
-    function dlMenu(browserFailed) {
-      const d = directUrl(), hs = helperSrc();
+    function dlMenu(browserFailed, keep) {
+      const d = directUrl();
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
       const items = [];
-      if (hs && st.sys && st.sys.dl) items.push({ label: 'Mit dem Helper', sub: hs.k === 'file' ? 'Download-Manager' : 'Stream → MP4', fn: () => helperDownload(hs) });
-      if (hs && st.sys && st.sys.proxy) items.push({ label: 'Über den Browser laden', sub: 'für geschützte Seiten · Seite offen lassen', fn: () => helperDownload(hs, 'browser') });
+      st.hdl.menu = false;
+      if (hdlShown()) {
+        const j = st.hdl.url === hdlUrl() ? st.hdl.job : null;
+        st.hdl.menu = true;
+        if (hdlActive(j)) {
+          items.push({ label: 'Helfer-App: ' + tr(j.label), sub: j.progress || 'Stand wird abgefragt', stay: true, fn: () => {} });
+          if (j.state !== 'cancelling') items.push({ label: 'Download abbrechen', sub: 'Helfer-App hört sofort auf und löscht die Teil-Datei', fn: hdlCancel });
+        } else {
+          items.push({ label: 'Mit der Helfer-App speichern', sub: 'direkt aufs Handy · ohne Anmeldung der Seite', fn: hdlStart });
+        }
+      }
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
       if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
       if (d) {
@@ -230,20 +265,20 @@
         items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
       }
       if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => dlOut(() => shareUrl(link || d)) });
-      if (!items.length) { toast(hs && hs.k === 'hls' ? 'Für Streams wird die Helper-App gebraucht' : 'Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
-      openMenu('Herunterladen', items);
+      if (!items.length) { toast('Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
+      openMenu('Herunterladen', items, keep);
     }
     // Tipp: der beste Weg von selbst
     //  1. Seiten, die yt-dlp kennt → YTDLnis (beste Qualität mit Ton)
-    //  2. Helfer-App läuft → sie speichert Datei oder Stream
+    //  2. Helfer-App kann die MP4-Datei speichern → Auswahl (sie startet nur auf ausdrücklichen Tipp)
     //  3. Videodatei → Download des Browsers
     //  4. sonst YTDLnis mit dem Link · ohne alles: Hinweis
     on(bDl, () => {
-      const d = directUrl(), hs = helperSrc();
+      const d = directUrl();
       let link = '';
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
       if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
-      if (hs && st.sys && st.sys.dl) { helperDownload(hs); return; }
+      if (hdlShown()) { dlMenu(); return; }   // Helfer-App kann die Datei speichern: Auswahl zeigen, nichts von selbst
       if (d) { browserSave(d); return; }
       if (link) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
       dlMenu();

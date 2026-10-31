@@ -9,7 +9,12 @@
 //                                   Ungültige Befehle verlassen den Browser nicht. Antwort {ok, value} oder {ok:false}.
 //      {t:'kadri-channel', op}    – Verwaltung: status/check aus Einstellungsseite und Menü, pair/forget NUR aus der
 //                                   Einstellungsseite. Webseiten können der Erweiterung keine Nachrichten schicken.
-//  - Kein Weg zum alten Helfer-Protokoll (X-EVP-Key, Port 47811); keine Cookies, URLs oder Medien im Kanal.
+//      {t:'kadri-download', op, …} – direkte MP4-Downloads (Phase C3, channel/channel-downloads.js): start/find aus
+//                                   Kadris Inhaltsskript (nur nach Tipp des Nutzers), status/cancel/caps auch aus dem
+//                                   Menü, list nur aus dem Menü. Feste Felder; nur die URL der Datei und ein Name gehen
+//                                   (verschlüsselt) zum Helfer – keine Cookies, Header oder Referer.
+//  - Kein Weg zum alten Helfer-Protokoll (X-EVP-Key, Port 47811); keine Cookies, Header oder Medien im Kanal. Einzige
+//    URL im Kanal: die der MP4-Datei, die der Nutzer selbst zum Speichern antippt (dlstart, verschlüsselt).
 (function (root) {
   'use strict';
   const NS = root.KadriChannel;
@@ -35,6 +40,38 @@
   const channel = NS.createChannel({ core, store, transport });
   const ready = () => loadCore().then(() => channel);
 
+  // Download-Aufträge: storage.local OHNE URL (nur ein gesalzener SHA-256 zum Erkennen doppelter Starts).
+  const local = api.storage.local;
+  const SALT = 'kadri-dl-salt';
+  let saltP = null;
+  const salt = () => (saltP = saltP || local.get(SALT).then((o) => {
+    if (typeof o[SALT] === 'string' && /^[0-9a-f]{64}$/.test(o[SALT])) return o[SALT];
+    const v = hex(crypto.getRandomValues(new Uint8Array(32)));
+    return local.set({ [SALT]: v }).then(() => v);
+  }).catch((e) => { saltP = null; throw e; }));
+  const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
+  const downloads = NS.createDownloads({
+    channel: { download: (op, a) => ready().then((c) => c.download(op, a)) },
+    storage: { get: () => local.get('kadri-dl-jobs').then((o) => o['kadri-dl-jobs']), set: (v) => local.set({ 'kadri-dl-jobs': v }) },
+    digest: async (url) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode((await salt()) + '\n' + url)))),
+    random: () => hex(crypto.getRandomValues(new Uint8Array(16))),
+  });
+  const ID = /^[0-9a-f]{32}$/;
+  // Nur Kadris Inhaltsskript (in einem Tab) oder das Menü; je Befehl genau diese Felder.
+  const fromTab = (sender) => own(sender) && !!sender.tab && typeof sender.url === 'string' && /^https?:/.test(sender.url);
+  const DL = {
+    start: { keys: ['url', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.start(m.url, m.name) },
+    find: { keys: ['url'], ok: (s) => fromTab(s), run: (m) => downloads.find(m.url) },
+    status: { keys: ['id'], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: (m) => downloads.status(m.id) },
+    cancel: { keys: ['id'], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: (m) => downloads.cancel(m.id) },
+    caps: { keys: [], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: () => downloads.capabilities() },
+    list: { keys: [], ok: (s) => isPage(s, 'popup.html'), run: () => downloads.list() },
+  };
+  const dlValid = (m, d) => Object.keys(m).every((k) => k === 't' || k === 'op' || d.keys.includes(k)) &&
+    (!d.keys.includes('id') || (typeof m.id === 'string' && ID.test(m.id))) &&
+    (!d.keys.includes('url') || (typeof m.url === 'string' && m.url.length <= 4096)) &&
+    (m.name === undefined || (typeof m.name === 'string' && m.name.length <= 400));
+
   const own = (sender) => !!sender && sender.id === api.runtime.id;
   const pageOf = (sender) => (sender && typeof sender.url === 'string' ? sender.url.split(/[?#]/)[0] : '');
   const isPage = (sender, file) => own(sender) && pageOf(sender) === api.runtime.getURL(file) &&
@@ -48,8 +85,20 @@
   };
 
   api.runtime.onMessage.addListener((m, sender, reply) => {
-    if (!m || (m.t !== 'kadri-helper' && m.t !== 'kadri-channel')) return;   // andere Nachrichten: Kadris übrige Empfänger
+    if (!m || (m.t !== 'kadri-helper' && m.t !== 'kadri-channel' && m.t !== 'kadri-download')) return;   // andere: Kadris übrige Empfänger
     let act;
+    if (m.t === 'kadri-download') {
+      const d = typeof m.op === 'string' && Object.prototype.hasOwnProperty.call(DL, m.op) ? DL[m.op] : null;
+      if (!d || !d.ok(sender) || !dlValid(m, d)) { reply({ ok: false, error: { kind: 'refused', message: 'refused' } }); return; }
+      // Antworten mit festen Texten (Zustand, Fortschritt, Fehler) – nie Server-Text oder die URL.
+      const text = (j) => (j && j.id ? Object.assign(j, NS.describeDownload(j)) : j);
+      d.run(m).then((value) => {
+        if (value && value.job) text(value.job); else if (Array.isArray(value)) value.forEach(text); else if (value && value.id) text(value);
+        if (value && value.error) value.message = NS.downloadErrorText(value.error);
+        reply({ ok: true, value });
+      }, (e) => { const kind = (e && e.kind) || 'error'; reply({ ok: false, error: { kind, message: NS.downloadErrorText(kind) } }); });
+      return true;
+    }
     if (m.t === 'kadri-helper') {
       // Aus Kadris Inhaltsskript (oder einer eigenen Seite); nur die fünf Steuerbefehle in strenger Form.
       const keys = Object.keys(m);
