@@ -17,7 +17,7 @@
     };
     // ---------- Helfer-App: nur Steuerbefehle über den sicheren Kanal im Hintergrund ----------
     // helper() im Skript gibt nur den Pfad weiter. Erlaubt sind /ping (= status), /status, /beat, /end, /bright?v=…,
-    // /vol?v=…; alles andere (Downloads, Laden über den Browser) gibt es über den Kanal nicht → null („kein Helfer“).
+    // /vol?v=…; alles andere (alte /download-Pfade, Laden über den Browser) gibt es über den Kanal nicht → null.
     // Der Hintergrund prüft die Befehle noch einmal streng; keine URLs, Cookies oder Medien gehen dorthin.
     const KADRI_HELPER = async (path) => {
       const m = /^\/(ping|status|beat|end|bright|vol)(?:\?v=(\d{1,3}(?:\.\d{1,8})?))?$/.exec(path);
@@ -26,6 +26,16 @@
       if (m[2] !== undefined) msg.v = Number(m[2]);
       const r = await api.runtime.sendMessage(msg);
       return r && r.ok && r.value && typeof r.value === 'object' ? r.value : null;
+    };
+    // ---------- Helfer-App: direkte MP4-Downloads über denselben Kanal (Phase C3) ----------
+    // Nur nach einem Tipp des Nutzers im Player (start); dazu Abfragen (find/status/caps) und Abbruch. Übergeben werden
+    // nur URL der Datei und Name bzw. die Kennung – keine Cookies, Header oder Referer. Der Hintergrund prüft streng.
+    const KADRI_DOWNLOAD = async (op, a) => {
+      if (!['start', 'find', 'status', 'cancel', 'caps'].includes(op)) return null;
+      const msg = { t: 'kadri-download', op };
+      for (const k of ['url', 'name', 'id']) if (a && typeof a[k] === 'string') msg[k] = a[k];
+      const r = await api.runtime.sendMessage(msg);
+      return r && typeof r === 'object' ? r : null;
     };
     // ---------- Anfragen ----------
     // Binärdaten (ArrayBuffer/Uint8Array) als Base64 schicken – Nachrichten an den Hintergrund können nur Text/JSON

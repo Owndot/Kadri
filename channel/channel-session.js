@@ -3,7 +3,8 @@
 // nur Zustände und Reihenfolge.
 //
 // Befehle: status, beat, end, vol (v 0…1, optional), bright (v 0,004…1) – dieselbe strenge Form, die der Helfer prüft.
-// Keine Medien-URLs, Cookies, Header oder Medien.
+// Phase C3: dlstart (id, url, optional name), dlstatus (id), dlcancel (id) für direkte MP4-Downloads – nur diese Felder;
+// keine Cookies, Header, Referer oder sonstigen Browser-Zugangsdaten. Die Medien selbst laufen nie durch den Kanal.
 //
 // Sicherheitsregeln:
 //  - Ein neuer Pin ersetzt den alten erst nach dem ersten erfolgreichen authentisierten Austausch (Review R4) und erst,
@@ -27,7 +28,9 @@
   // Nur Befehle, deren Wiederholung nichts anderes bewirkt (absolute Werte, Abfragen), dürfen nach HTTP 404 (Sitzung
   // unbekannt) einmal mit neuem Handshake wiederholt werden (Review I1). Künftige Befehle mit anderer Wirkung (z. B.
   // ein Download-Start) kommen NICHT in diese Liste.
-  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright']);
+  // dlstatus/dlcancel ändern beim zweiten Mal nichts (Abfrage bzw. Abbruch derselben Kennung). dlstart NICHT: ob ein
+  // Start wiederholt wird, entscheidet die Download-Verwaltung (channel-downloads.js) mit derselben Kennung.
+  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright', 'dlstatus', 'dlcancel']);
   const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);
 
   // Steuerbefehl → Record-Inhalt, genau in der Form, die der Helfer annimmt (ControlCommands.java): nur "op" und "v",
@@ -40,6 +43,26 @@
     const r = Math.round(v * 1e4) / 1e4;
     if (op === 'vol' ? !(r >= 0 && r <= 1) : !(r >= 0.004 && r <= 1)) return null;
     return { op, v: r };
+  }
+
+  // Download-Befehle (Phase C3) → Record-Inhalt in genau der Form, die der Helfer annimmt (ControlCommands.java):
+  // id = 32 Kleinbuchstaben-Hex, url = http(s) aus RFC-3986-Zeichen ≤ 2048, name ohne Escapes/Steuerzeichen ≤ 120.
+  // Jedes andere Feld (Cookie, Header, Referer …) und jede Abweichung → null; nichts verlässt den Browser.
+  const DL_ID = /^[0-9a-f]{32}$/;
+  const DL_URL = /^https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
+  const DL_NAME_BAD = /[\\"\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+  function downloadMessage(op, a) {
+    if (!a || typeof a !== 'object' || typeof a.id !== 'string' || !DL_ID.test(a.id)) return null;
+    const keys = Object.keys(a);
+    if (op === 'dlstatus' || op === 'dlcancel') return keys.every((k) => k === 'id') ? { op, id: a.id } : null;
+    if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name')) return null;
+    if (typeof a.url !== 'string' || a.url.length > 2048 || !DL_URL.test(a.url)) return null;
+    const m = { op, id: a.id, url: a.url };
+    if (a.name !== undefined) {
+      if (typeof a.name !== 'string' || a.name.length > 120 || DL_NAME_BAD.test(a.name)) return null;
+      m.name = a.name;
+    }
+    return m;
   }
 
   class ChannelError extends Error {
@@ -137,11 +160,13 @@
         const pin = await store.pin();
         if (!pin) { drop(); state = 'unpaired'; throw fail('unpaired'); }
         if (session && session.reg !== pin.reg) drop();
-        if (!session) await connect(pin, await store.identity());
+        // notSent: der Befehl hat den Helfer sicher nicht erreicht (kein Handshake bzw. Sitzung dort unbekannt → Record
+        // nie geöffnet). Für die Download-Verwaltung: dann ist ein Start sicher nicht angekommen.
+        if (!session) { try { await connect(pin, await store.identity()); } catch (e) { e.notSent = true; throw e; } }
         try { return await exchange(obj); }
         catch (e) {
           if (e.kind !== 'stale-session') throw e;
-          if (!retryableAfterStaleSession(obj.op)) throw fail('stale-session', 'Sitzung beim Helfer unbekannt – Befehl nicht automatisch wiederholt');
+          if (!retryableAfterStaleSession(obj.op)) { const e2 = fail('stale-session', 'Sitzung beim Helfer unbekannt – Befehl nicht automatisch wiederholt'); e2.notSent = true; throw e2; }
           await connect(pin, await store.identity());   // genau einmal
           try { return await exchange(obj); }
           catch (e2) { throw e2.kind === 'stale-session' ? fail('record-rejected') : e2; }
@@ -213,6 +238,18 @@
       return reply;
     }
 
+    // Ein Download-Befehl (Phase C3). Antwort des Helfers ({ok:true, id, state, …}, {ok:false, state:"busy"} oder
+    // {ok:false} bei einem Helfer ohne Downloads). Nach "Sitzung unbekannt" wird dlstart NICHT automatisch wiederholt
+    // (retryableAfterStaleSession) – das entscheidet die Download-Verwaltung mit derselben Kennung.
+    async function download(op, args) {
+      const msg = downloadMessage(op, args);
+      if (!msg) throw fail('input', 'ungültiger Download-Befehl');
+      const reply = replyOf(await request(msg));
+      if (!reply || typeof reply.ok !== 'boolean') { drop(); throw fail('protocol'); }
+      lastError = null;
+      return reply;
+    }
+
     async function forget() {
       return serial(async () => {
         drop();
@@ -229,11 +266,12 @@
       return { state: st, paired: !!pin, reg: pin ? pin.reg.slice(0, 8) : null, helper: pin ? pin.helper.slice(0, 8) : null, pairedAt: pin ? pin.pairedAt : 0, lastError };
     }
 
-    return { pair, command, forget, status, dropSession: () => serial(async () => { drop(); }) };
+    return { pair, command, download, forget, status, dropSession: () => serial(async () => { drop(); }) };
   }
 
   NS.ChannelError = ChannelError;
   NS.createChannel = createChannel;
   NS.controlMessage = controlMessage;
+  NS.downloadMessage = downloadMessage;
   NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);

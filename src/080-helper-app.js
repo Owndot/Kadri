@@ -2,11 +2,16 @@
   // Nur noch über den gekoppelten, verschlüsselten Kanal (127.0.0.1:47899, SPAKE2 + Noise KK). Den hat nur die
   // Erweiterung Kadri für Chrome/Vivaldi: ihr Hintergrund führt die Steuerbefehle aus (KADRI_HELPER, nur Pfad, keine
   // Daten). Userscript und Firefox haben ihn noch nicht – dort sendet helper() nichts und meldet „kein Helfer“, der
-  // Player läuft wie ohne App. Bewusst kein Rückfall auf den alten Klartext-Port; Downloads über den Helfer sind
-  // vorübergehend aus (Browser-Downloads wie bisher).
+  // Player läuft wie ohne App. Bewusst kein Rückfall auf den alten Klartext-Port.
   async function helper(path) {
     if (CONFIG.systemHelper === false || typeof KADRI_HELPER !== 'function') return null;
     try { return await KADRI_HELPER(String(path)); } catch (e) { return null; }
+  }
+  // Direkte MP4-Downloads über denselben Kanal (nur Kadri für Chrome/Vivaldi, KADRI_DOWNLOAD): der Helfer lädt die Datei
+  // selbst, ohne Cookies oder Sitzung des Browsers. Sonst (Userscript, Firefox, Helfer aus) gibt es diesen Weg nicht.
+  async function helperDl(op, args) {
+    if (CONFIG.systemHelper === false || typeof KADRI_DOWNLOAD !== 'function') return null;
+    try { return await KADRI_DOWNLOAD(op, args || {}); } catch (e) { return null; }
   }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
   try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}

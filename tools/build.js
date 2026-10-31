@@ -100,11 +100,11 @@ function write(dir, target, test) {
 }
 // Sicherer Kanal zur Helfer-App (nur Chrome/Vivaldi): Kanal-Module und der geprüfte WASM-Kern (vendor/kadri-pairing-poc,
 // Herkunft in PROVENANCE.md/SOURCE). background.js lädt sie mit importScripts. Firefox hat den Kanal noch nicht.
-const CHANNEL_JS = ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-service.js', 'kadri_pairing_poc.js'];
+const CHANNEL_JS = ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-downloads.js', 'channel-service.js', 'kadri_pairing_poc.js'];
 function copyChannel(dir) {
   const CH = path.join(ROOT, 'channel'), VW = path.join(ROOT, 'vendor', 'kadri-pairing-poc');
   fs.mkdirSync(path.join(dir, 'channel'));
-  for (const f of CHANNEL_JS.slice(0, 4)) fs.copyFileSync(path.join(CH, f), path.join(dir, 'channel', f));
+  for (const f of CHANNEL_JS.filter((x) => x !== 'kadri_pairing_poc.js')) fs.copyFileSync(path.join(CH, f), path.join(dir, 'channel', f));
   for (const f of ['kadri_pairing_poc.js', 'kadri_pairing_poc_bg.wasm', 'PROVENANCE.md']) fs.copyFileSync(path.join(VW, f), path.join(dir, 'channel', f));
 }
 function zip(dir, out) {
