@@ -108,7 +108,7 @@
         const key = await digest(url);
         const jobs = await load();
         const same = jobs.find((x) => x.key === key && !TERMINAL.has(x.state));
-        if (same) { if (!pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
+        if (same) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key, name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '', at: now(), seen: 0 };
         jobs.unshift(j);                 // neuester zuerst (bei gleicher Zeit bleibt die Reihenfolge, sort ist stabil)
@@ -145,7 +145,9 @@
           try { apply(j, await channel.download('dlcancel', { id })); } catch (e) { /* nächste Abfrage versucht es wieder */ }
         } else if (s === 'unknown') {
           const url = pending.get(id);
-          if (j.state === 'cancelling') { j.state = 'cancelled'; pending.delete(id); }
+          // unknown ist kein terminaler Zustand: ein früher gesendeter Start kann noch eintreffen.
+          // Die gespeicherte Abbruchabsicht bleibt; insbesondere niemals dlstart erneut senden.
+          if (j.state === 'cancelling') { pending.delete(id); }
           else if (url) {
             try { await send(j, url); }   // dieselbe Kennung: der Helfer startet höchstens einmal
             catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : 'not_started'; pending.delete(id); } }
@@ -163,15 +165,17 @@
         const j = jobs.find((x) => x.id === id);
         if (!j) return null;
         if (TERMINAL.has(j.state)) return { job: view(j), reachable: true };
-        let s;
-        try { s = apply(j, await channel.download('dlcancel', { id })); }
+        // Nutzerabsicht VOR dem Netzwerkaufruf sichern: auch bei verlorener Antwort oder Worker-Ende.
+        // Erst ein bestätigter Terminalzustand aus apply() darf cancelling ersetzen.
+        j.state = 'cancelling';
+        pending.delete(id);
+        await save(jobs);                // Abbruchabsicht dauerhaft, bevor dlcancel den Browser verlässt
+        try { apply(j, await channel.download('dlcancel', { id })); }
         catch (e) {
           if (e.kind === 'unsupported' || e.kind === 'helper-busy') throw e;
-          if (j.state === 'starting' || j.state === 'unconfirmed') { j.state = 'cancelling'; pending.delete(id); await save(jobs); }
           return { job: view(j), reachable: false, error: e.kind || 'error' };
         }
-        if (s === 'unknown') { j.state = 'cancelled'; pending.delete(id); }   // nie gestartet: nichts mehr senden
-        else if (j.state === 'running') j.state = 'cancelling';
+        // unknown/running sind keine Bestätigung; apply() lässt die Abbruchabsicht bestehen.
         await save(jobs);
         return { job: view(j), reachable: true };
       });

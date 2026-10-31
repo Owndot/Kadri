@@ -206,7 +206,16 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     const r = await w.dl.start(URL1);
     w.helper.mode = { dlcancel: () => err('unreachable') };
     const c = await w.dl.cancel(r.job.id);
-    check('Abbruch, Helfer nicht erreichbar: Meldung, Auftrag läuft weiter', !c.reachable && c.job.state === 'running');
+    check('Abbruch, Helfer nicht erreichbar: Absicht dauerhaft gespeichert', !c.reachable && c.job.state === 'cancelling' && w.mem.jobs[0].state === 'cancelling');
+    check('Abbruchabsicht VOR dem Netzwerkaufruf gespeichert', JSON.parse(w.sent.find((x) => x.op === 'dlcancel').stored)[0].state === 'cancelling');
+    // Neuer Manager = Worker-/Browser-Neustart: nur persistierter Speicher, keine pending-URL.
+    const restarted = w.make();
+    const again = await restarted.start(URL1);
+    check('Erneuter Tipp überholt ausstehenden Abbruch nicht', again.existing && again.job.state === 'cancelling' && starts(w).length === 1);
+    w.helper.mode = {};
+    const before = w.sent.length;
+    const recovered = await restarted.status(r.job.id);
+    check('Nach Neustart zuerst Status, dann erforderlichen Abbruch zustellen', w.sent.slice(before).map((x) => x.op).join(',') === 'dlstatus,dlcancel' && recovered.job.state === 'cancelled');
     // Unbestätigter Start abgebrochen und Helfer hatte doch gestartet
     const w2 = world({ dlstart: (m, h) => { h.jobs.set(m.id, { state: 'running', bytes: 0, total: 9 }); return err('unreachable'); } });
     const r2 = await w2.dl.start(URL1);
@@ -217,6 +226,54 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     const s2 = await w2.dl.status(r2.job.id);
     check('… Verbindung wieder da, Helfer lädt: dlcancel nachgeholt, abgebrochen', w2.sent.filter((x) => x.op === 'dlcancel').length === 2 && s2.job.state === 'cancelled' && w2.helper.jobs.get(r2.job.id).state === 'cancelled', JSON.stringify(s2));
     check('… und kein erneuter dlstart', starts(w2).length === 1);
+  }
+  {
+    // Eine verlorene Startantwort kann einem noch nicht ausgeführten Start vorausgehen.
+    // unknown bestätigt keinen Abbruch: Absicht behalten, auch nach erneutem Tipp und Neustart.
+    const w = world({ dlstart: () => err('timeout') });
+    const r = await w.dl.start(URL1);
+    const c = await w.dl.cancel(r.job.id);
+    check('Unbekannte Kennung ist keine Abbruchbestätigung', c.job.state === 'cancelling');
+    const fresh = w.make();
+    await fresh.start(URL1);
+    const s = await fresh.status(r.job.id);
+    check('unknown nach Neustart: Abbruch bleibt, kein dlstart trotz erneuter URL', s.job.state === 'cancelling' && starts(w).length === 1);
+    w.helper.jobs.set(r.job.id, { state: 'running', bytes: 0, total: 9 });
+    w.helper.mode = {};
+    const late = await fresh.status(r.job.id);
+    check('Verspäteter Start wird beim nächsten Abgleich abgebrochen', late.job.state === 'cancelled' && starts(w).length === 1);
+  }
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: (m, h) => { h.jobs.get(m.id).state = 'cancelled'; return err('timeout'); } };
+    await w.dl.cancel(r.job.id);
+    const before = w.sent.length;
+    w.helper.mode = {};
+    const s = await w.make().status(r.job.id);
+    check('Abbruchantwort verloren: terminalen Helperstatus übernehmen, kein zweiter Abbruch nötig', s.job.state === 'cancelled' && w.sent.length === before + 1);
+  }
+  for (const terminal of ['done', 'failed', 'interrupted']) {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: () => err('unreachable') };
+    await w.dl.cancel(r.job.id);
+    w.helper.mode = {};
+    w.helper.jobs.get(r.job.id).state = terminal;
+    const before = w.sent.length;
+    const s = await w.make().status(r.job.id);
+    check('Ausstehender Abbruch: eindeutiger Terminalzustand ' + terminal + ' gewinnt', s.job.state === terminal && w.sent.length === before + 1);
+  }
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: (m) => ({ ok: true, id: m.id, state: 'running', bytes: 10, total: 1000 }) };
+    await w.dl.cancel(r.job.id);
+    await w.make().status(r.job.id);
+    check('Noch running nach dlcancel bestätigt keinen Abbruch', w.mem.jobs[0].state === 'cancelling');
+    w.helper.mode = { dlstatus: () => err('timeout') };
+    await w.make().status(r.job.id);
+    check('Wiederholter Statusfehler löscht Abbruchabsicht nicht', w.mem.jobs[0].state === 'cancelling');
   }
   {
     const w = world(null, () => 1000);   // alle zur selben Zeit: die Reihenfolge muss trotzdem stimmen

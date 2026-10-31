@@ -149,3 +149,21 @@ siehe dort `DOWNLOADS-C3.md`). Das betrifft auch echte Server und hätte auf dem
   bekannte URL gegen den Hash prüfen (nicht umkehren).
 - Die Fähigkeitsprobe kostet je Player-Öffnung höchstens eine Kanal-Anfrage pro Minute.
 - Firefox und das Userscript haben keinen Kanal und damit auch diesen Weg nicht (unverändert).
+
+## Unabhängige C3-Korrektur: dauerhafte Abbruchabsicht
+
+Ein Abbruch setzt jeden nichtterminalen Auftrag vor dem Kanalaufruf dauerhaft auf cancelling. Kanalfehler,
+Worker-/Browser-Neustart und erneute Tipps löschen diese Absicht nicht. Nach Wiederverbindung wird zuerst
+dlstatus abgefragt, bei running anschließend dlcancel gesendet. Nur ein bestätigter Terminalzustand beendet
+den Vorgang. unknown ist keine Abbruchbestätigung: ein früherer Start könnte noch eintreffen. Die Absicht
+bleibt daher erhalten; ein automatisches dlstart ist für diesen Auftrag gesperrt, auch wenn start() die URL
+erneut liefert. Ein dauerhaft unbekannter Auftrag bleibt konservativ cancelling (kein erfundener Erfolg).
+
+Abgleich erfolgt weiterhin nur bei aktiven Player-/Popup-Abfragen, nicht im geschlossenen Browser.
+Neue Unit- und echte Helper-Integrationstests prüfen die Unterbrechung bei laufendem Medienabruf, Neustart,
+erneuten Tipp, verlorene Abbruchantwort, verspäteten Start und konkurrierende terminale Zustände. Die CI prüft,
+dass der exakt untersuchte Vorgänger e044aca an den neuen Regressionen scheitert; Mutationsproben schützen
+das Speichern vor dem Netzwerkaufruf und den Umgang mit unknown.
+
+Kein Kanal-/Kryptografie-/Header-/SSRF-Fallback geändert. Keine Gerätepakete oder Veröffentlichungen freigegeben;
+Produktionsstatus bleibt UNAPPROVED.

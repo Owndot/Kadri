@@ -13,7 +13,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function setup(backend) {
   backend = backend || NS.memoryBackend();
   const store = NS.createStore(backend, () => core.identity_generate());
-  const transport = NS.createTransport({ fetchImpl: fetch, port: 47899, timeoutMs: 5000 });
+  // Unterbricht nur den Browser-Kanal; der echte Helper und sein Medienabruf laufen weiter.
+  const wire = { offline: false };
+  const transport = NS.createTransport({ fetchImpl: (...args) => {
+    if (wire.offline) return Promise.reject(new Error('test channel offline'));
+    return fetch(...args);
+  }, port: 47899, timeoutMs: 5000 });
   const channel = NS.createChannel({ core, store, transport });
   const mem = { jobs: undefined, writes: [] };
   const make = () => NS.createDownloads({
@@ -22,7 +27,7 @@ function setup(backend) {
     digest: async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex'),
     random: () => crypto.randomBytes(16).toString('hex'),
   });
-  return { backend, channel, mem, make, dl: make() };
+  return { backend, channel, mem, make, wire, dl: make() };
 }
 
 async function until(dl, id, pred, ms = 30000) {
@@ -90,10 +95,16 @@ async function main() {
     check('… dlstatus nach Neuaufbau der Sitzung: echter Stand', p3.reachable && ['running', 'done'].includes(p3.job.state), JSON.stringify(p3));
 
     // ---------- Abbruch ----------
+    s.wire.offline = true;
     const c2 = await s.dl.cancel(r2.job.id);
-    check('Abbruch angenommen', c2.reachable && ['cancelling', 'cancelled'].includes(c2.job.state), JSON.stringify(c2.job));
+    check('Kanal getrennt: Abbruchabsicht gespeichert, Helper lädt unabhängig weiter', !c2.reachable && c2.job.state === 'cancelling', JSON.stringify(c2.job));
+    s.dl = s.make();   // Worker-/Browser-Neustart ohne flüchtige pending-URLs
+    const retry = await s.dl.start(slow);
+    check('Neustart und erneuter Tipp überholen den Abbruch nicht', retry.existing && retry.job.id === r2.job.id && retry.job.state === 'cancelling');
+    s.wire.offline = false;
     const c3 = await until(s.dl, r2.job.id, (j) => j.state === 'cancelled', 10000);
     check('… Helfer meldet „cancelled“', c3.job.state === 'cancelled', JSON.stringify(c3.job));
+    check('… weiterhin nur ein Medienabruf', m.hits.filter((x) => x.path === '/videos/slow.mp4').length === before);
     await sleep(500);
     check('… Teil-Datei entfernt, keine Datei veröffentlicht', (await h.cmd('dl-parts')) === 'PARTS 0' && !(await files(h)).some((f) => f.startsWith('Langsam')));
 

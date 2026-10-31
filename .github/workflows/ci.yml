@@ -259,6 +259,9 @@ jobs:
           set -euo pipefail
           node tests/channel/channel_unit_check.js
           node tests/channel/download_unit_check.js
+          # The fixed commit is fetched explicitly for the regression proof (default checkout is shallow).
+          git fetch --no-tags origin e044acad5b427ea4a008fed468201e6c6f19cb8a
+          node tests/channel/download_regression_check.js
           node tests/channel/channel_integration_check.js
           node tests/channel/download_integration_check.js
           node tests/channel/channel_browser_check.js
