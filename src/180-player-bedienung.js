@@ -208,7 +208,7 @@
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
         st.hdl.url = u;
         hdlSet(r.value.job, true);
-        toast(r.value.existing ? 'Läuft schon: ' + hdlText(r.value.job) : (r.value.job.state === 'unconfirmed'
+        toast(r.value.existing ? tr('Läuft schon') + ': ' + hdlText(r.value.job) : (r.value.job.state === 'unconfirmed'
           ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – Fortschritt hier im Menü und in der Benachrichtigung'));
       });
     }

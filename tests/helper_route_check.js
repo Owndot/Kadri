@@ -50,5 +50,27 @@ assert(!prelude('firefox').includes('KADRI_HELPER'), 'firefox/prelude.js must no
   const odd = { api: { runtime: { sendMessage: async () => ({ ok: true, value: 'x' }) } }, CONFIG: { systemHelper: true }, GM_getValue: () => '', GM_setValue: () => {} };
   vm.runInNewContext(prelude('chrome').slice(k1, k2 + 7) + shared.slice(a, b) + '\nglobalThis.helper = helper;', odd);
   assert.equal(await odd.helper('/ping'), null);
+  // Phase C3: helperDl() → KADRI_DOWNLOAD → {t:'kadri-download', op, url|name|id} – nur diese Felder, nur Text.
+  const d1 = prelude('chrome').indexOf('    const KADRI_DOWNLOAD = async'), d2 = prelude('chrome').indexOf('\n    };\n', d1);
+  assert(d1 >= 0 && d2 > d1, 'KADRI_DOWNLOAD not found in chrome/prelude.js');
+  assert(!prelude('firefox').includes('KADRI_DOWNLOAD'), 'firefox/prelude.js must not route downloads');
+  const dl = { api, CONFIG: { systemHelper: true }, GM_getValue: () => '', GM_setValue: () => {} };
+  vm.runInNewContext(prelude('chrome').slice(d1, d2 + 7) + shared.slice(a, b) + '\nglobalThis.helperDl = helperDl;', dl);
+  sent.length = 0;
+  await dl.helperDl('start', { url: 'https://media.invalid/a.mp4', name: 'Clip', cookie: 'SESSION=SYNTHETIC', headers: { Authorization: 'x' }, referer: 'https://site.invalid/', id: 7 });
+  assert.equal(JSON.stringify(sent), JSON.stringify([{ t: 'kadri-download', op: 'start', url: 'https://media.invalid/a.mp4', name: 'Clip' }]), 'download message carries only url and name');
+  sent.length = 0;
+  for (const op of ['download', 'list', 'pull', 'push', 'eval']) assert.equal(await dl.helperDl(op, { url: 'https://media.invalid/a.mp4' }), null, op);
+  assert.deepEqual(sent, [], 'an unknown download operation left the content script');
+  dl.CONFIG.systemHelper = false;
+  assert.equal(await dl.helperDl('start', { url: 'https://media.invalid/a.mp4' }), null);
+  assert.deepEqual(sent, [], 'download routed although the "Helper app" setting is off');
+  const ffd = { CONFIG: { systemHelper: true }, GM_getValue: () => '', GM_setValue: () => {} };
+  vm.runInNewContext(shared.slice(a, b) + '\nglobalThis.helperDl = helperDl;', ffd);
+  assert.equal(await ffd.helperDl('start', { url: 'https://media.invalid/a.mp4' }), null);
+  // Der alte Cookie-Weg des Players (helperDownload: /download?…&c=…, Laden über den Browser) ist entfernt.
+  const playerSrc = fs.readFileSync(path.join(root, 'src/180-player-bedienung.js'), 'utf8');
+  for (const needle of ['helperDownload', "'/download?u='", 'document.cookie', "'Über den Browser laden'"]) assert(!playerSrc.includes(needle), 'player still contains ' + needle);
   console.log('PASS: Kadri routes only the five control commands to the background channel; Firefox/userscript have no route; no legacy key or port');
+  console.log('PASS: direct MP4 downloads (C3) leave the content script only as kadri-download with url/name/id; no cookie path in the player');
 })().catch((e) => { console.error(e); process.exitCode = 1; });

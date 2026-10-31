@@ -111,7 +111,7 @@
         if (same) { if (!pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key, name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '', at: now(), seen: 0 };
-        jobs.push(j);
+        jobs.unshift(j);                 // neuester zuerst (bei gleicher Zeit bleibt die Reihenfolge, sort ist stabil)
         await save(jobs);                // erst gespeichert, dann gesendet: die Kennung überlebt jeden Abbruch
         pending.set(j.id, url);
         try {
@@ -230,7 +230,9 @@
     if (/^http_40[137]$/.test(r)) return 'Server verlangt Anmeldung – direkter Download nicht möglich';
     if (/^http_(404|410)$/.test(r)) return 'Datei nicht gefunden';
     if (/^http_\d+$/.test(r)) return 'Server-Fehler (' + r.replace('http_', 'HTTP ') + ')';
-    if (r.startsWith('blocked_')) return 'Adresse nicht erlaubt (eigenes oder privates Netz)';
+    if (/^blocked_(address|host_name|no_address|peer|port)$/.test(r)) return 'Adresse nicht erlaubt (eigenes oder privates Netz)';
+    if (/^blocked_(redirect_target|downgrade|too_many_redirects|redirect_without_location)$/.test(r)) return 'Weiterleitung nicht erlaubt';
+    if (r.startsWith('blocked_')) return 'Adresse nicht erlaubt';
     const T = {
       no_length: 'Server nennt keine Dateigröße – direkter Download nicht möglich', too_large: 'Datei zu groß',
       type: 'Keine MP4-Datei', not_mp4: 'Keine MP4-Datei', encoding: 'Server liefert die Datei nur komprimiert',
@@ -238,6 +240,7 @@
       storage: 'Speichern auf dem Handy fehlgeschlagen', network: 'Verbindung zum Server unterbrochen',
       changed: 'Datei hat sich beim Laden geändert', range_ignored: 'Fortsetzen nicht möglich', not_started: 'Start nicht bestätigt – bitte erneut starten',
       busy: 'Helfer lädt schon zwei Dateien – später erneut', stopped: 'Helfer-App beendet', long_body: 'Fehlerhafte Antwort des Servers',
+      timeout: 'Server antwortet nicht',
     };
     if (T[r]) return T[r];
     if (r.startsWith('range_')) return 'Fortsetzen nicht möglich';

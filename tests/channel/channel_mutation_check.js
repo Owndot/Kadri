@@ -30,6 +30,21 @@ const NODE_MUTANTS = [
   ['Antwortgröße unbegrenzt', 'channel-transport.js', "declared > MAX_RESPONSE", "declared > Infinity"],
   ['beliebige Pfade', 'channel-transport.js', "if (!PATHS.has(path))", "if (false)"],
   ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(timeoutMs),", ""],
+  // Phase C3: direkte MP4-Downloads
+  ['Download: fremde Felder (Cookie, Header, Referer) durchgelassen', 'channel-session.js', "if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name')) return null;", "if (op !== 'dlstart') return null;"],
+  ['Download: URL-Zeichen ungeprüft (Zeilenumbruch, Leerzeichen)', 'channel-session.js', "!DL_URL.test(a.url)", "!/^https?:/.test(a.url)"],
+  ['Download: Name ungeprüft', 'channel-session.js', "a.name.length > 120 || DL_NAME_BAD.test(a.name)", "a.name.length > 120"],
+  ['Download: dlstatus/dlcancel mit Zusatzfeldern', 'channel-session.js', "return keys.every((k) => k === 'id') ? { op, id: a.id } : null;", "return { op, id: a.id };"],
+  ['Verwaltung: doppelter Start nicht erkannt', 'channel-downloads.js', "const same = jobs.find((x) => x.key === key && !TERMINAL.has(x.state));", "const same = null;"],
+  ['Verwaltung: Kennung erst nach dem Senden gespeichert', 'channel-downloads.js', "        await save(jobs);                // erst gespeichert, dann gesendet: die Kennung überlebt jeden Abbruch\n", ""],
+  ['Verwaltung: URL im Speicher', 'channel-downloads.js', "const j = { id: random(), key, name:", "const j = { id: random(), key, url, name:"],
+  ['Verwaltung: Wiederholung mit neuer Kennung', 'channel-downloads.js', "try { await send(j, url); }   // dieselbe Kennung", "try { j.id = random(); await send(j, url); }"],
+  ['Verwaltung: „sicher nicht angekommen“ ignoriert', 'channel-downloads.js', "!!e && !e.notSent && ", "!!e && "],
+  ['Verwaltung: Abbruch nach Verbindungsabbruch nicht nachgeholt', 'channel-downloads.js', "if (s === 'running' && j.state === 'cancelling') {", "if (false) {"],
+  ['Verwaltung: Grund ungefiltert übernommen', 'channel-downloads.js', "typeof r.reason === 'string' && /^[a-z0-9_]{0,40}$/.test(r.reason)", "typeof r.reason === 'string'"],
+  ['Verwaltung: Antwort für fremde Kennung angenommen', 'channel-downloads.js', "if (r.id !== j.id) {", "if (false) {"],
+  ['Verwaltung: ohne URL nach Neustart erneut gestartet (alte URL geraten)', 'channel-downloads.js', "} else { j.state = 'failed'; j.reason = 'not_started'; }", "} else { try { await send(j, 'https://media.example/videos/clip.mp4'); } catch (e) {} }"],
+  ['Verwaltung: Zugangsdaten in der URL erlaubt', 'channel-downloads.js', "|| url.username || url.password) return null;", ") return null;"],
 ];
 const BROWSER_MUTANTS = [   // [Name, Datei in dist/test, alt, neu]
   ['Verwaltung: Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel/channel-service.js', "if (!a || !a.pages.some((p) => isPage(sender, p)))", "if (!a)"],
@@ -57,6 +72,8 @@ function run(script, env, timeoutMs, verbose) {
 
 let survived = 0;
 if (!run('channel_unit_check.js', {}, 120000, true)) { console.log('baseline unit FAILED'); process.exit(1); }
+if (!run('download_unit_check.js', {}, 120000, true)) { console.log('baseline download unit FAILED'); process.exit(1); }
+if (!run('download_integration_check.js', {}, 300000, true)) { console.log('baseline download integration FAILED'); process.exit(1); }
 if (!run('channel_integration_check.js', {}, 600000, true)) { console.log('baseline integration FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', {}, 600000, true)) { console.log('baseline browser FAILED'); process.exit(1); }
 if (!run('channel_netguard_failure_check.js', {}, 300000, true)) { console.log('baseline netguard failure FAILED'); process.exit(1); }
@@ -66,7 +83,8 @@ for (const [name, file, from, to] of NODE_MUTANTS) {
   fs.cpSync(path.join(ROOT, 'channel'), dir, { recursive: true });
   mutate(path.join(dir, file), from, to);
   // erst die schnellen Unit-Tests, dann die Integration; hängt ein Mutant, gilt die Zeitgrenze als erkannt
-  const passed = run('channel_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) && run('channel_integration_check.js', { CHANNEL_SRC_DIR: dir }, 240000);
+  const passed = run('channel_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) && run('download_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) &&
+    run('channel_integration_check.js', { CHANNEL_SRC_DIR: dir }, 240000) && run('download_integration_check.js', { CHANNEL_SRC_DIR: dir }, 300000);
   fs.rmSync(dir, { recursive: true, force: true });
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);

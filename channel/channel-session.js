@@ -245,7 +245,7 @@
       const msg = downloadMessage(op, args);
       if (!msg) throw fail('input', 'ungültiger Download-Befehl');
       const reply = replyOf(await request(msg));
-      if (!reply || typeof reply.ok !== 'boolean') { drop(); throw fail('protocol'); }
+      if (!reply || typeof reply.ok !== 'boolean') { drop(); throw fail('protocol', 'ungültige Antwort auf ' + op); }
       lastError = null;
       return reply;
     }
