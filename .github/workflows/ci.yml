@@ -257,6 +257,13 @@ jobs:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         run: |
           set -euo pipefail
+          node tests/popup_downloads_check.js --mutations
+          git fetch --no-tags origin fb66e9138f27661532e2fe136c835afbcb37a489
+          git show fb66e9138f27661532e2fe136c835afbcb37a489:chrome/popup.js > "$RUNNER_TEMP/previous-popup.js"
+          if node tests/popup_downloads_check.js "$RUNNER_TEMP/previous-popup.js" > "$RUNNER_TEMP/previous-popup.log" 2>&1; then
+            echo 'Old popup unexpectedly passed'; exit 1
+          fi
+          grep -q 'old completed/cancelled history hidden' "$RUNNER_TEMP/previous-popup.log"
           node tests/channel/channel_unit_check.js
           node tests/channel/download_unit_check.js
           # The fixed commit is fetched explicitly for the regression proof (default checkout is shallow).

@@ -23,6 +23,7 @@ const T = {
   'Neue Helfer-Identität. Wenn du den Helper nicht selbst zurückgesetzt hast, entferne die Kopplung und überprüfe die Verbindung.': 'New helper identity. If you did not reset the helper yourself, remove the pairing and check the connection.',
   'Downloads über die Helfer-App': 'Downloads via the helper app',
   'Abbrechen': 'Cancel',
+  'Fehlgeschlagen': 'Failed', 'Schließen': 'Close', 'Fehlermeldung schließen': 'Dismiss error', 'Erneut versuchen': 'Try again',
   'Helligkeit und Lautstärke über die Helfer-App; MP4-Dateien im Player über ⬇ direkt aufs Handy speichern': 'Brightness and volume via the helper app; save MP4 files straight to the phone with ⬇ in the player',
   'Startet …': 'Starting …',
   'Verbindung unterbrochen – Stand wird geprüft': 'Connection interrupted – checking status',

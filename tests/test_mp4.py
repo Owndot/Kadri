@@ -18,6 +18,8 @@ class M(http.server.BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path); q = dict(urllib.parse.parse_qsl(u.query))
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
         MHITS.append({'path': u.path, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
+        if not browser and q.get('missing') in ('404', '410'):
+            self.send_response(int(q['missing'])); self.send_header('Content-Length', '0'); self.end_headers(); return
         if q.get('auth') == '1' and 'sess=' not in (self.headers.get('Cookie') or ''):
             self.send_response(403); self.send_header('Content-Length', '0'); self.end_headers(); return
         start, end, code = 0, len(CLIP) - 1, 200
@@ -128,6 +130,7 @@ with sync_playwright() as p:
     ptxt = pm.text_content('#downloads') or ''
     check('Kadri-Menü: „Downloads über die Helfer-App“ mit Name und Fortschritt', 'Downloads über die Helfer-App' in ptxt and 'Testclip MP4' in ptxt and '%' in ptxt, ptxt)
     check('… ohne Adresse', not re.search(r'http|127\.0\.0\.1|8791|slow\.mp4|SECRET', ptxt), ptxt)
+    check('Popup zeigt keine früheren Erfolge', pm.locator('#downloads .dl[data-state=done]').count() == 0)
     refused = pm.evaluate('''async (u) => {
       const s = (m) => chrome.runtime.sendMessage(Object.assign({ t: 'kadri-download' }, m));
       const jobs = (await s({ op: 'list' })).value || [];
@@ -205,6 +208,73 @@ with sync_playwright() as p:
     check('… kein Wechsel auf einen anderen Weg (keine weitere Anfrage, kein Browser-Download)', len(helper_hits('/videos/login.mp4')) == 1 and not pg.evaluate('() => !!document.querySelector("a[download]")'))
     check('… Wiedergabe unverändert', playing(pg))
     close_player(pg)
+
+
+    # ---------- echte 404/410: verständlich, einzeln ausblendbar; Journal bleibt unangetastet ----------
+    for code in (404, 410):
+        player(pg, page('/videos/missing%d.mp4?missing=%d' % (code, code)))
+        wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
+        dl_menu(pg); pick(pg, ITEM)
+        check('HTTP %d: Datei nicht gefunden' % code, wait_toast(pg, 'Datei nicht gefunden', 15), toasts(pg))
+        close_player(pg)
+    pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
+    missing = pm.locator('#downloads .dl[data-state=failed]').filter(has_text='Datei nicht gefunden')
+    try: missing.first.wait_for(timeout=10000)
+    except Exception: pass
+    check('Popup: zwei echte HTTP-Fehler statt vermeintlich fehlender lokaler Dateien', missing.count() == 2 and 'Fehlgeschlagen:' in (missing.first.text_content() or ''))
+    journal_before = sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"]')
+    check('Journal unterscheidet HTTP 404 und 410', {'http_404', 'http_410'}.issubset({j.get('reason') for j in journal_before}))
+    missing.first.get_by_role('button', name='Fehlermeldung schließen').click()
+    pm.wait_for_timeout(500)
+    check('Nur gewählter Fehler ausgeblendet', missing.count() == 1)
+    pm.reload(); pm.wait_for_timeout(1000)
+    check('Ausblenden bleibt nach erneutem Öffnen erhalten', missing.count() == 1)
+    journal_after = sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"]')
+    check('Schließen verändert weder Downloadjournal noch Fehlerursachen', journal_before == journal_after)
+    pm.close()
+
+    # ---------- Cross-Origin-iframe: der tatsächliche eigene Player liefert die C3-Quelle ----------
+    outer = 'http://localhost:8790/c3-iframe.html'
+    def framed_player(inner):
+        pg.route(outer, lambda route: route.fulfill(content_type='text/html', body='<title>Frame host</title><iframe style="width:100%;height:700px" src="' + inner.replace('&', '&amp;') + '"></iframe>'), times=1)
+        pg.goto(outer)
+        frame = pg.frame(url=lambda u: u.startswith(inner.split('?')[0].split('#')[0]))
+        assert frame is not None
+        frame.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
+        frame.evaluate('() => { document.getElementById("v").muted = false; }')
+        frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\\'Im Videoplayer öffnen\\']"); }', timeout=15000)
+        frame.evaluate('() => %s.querySelector("button[aria-label=\\'Im Videoplayer öffnen\\']").click()' % R)
+        frame.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
+        watch_toasts(frame)
+        return frame
+    frame = framed_player(page('/videos/frame.mp4?rate=30000'))
+    check('Hauptframe ohne Video, Wiedergabe im Cross-Origin-iframe', pg.locator('video').count() == 0 and frame.evaluate('location.origin') != pg.evaluate('location.origin') and playing(frame))
+    actual = frame.evaluate('() => %s.querySelector(".vv").currentSrc' % R)
+    check('Eigener Player spielt die direkte MP4', '/videos/frame.mp4' in actual)
+    items = wait_item(frame, lambda it: any(l == ITEM for l, _ in it)); close_menu(frame)
+    check('C3-Angebot auch im iframe; noch kein Download gestartet', any(l == ITEM for l, _ in items) and not helper_hits('/videos/frame.mp4'), items)
+    dl_menu(frame); pick(frame, ITEM)
+    pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
+    pm.wait_for_selector('#downloads .dl[data-state=running]', timeout=10000)
+    pm.wait_for_selector('#downloads .dl[data-state=done]', timeout=60000)
+    check('Popup bestätigt gerade abgeschlossenen iframe-Download', 'Gespeichert' in pm.locator('#downloads .dl[data-state=done]').text_content())
+    pm.wait_for_timeout(6000)
+    check('Bestätigung verschwindet automatisch', pm.locator('#downloads .dl[data-state=done]').count() == 0)
+    done_jobs = sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"].filter(j => j.state === "done")')
+    check('Interne abgeschlossene Aufträge bleiben gespeichert', len(done_jobs) >= 3)
+    pm.reload(); pm.wait_for_timeout(1000)
+    check('Popup öffnet ohne Erfolgshistorie', pm.locator('#downloads .dl[data-state=done]').count() == 0)
+    hh = helper_hits('/videos/frame.mp4')
+    check('Iframe-Download: einmal und ohne Cookie, Authorization oder Referer', len(hh) == 1 and all(not x['cookie'] and not x['auth'] and not x['ref'] for x in hh), hh)
+    pm.close(); close_player(frame)
+
+    # HLS spielt ebenfalls im eigenen Player, darf aber nicht an den MP4-Downloader gehen.
+    n_helper = len([x for x in MHITS if not x['browser']])
+    frame = framed_player(B + 'proof.html#preload')
+    items = dl_menu(frame); close_menu(frame)
+    check('HLS im iframe spielt, C3-MP4-Eintrag bleibt ausgeschlossen', playing(frame) and not any(l == ITEM for l, _ in items), items)
+    check('HLS verursacht keinen automatischen Helfer-Download', len([x for x in MHITS if not x['browser']]) == n_helper)
+    close_player(frame)
 
     # ---------- nichts Sensibles gespeichert oder angezeigt ----------
     stored = json.dumps(sw.evaluate('async () => await chrome.storage.local.get(null)'))
