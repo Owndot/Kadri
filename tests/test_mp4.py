@@ -6,7 +6,7 @@
 # fehlende Speicherberechtigung (Android 8–9); Seite mit Anmeldung (kontrollierter Fehler, nie Cookies); keine URL in
 # Speicher, Hinweisen oder Menü; der alte Port bleibt unberührt.
 #   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>
-import http.server, threading, time, json, urllib.parse, html
+import http.server, threading, time, json, urllib.parse, html, base64
 from common import *
 
 # ---------- Medienserver (Range für den Browser; langsam nur für den Helfer = Anfragen ohne Sec-Fetch-Mode) ----------
@@ -17,6 +17,17 @@ class M(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = dict(urllib.parse.parse_qsl(u.query))
+        if u.path == '/c3-loading.html':
+            # A different original resource prevents Chromium from reusing the original video's
+            # decoded media cache for the own player, even with HTTP Cache-Control: no-store.
+            # The real resolver discovers the separate candidate from page metadata.
+            body = ('<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">'
+                    '<title>Loading candidate</title><body><video id=v muted autoplay playsinline loop '
+                    'style="width:100%;display:block" src="data:video/mp4;base64,' + base64.b64encode(CLIP).decode() + '"></video>'
+                    '<script type="application/ld+json">{"@type":"VideoObject","contentUrl":'
+                    '"http://127.0.0.1:8791/videos/pending.mp4"}</script></body>').encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         if u.path == '/c3-iframe.html':
             body = ('<!doctype html><title>Frame host</title><iframe allow="autoplay; fullscreen" style="width:100%;height:700px" src="' + html.escape(q['frame'], quote=True) + '"></iframe>').encode()
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
@@ -123,7 +134,7 @@ with sync_playwright() as p:
     close_player(pg)
 
     # ---------- sichtbare Seiten-Brücke ist noch keine geladene eigene MP4 ----------
-    pg.goto(page('/videos/pending.mp4'))
+    pg.goto('http://127.0.0.1:8791/c3-loading.html')
     pg.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }')
     pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
