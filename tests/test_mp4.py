@@ -6,7 +6,7 @@
 # fehlende Speicherberechtigung (Android 8–9); Seite mit Anmeldung (kontrollierter Fehler, nie Cookies); keine URL in
 # Speicher, Hinweisen oder Menü; der alte Port bleibt unberührt.
 #   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>
-import http.server, threading, time, json, urllib.parse
+import http.server, threading, time, json, urllib.parse, html
 from common import *
 
 # ---------- Medienserver (Range für den Browser; langsam nur für den Helfer = Anfragen ohne Sec-Fetch-Mode) ----------
@@ -16,6 +16,10 @@ class M(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
         u = urllib.parse.urlparse(self.path); q = dict(urllib.parse.parse_qsl(u.query))
+        if u.path == '/c3-iframe.html':
+            body = ('<!doctype html><title>Frame host</title><iframe allow="autoplay; fullscreen" style="width:100%;height:700px" src="' + html.escape(q['frame'], quote=True) + '"></iframe>').encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.wfile.write(body); return
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
         MHITS.append({'path': u.path, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
         if not browser and q.get('missing') in ('404', '410'):
@@ -234,12 +238,12 @@ with sync_playwright() as p:
     pm.close()
 
     # ---------- Cross-Origin-iframe: der tatsächliche eigene Player liefert die C3-Quelle ----------
-    outer = 'http://localhost:8790/c3-iframe.html'
+    outer = 'http://127.0.0.1:8791/c3-iframe.html'
     def framed_player(inner):
-        pg.route(outer, lambda route: route.fulfill(content_type='text/html', body='<title>Frame host</title><iframe style="width:100%;height:700px" src="' + inner.replace('&', '&amp;') + '"></iframe>'), times=1)
-        pg.goto(outer)
-        frame = pg.frame(url=lambda u: u.startswith(inner.split('?')[0].split('#')[0]))
-        assert frame is not None
+        # Two real HTTP origins, no route interception; wait for the relevant frame rather than every load event.
+        with pg.expect_event('framenavigated', predicate=lambda f: f.url.startswith(inner.split('?')[0].split('#')[0])) as nav:
+            pg.goto(outer + '?' + urllib.parse.urlencode({'frame': inner}), wait_until='domcontentloaded')
+        frame = nav.value
         frame.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
         frame.evaluate('() => { document.getElementById("v").muted = false; }')
         frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
@@ -287,3 +291,4 @@ helper.stop()
 msrv.shutdown()
 shutdown()
 done()
+
