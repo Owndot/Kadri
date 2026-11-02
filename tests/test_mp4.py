@@ -242,8 +242,8 @@ with sync_playwright() as p:
         assert frame is not None
         frame.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
         frame.evaluate('() => { document.getElementById("v").muted = false; }')
-        frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\\'Im Videoplayer öffnen\\']"); }', timeout=15000)
-        frame.evaluate('() => %s.querySelector("button[aria-label=\\'Im Videoplayer öffnen\\']").click()' % R)
+        frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+        frame.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
         frame.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
         watch_toasts(frame)
         return frame
