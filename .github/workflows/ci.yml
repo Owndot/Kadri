@@ -258,6 +258,13 @@ jobs:
         run: |
           set -euo pipefail
           node tests/popup_downloads_check.js --mutations
+          node tests/download_source_check.js --mutations
+          git fetch --no-tags origin 7f6d037e865d57fbaaa382f78e19c7acb451f5aa
+          git show 7f6d037e865d57fbaaa382f78e19c7acb451f5aa:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-download-source.js"
+          if node tests/download_source_check.js "$RUNNER_TEMP/previous-download-source.js" > "$RUNNER_TEMP/previous-download-source.log" 2>&1; then
+            echo 'Unloaded candidate regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'unloaded MP4 candidate must not be offered' "$RUNNER_TEMP/previous-download-source.log"
           git fetch --no-tags origin fb66e9138f27661532e2fe136c835afbcb37a489
           git show fb66e9138f27661532e2fe136c835afbcb37a489:chrome/popup.js > "$RUNNER_TEMP/previous-popup.js"
           if node tests/popup_downloads_check.js "$RUNNER_TEMP/previous-popup.js" > "$RUNNER_TEMP/previous-popup.log" 2>&1; then
@@ -285,3 +292,4 @@ jobs:
           path: tests/out/*.log
           retention-days: 7
           if-no-files-found: ignore
+

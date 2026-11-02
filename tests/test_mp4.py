@@ -12,6 +12,7 @@ from common import *
 # ---------- Medienserver (Range für den Browser; langsam nur für den Helfer = Anfragen ohne Sec-Fetch-Mode) ----------
 CLIP = open(os.path.join(WEB, 'clip.mp4'), 'rb').read()
 MHITS = []
+BROWSER_GATES = {}  # path -> (request observed, release response); only for the loading-candidate regression
 class M(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_GET(self):
@@ -22,6 +23,10 @@ class M(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body); return
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
         MHITS.append({'path': u.path, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
+        gate = BROWSER_GATES.get(u.path) if browser else None
+        if gate:
+            gate[0].set()
+            if not gate[1].wait(15): return
         if not browser and q.get('missing') in ('404', '410'):
             self.send_response(int(q['missing'])); self.send_header('Content-Length', '0'); self.end_headers(); return
         if q.get('auth') == '1' and 'sess=' not in (self.headers.get('Cookie') or ''):
@@ -115,6 +120,29 @@ with sync_playwright() as p:
     hh = helper_hits('/videos/pub.mp4')
     check('… genau eine Anfrage des Helfers, ohne Cookie, Authorization, Referer', len(hh) == 1 and not hh[0]['cookie'] and not hh[0]['auth'] and not hh[0]['ref'], hh)
     check('… Video läuft weiter', playing(pg))
+    close_player(pg)
+
+    # ---------- sichtbare Seiten-Brücke ist noch keine geladene eigene MP4 ----------
+    pg.goto(page('/videos/pending.mp4'))
+    pg.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
+    pg.evaluate('() => { document.getElementById("v").muted = false; }')
+    pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+    held, release = threading.Event(), threading.Event()
+    BROWSER_GATES['/videos/pending.mp4'] = (held, release)
+    try:
+        pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
+        check('Testaufbau: eigene MP4-Anfrage angehalten, Seite war bereits geladen', held.wait(5))
+        items = dl_menu(pg); close_menu(pg)
+        loading = pg.evaluate('() => %s.querySelector(".vv").readyState' % R)
+        check('Ungeladener MP4-Kandidat: kein Helfer-Eintrag trotz sichtbarer Seiten-Brücke', loading == 0 and not any(l == ITEM for l, _ in items), [loading, items])
+        check('… kein automatischer Helfer-Abruf', not helper_hits('/videos/pending.mp4'))
+        release.set()
+        pg.wait_for_function('() => %s.querySelector(".vv").readyState >= 2' % R, timeout=15000)
+        items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
+        check('Nach geladenem Videobild: Helfer-Eintrag erscheint ohne erneutes Öffnen', any(l == ITEM for l, _ in items), items)
+        check('… auch dann nur Angebot, kein Download ohne Tipp', not helper_hits('/videos/pending.mp4'))
+    finally:
+        release.set(); BROWSER_GATES.pop('/videos/pending.mp4', None)
     close_player(pg)
 
     # ---------- Fortschritt, Doppeltipp, Kadri-Menü, Neustart des Service Workers, Abbruch ----------

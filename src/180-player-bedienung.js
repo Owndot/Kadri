@@ -144,7 +144,14 @@
     // über den verschlüsselten Kanal. Verlangt der Server eine Anmeldung, scheitert es mit Hinweis – kein anderer Weg.
     // Der Auftrag liegt im Hintergrund (überdauert Browser- und Helfer-Neustart); der Player fragt nur nach dem Stand,
     // solange er offen und sichtbar ist.
-    const hdlUrl = () => { const d = directUrl(); return d && !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : ''; };
+    const hdlUrl = () => {
+      const d = directUrl();
+      // st.cur ist beim Öffnen zunächst nur ein Kandidat. Das sichtbare Bild kann noch vom Seitenplayer kommen.
+      // Erst die tatsächlich geladene eigene Quelle freigeben; auch bei Qualitätswechseln keine alte Datei nehmen.
+      if (!d || vid.readyState < 2 || vid.error || vid.srcObject) return '';
+      try { if (vid.currentSrc !== new URL(d).href) return ''; } catch (e) { return ''; }
+      return !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : '';
+    };
     st.hdl = { ok: false, probed: '', job: null, url: '', busy: false, timer: 0 };
     const hdlShown = () => !!(st.hdl.ok && hdlUrl());
     const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
@@ -350,4 +357,6 @@
     if (TT) ttVideoUrl(orig).then((x) => { if (x) { st.ttUrl = x; st.refreshDl(); } }, () => {});
     // Instagram: MP4 mit Ton schon vorab holen, damit "In App öffnen" sofort klappt (nur eine kleine Datenabfrage)
     if (IG) igVideoUrl(orig).then((x) => { if (x) { st.igUrl = x; st.refreshDl(); } }, () => {});
+    vid.addEventListener('loadeddata', () => { if (vp === st) st.refreshDl(); });
     st.refreshDl();
+
