@@ -244,7 +244,7 @@ with sync_playwright() as p:
         with pg.expect_event('framenavigated', predicate=lambda f: f.url.startswith(inner.split('?')[0].split('#')[0])) as nav:
             pg.goto(outer + '?' + urllib.parse.urlencode({'frame': inner}), wait_until='domcontentloaded')
         frame = nav.value
-        frame.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
+        frame.wait_for_function('() => { const v = document.getElementById("v"); return v && v.currentTime > 0.8; }', timeout=20000)
         frame.evaluate('() => { document.getElementById("v").muted = false; }')
         frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
         frame.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
