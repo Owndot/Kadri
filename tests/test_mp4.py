@@ -72,6 +72,19 @@ def wait_item(pg, pred, secs=12):
         if pred(items): return items
         close_menu(pg); time.sleep(0.5)
     return items
+def start_item(pg, path, what):
+    """Harte Startvoraussetzung vor jedem gestarteten Download: Eintrag vorhanden und Tipp tatsächlich ausgeführt.
+    Fehlt etwas, wird das sofort als eigener Fehler mit redigierter Diagnose gemeldet (Zustand des Players, Menü,
+    Prüfstand der Helfer-App) – statt erst als Folgefehler der nachgelagerten Prüfungen. Keine Adressen im Protokoll."""
+    items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it))
+    shown = any(l == ITEM for l, _ in items)
+    diag = '' if shown else player_diag(pg, path)   # Menü des letzten Versuchs ist noch offen
+    close_menu(pg)
+    check('%s: Startvoraussetzung – Eintrag „%s“ vorhanden' % (what, ITEM), shown, diag)
+    if not shown: return False
+    dl_menu(pg); ok = pick(pg, ITEM)
+    check('%s: Startvoraussetzung – Tipp auf den Eintrag ausgeführt' % what, ok, '' if ok else player_diag(pg, path))
+    return ok
 def watch_toasts(pg):
     pg.evaluate('''() => { const t = %s.querySelector(".toast"); window.__toasts = window.__toasts || [];
       new MutationObserver(() => window.__toasts.push(t.textContent)).observe(t, { childList: true, characterData: true, subtree: true }); }''' % R)
@@ -124,7 +137,8 @@ with sync_playwright() as p:
     pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").click()' % R); time.sleep(0.5)
     menu_items = pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).map(b => b.firstChild.textContent)' % R)
     check('Tipp auf ⬇ öffnet nur die Auswahl – kein automatischer Download', ITEM in menu_items and not helper_hits('/videos/pub.mp4'), menu_items)
-    pick(pg, ITEM)
+    ok = pick(pg, ITEM)
+    check('öffentliche MP4: Startvoraussetzung – Tipp auf den Eintrag ausgeführt', ok, '' if ok else player_diag(pg, '/videos/pub.mp4'))
     check('Tipp auf den Eintrag startet (Hinweis)', wait_toast(pg, 'Helfer-App', 5), toasts(pg))
     check('Fertig: Hinweis „Gespeichert in Download/Video-Assistent“', wait_toast(pg, 'Gespeichert in Download/Video-Assistent', 30), toasts(pg))
     check('… Datei beim Helfer, volle Größe, Name = Seitentitel', 'Testclip_MP4.mp4:%d' % len(CLIP) in files(helper), files(helper))
@@ -188,7 +202,8 @@ with sync_playwright() as p:
     time.sleep(2.5)
     it2 = wait_item(pg, lambda it: any(l.startswith('Helfer-App: Lädt') for l, _ in it)); close_menu(pg)
     check('… danach weiter mit echtem Stand (neuer Service Worker fragt dlstatus)', any(l.startswith('Helfer-App: Lädt') for l, _ in it2) and len(helper_hits('/videos/slow.mp4')) == 1, it2)
-    dl_menu(pg); pick(pg, 'Download abbrechen')
+    dl_menu(pg); ok = pick(pg, 'Download abbrechen')
+    check('Abbruch: Startvoraussetzung – Tipp auf „Download abbrechen“ ausgeführt', ok, '' if ok else player_diag(pg, '/videos/slow.mp4'))
     check('Abbruch: Hinweis „Abgebrochen“', wait_toast(pg, 'Abgebrochen', 15), toasts(pg))
     time.sleep(0.5)
     check('… Teil-Datei beim Helfer entfernt, keine Datei veröffentlicht', helper.cmd('dl-parts') == 'PARTS 0' and len(files(helper)) == 1, files(helper))
@@ -198,8 +213,7 @@ with sync_playwright() as p:
 
     # ---------- Verbindungsabbruch: Kanal neu (Sitzungen weg), Download läuft weiter ----------
     player(pg, page('/videos/drop.mp4?rate=60000'))
-    wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-    dl_menu(pg); pick(pg, ITEM); time.sleep(1.5)
+    start_item(pg, '/videos/drop.mp4', 'Verbindungsabbruch'); time.sleep(1.5)
     check('Kanal des Helfers neu gestartet', helper.cmd('restart').startswith('READY'))
     check('… Download wird trotzdem fertig gemeldet (Sitzung neu, dlstatus)', wait_toast(pg, 'Gespeichert in Download/Video-Assistent', 30), toasts(pg))
     check('… ein einziger Abruf', len(helper_hits('/videos/drop.mp4')) == 1)
@@ -207,8 +221,7 @@ with sync_playwright() as p:
 
     # ---------- Neustart des Helfers während eines Downloads ----------
     player(pg, page('/videos/crash.mp4?rate=20000'))
-    wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-    dl_menu(pg); pick(pg, ITEM); time.sleep(2.0)
+    start_item(pg, '/videos/crash.mp4', 'Helfer-Neustart'); time.sleep(2.0)
     state = helper.state; helper.kill()
     time.sleep(2.0)
     helper = ChannelHelper(state)
@@ -219,8 +232,7 @@ with sync_playwright() as p:
 
     # ---------- Neustart des Browsers während eines Downloads ----------
     player(pg, page('/videos/browser.mp4?rate=25000'))
-    wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-    dl_menu(pg); pick(pg, ITEM); time.sleep(2.0)
+    start_item(pg, '/videos/browser.mp4', 'Browser-Neustart'); time.sleep(2.0)
     ctx.close()
     ctx, sw, _ = launch(p, user_dir=udir)
     pg = ctx.pages[0] if ctx.pages else ctx.new_page()
@@ -235,16 +247,14 @@ with sync_playwright() as p:
     # ---------- fehlende Speicherberechtigung (Android 8–9) ----------
     helper.cmd('storage-permission off')
     player(pg, page('/videos/perm.mp4'))
-    wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-    dl_menu(pg); pick(pg, ITEM)
+    start_item(pg, '/videos/perm.mp4', 'Speicherberechtigung')
     check('ohne Speicherberechtigung: verständlicher Hinweis', wait_toast(pg, 'Speicherzugriff fehlt', 15), toasts(pg))
     helper.cmd('storage-permission on')
     close_player(pg)
 
     # ---------- Seite verlangt Anmeldung (Cookie der Seite): kontrollierter Fehler, kein anderer Weg ----------
     player(pg, page('/videos/login.mp4?auth=1&token=SECRET-C', login=True))
-    wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-    dl_menu(pg); pick(pg, ITEM)
+    start_item(pg, '/videos/login.mp4', 'Anmeldung')
     check('Anmeldung verlangt: Hinweis, direkter Download nicht möglich', wait_toast(pg, 'Server verlangt Anmeldung', 15), toasts(pg))
     lb = [x for x in MHITS if x['path'] == '/videos/login.mp4']
     check('… Browser spielte MIT Sitzungs-Cookie, der Helfer bekam KEINEN', any(x['browser'] and 'sess=' in x['cookie'] for x in lb) and helper_hits('/videos/login.mp4') and all(not x['cookie'] for x in helper_hits('/videos/login.mp4')), lb)
@@ -256,8 +266,7 @@ with sync_playwright() as p:
     # ---------- echte 404/410: verständlich, einzeln ausblendbar; Journal bleibt unangetastet ----------
     for code in (404, 410):
         player(pg, page('/videos/missing%d.mp4?missing=%d' % (code, code)))
-        wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
-        dl_menu(pg); pick(pg, ITEM)
+        start_item(pg, '/videos/missing%d.mp4' % code, 'HTTP %d' % code)
         check('HTTP %d: Datei nicht gefunden' % code, wait_toast(pg, 'Datei nicht gefunden', 15), toasts(pg))
         close_player(pg)
     pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
@@ -296,7 +305,8 @@ with sync_playwright() as p:
     check('Eigener Player spielt die direkte MP4', '/videos/frame.mp4' in actual)
     items = wait_item(frame, lambda it: any(l == ITEM for l, _ in it)); close_menu(frame)
     check('C3-Angebot auch im iframe; noch kein Download gestartet', any(l == ITEM for l, _ in items) and not helper_hits('/videos/frame.mp4'), items)
-    dl_menu(frame); pick(frame, ITEM)
+    dl_menu(frame); ok = pick(frame, ITEM)
+    check('iframe: Startvoraussetzung – Tipp auf den Eintrag ausgeführt', ok, '' if ok else player_diag(frame, '/videos/frame.mp4'))
     pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
     pm.wait_for_selector('#downloads .dl[data-state=running]', timeout=10000)
     pm.wait_for_selector('#downloads .dl[data-state=done]', timeout=60000)

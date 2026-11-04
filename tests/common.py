@@ -173,7 +173,9 @@ def launch(p, user_dir=None, extra_args=None):
             pg.goto(B + 'direct.html'); sw = ctx.service_workers[0] if ctx.service_workers else None
     return ctx, sw, user_dir
 
+LAST_OPEN = {}   # Zustand des letzten open_player (nur Booleans, keine Adressen)
 def open_player(pg, url):
+    LAST_OPEN.clear()
     pg.goto(url)
     pg.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.0)
@@ -181,8 +183,10 @@ def open_player(pg, url):
     pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
     # (nahtloser Start: bis die eigene Kopie aufgeholt hat, läuft die Seite sichtbar weiter – dann still)
-    try: pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=12000)
-    except Exception: pass
+    # Ob die Brücke wirklich endete, wird festgehalten (LAST_OPEN) statt verschluckt: Tests mit harten
+    # Startvoraussetzungen geben es bei einem Fehlschlag in ihrer Diagnose aus.
+    try: pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=12000); LAST_OPEN['bridge_ended'] = True
+    except Exception: LAST_OPEN['bridge_ended'] = False
     time.sleep(0.6)
 
 def settings(pg):
@@ -194,6 +198,17 @@ def settings(pg):
     return pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).map(b => [b.firstChild.textContent, b.querySelector("small") ? b.querySelector("small").textContent : ""])' % R)
 def pick(pg, label):
     return pg.evaluate('(l) => { const b = Array.from(%s.querySelectorAll(".vmenu.on .vmi")).find(b => b.firstChild.textContent === l); if (b) b.click(); return !!b; }' % R, label)
+def player_diag(pg, path=None):
+    """Redigierter Zustand des eigenen Players für Fehlermeldungen: keine Adressen, Cookies oder Serverantworten.
+    path: erwarteter Pfad der Quelle – ausgegeben wird nur, ob currentSrc dazu passt (Boolean)."""
+    d = pg.evaluate('''(p) => { const r = %s; const v = r.querySelector(".vv"); const b = r.querySelector("button[aria-label^=Herunterladen]");
+      let match = null; if (v && p) { try { match = v.currentSrc !== "" && new URL(v.currentSrc).pathname === p; } catch (e) { match = false; } }
+      return { readyState: v ? v.readyState : null, paused: v ? v.paused : null, ended: v ? v.ended : null,
+        error: v && v.error ? v.error.code : null, srcObject: !!(v && v.srcObject), sourceMatch: match,
+        bridge: !!r.querySelector(".vbridge"), menu: Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((x) => x.firstChild.textContent),
+        hdl: b ? (b.dataset.hdl || "none") : null, hdlGen: b ? Number(b.dataset.hdlGen || 0) : null }; }''' % R, path)
+    d['bridgeEndedAtOpen'] = LAST_OPEN.get('bridge_ended')
+    return d
 def close_menu(pg):
     pg.evaluate('() => { const r = %s; r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); }' % R)
 

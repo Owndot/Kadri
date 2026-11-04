@@ -152,7 +152,7 @@
       try { if (vid.currentSrc !== new URL(d).href) return ''; } catch (e) { return ''; }
       return !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : '';
     };
-    st.hdl = { ok: false, probed: '', job: null, url: '', busy: false, timer: 0 };
+    st.hdl = { ok: false, probed: '', gen: 0, job: null, url: '', busy: false, timer: 0 };
     const hdlShown = () => !!(st.hdl.ok && hdlUrl());
     const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
     const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
@@ -185,13 +185,19 @@
     onVisChange(onHdlVis);
     st.cleanup.push(() => { hdlStop(); offVisChange(onHdlVis); });
     // Kann der gekoppelte Helfer das? Und läuft für diese Datei schon ein Auftrag (z. B. nach Neustart des Browsers)?
+    // Zustand der Prüfung am Download-Knopf (im geschlossenen Shadow-DOM; nur Zustand und Zähler, nie eine Adresse) –
+    // für die Diagnose der Tests, wenn ein erwarteter Eintrag fehlt.
+    const hdlMark = (s) => { try { bDl.dataset.hdl = s; bDl.dataset.hdlGen = String(st.hdl.gen); } catch (e) {} };
     function hdlProbe() {
       const u = hdlUrl();
       if (!u || st.hdl.probed === u || typeof KADRI_DOWNLOAD !== 'function') return;
       st.hdl.probed = u;
+      st.hdl.gen = (st.hdl.gen || 0) + 1; hdlMark('pending');
       helperDl('caps').then((r) => {
-        if (vp !== st || hdlUrl() !== u) return;
+        if (vp !== st) return;
+        if (hdlUrl() !== u) { hdlMark('stale'); return; }
         st.hdl.ok = !!(r && r.ok && r.value && r.value.supported);
+        hdlMark(st.hdl.ok ? 'ok' : (r && r.ok && r.value && r.value.reachable) ? 'unsupported' : 'unreachable');
         if (!st.hdl.ok) return;
         st.refreshDl();
         helperDl('find', { url: u }).then((f) => {
