@@ -42,6 +42,8 @@ jobs:
           mkdir -p /tmp/privacy-media
           ffmpeg -v error -y -f lavfi -i testsrc2=size=320x180:rate=24 -t 8 -c:v libx264 -threads 1 -pix_fmt yuv420p -g 48 -movflags +faststart /tmp/privacy-media/clip.mp4
           EXT_DIR="$PWD/dist/test" xvfb-run -a python3 -u tests/privacy_browser.py --kadri
+      - name: Declared MP4 alternatives show the complete HLS clip (duration, streams, picture; ffmpeg)
+        run: python3 tests/media_fixture_match.py
       - name: Prove recovery regression against the broken predecessor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,7 +103,7 @@ jobs:
         run: node --expose-gc tests/pip_lifecycle_check.js
       - name: No confidential site names in tracked files (hash-based, names not in the repository)
         run: node tests/confidential_names_check.js
-      - name: Downloadable MP4 fixtures are Android-playable (H.264 / VP9 profile 0, 8-bit 4:2:0)
+      - name: Downloadable MP4 fixtures are Android-playable and declared alternatives match the HLS clip (duration, tracks)
         run: node tests/media_fixture_check.js
 
 

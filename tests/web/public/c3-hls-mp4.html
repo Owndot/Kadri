@@ -4,11 +4,12 @@
 <body style="margin:0;font:15px sans-serif;background:#f4f4f4">
 <!-- Öffentliche Gerätetestseite (D2, wie Fixture M02): Die Seite spielt HLS (hls.js, blob:). Dasselbe Videoelement nennt
      zwei vollständige MP4-Dateien desselben Clips als <source> (preload=none: der Browser lädt sie nicht selbst):
-     360p H.264/AAC und 180p VP9 Profil 0 – beide von Android-Playern abspielbar (Android-CDD: H.264, VP9 Profil 0).
+     360p und 180p, je H.264 Main + AAC, 60 s wie der HLS-Stream (Android-CDD: H.264). Dauer, Spuren und Bildinhalt
+     prüfen tests/media_fixture_check.js und tests/media_fixture_match.py gegen das HLS-Material.
      Eigenes Testmaterial aus diesem Repository; keine fremden Medien, keine Anmeldung. -->
 <video id=v muted playsinline controls preload=none style="width:100%;display:block;background:#000">
   <source src="clip-360-h264.mp4" type="video/mp4" size="360">
-  <source src="../clip-180.mp4" type="video/mp4" size="180">
+  <source src="clip-180-h264.mp4" type="video/mp4" size="180">
 </video>
 <div style="padding:10px 12px">
   <b>Kadri C3 – HLS mit MP4-Alternativen</b><br>
