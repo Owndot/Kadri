@@ -143,6 +143,9 @@ siehe dort `DOWNLOADS-C3.md`). Das betrifft auch echte Server und hätte auf dem
 
 ## 8. Restrisiken und Grenzen
 
+Samsung-Abnahme, bekannte Einschränkung R3 (MP4 nur in der Browsersitzung abrufbar), offene Blocker und Plan P4:
+`C3-ABNAHME.md`.
+
 - Nicht auf echtem Android geprüft (Browser-Teil); Verhalten von Chromium-basierten Android-Browsern mit Erweiterungen
   (Service-Worker-Lebensdauer, Hintergrund-Tabs) ist nur nachgestellt (Worker-Stopp, Browser-Neustart, Sichtbarkeit).
 - Der Helfer bekommt die URL (er muss sie abrufen) – verschlüsselt über den Kanal, nicht gespeichert. Signierte,

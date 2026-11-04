@@ -11,6 +11,13 @@
 
 Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner ersetzen, „Neu laden“, nicht neu koppeln).
 
+## Ergebnis Samsung (Paket `49949a7`)
+
+- **R2 BESTANDEN:** HLS läuft; 360p und 180p angeboten; beide Downloads vollständig 60 s mit Ton, Größen exakt;
+  HLS läuft währenddessen weiter. Keine Änderung an R2 ohne neuen Fehlernachweis.
+- **R3 offen – bekannte Einschränkung:** zwei Versuche, Helfer HTTP 404 nach 2 s, Vergleich ohne Sitzung ebenfalls 404,
+  Datei im Kadri-Player tatsächlich dekodiert. Einordnung und Grenzen: `C3-ABNAHME.md`, Abschnitt 2.
+
 ## Nachtest 2 (R2-Fixture, R3-Eingrenzung; Paket `49949a7`)
 
 - R2: Alle MP4-Testdateien waren 12-s-Ausschnitte (ffprobe), der HLS-Stream der Seite läuft 60 s; der 180p-Datei fehlte
