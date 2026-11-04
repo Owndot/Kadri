@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>HLS mit MP4-Alternativen</title>
+<script src="hls.min.js"></script></head>
+<body style="margin:0">
+<!-- M02: Die Seite spielt HLS (hls.js, blob:). Dasselbe Videoelement deklariert ausdrücklich zwei vollständige MP4-Dateien
+     desselben Inhalts (<source>, wie viele Web-Player) – preload=none: der Browser lädt sie nicht selbst.
+     M05: die Init-Ressource des Streams als angebliche MP4 (Rolle aus der Liste schlägt Endung und type).
+     Nur Seitennähe: eine MP4 in JSON-LD. M04: ein zweites Video mit eigener Quelle (anderer Player). -->
+<video id=v muted playsinline preload=none style="width:100%;display:block">
+  <source src="http://127.0.0.1:8791/videos/alt720.mp4?sig=ALT-A&amp;x=2&amp;x=1&amp;h=a%2Fb" type="video/mp4" size="720">
+  <source src="http://127.0.0.1:8791/videos/alt360.mp4?sig=ALT-B" type="video/mp4" size="360">
+  <source src="/hls/init.mp4" type="video/mp4" size="1080">
+</video>
+<script type="application/ld+json">{"@type":"VideoObject","contentUrl":"http://127.0.0.1:8791/videos/ldjson.mp4"}</script>
+<p style="height:900px">Text darunter</p>
+<video id=v2 muted playsinline preload=none style="width:96px;height:54px"><source src="http://127.0.0.1:8791/videos/other-player.mp4" type="video/mp4" size="480"></video>
+<script>
+  const v = document.getElementById('v');
+  const h = new Hls(); h.loadSource('/hls/master.m3u8'); h.attachMedia(v);
+  h.on(Hls.Events.MANIFEST_PARSED, () => v.play().catch(() => {}));
+</script></body></html>

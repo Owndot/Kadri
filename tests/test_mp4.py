@@ -29,11 +29,18 @@ class M(http.server.BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
             self.wfile.write(body); return
         if u.path == '/c3-iframe.html':
-            body = ('<!doctype html><title>Frame host</title><iframe allow="autoplay; fullscreen" style="width:100%;height:700px" src="' + html.escape(q['frame'], quote=True) + '"></iframe>').encode()
+            ad = ('<iframe style="width:300px;height:170px" src="' + html.escape(q['ad'], quote=True) + '"></iframe>') if q.get('ad') else ''
+            body = ('<!doctype html><title>Frame host</title><iframe allow="autoplay; fullscreen" style="width:100%;height:700px" src="' + html.escape(q['frame'], quote=True) + '"></iframe>' + ad).encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.wfile.write(body); return
+        if u.path == '/c3-ad.html':
+            # Werbung in eigenem Fenster: eigenes Video mit eigener MP4 (darf nie dem Hauptvideo zugeordnet werden)
+            body = ('<!doctype html><title>Ad</title><video muted autoplay loop playsinline style="width:100%" preload=auto>'
+                    '<source src="http://127.0.0.1:8791/videos/ad.mp4" type="video/mp4" size="1080"></video>').encode()
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
             self.wfile.write(body); return
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
-        MHITS.append({'path': u.path, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
+        MHITS.append({'path': u.path, 'query': u.query, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
         gate = BROWSER_GATES.get(u.path) if browser else None
         if gate:
             gate[0].set()
@@ -85,6 +92,9 @@ def start_item(pg, path, what):
     dl_menu(pg); ok = pick(pg, ITEM)
     check('%s: Startvoraussetzung – Tipp auf den Eintrag ausgeführt' % what, ok, '' if ok else player_diag(pg, path))
     return ok
+def pick_sub(pg, label, part):
+    """Eintrag mit genau diesem Namen, dessen Unterzeile part enthält (mehrere gleichnamige Einträge: Qualitäten)."""
+    return pg.evaluate('([l, p]) => { const b = Array.from(%s.querySelectorAll(".vmenu.on .vmi")).find((b) => b.firstChild.textContent === l && (b.querySelector("small") || {}).textContent.includes(p)); if (b) b.click(); return !!b; }' % R, [label, part])
 def watch_toasts(pg):
     pg.evaluate('''() => { const t = %s.querySelector(".toast"); window.__toasts = window.__toasts || [];
       new MutationObserver(() => window.__toasts.push(t.textContent)).observe(t, { childList: true, characterData: true, subtree: true }); }''' % R)
@@ -328,6 +338,60 @@ with sync_playwright() as p:
     check('HLS im iframe spielt, C3-MP4-Eintrag bleibt ausgeschlossen', playing(frame) and not any(l == ITEM for l, _ in items), items)
     check('HLS verursacht keinen automatischen Helfer-Download', len([x for x in MHITS if not x['browser']]) == n_helper)
     close_player(frame)
+
+    # ---------- M02/M04/M05: HLS läuft, dasselbe Videoelement nennt zwei MP4-Dateien ausdrücklich (<source>) ----------
+    alt = ['/videos/alt720.mp4', '/videos/alt360.mp4', '/videos/ldjson.mp4', '/videos/other-player.mp4']
+    player(pg, B + 'hlsalt.html')
+    src0 = pg.evaluate('() => %s.querySelector(".vv").currentSrc.slice(0, 5)' % R)
+    check('HLS-Seite: eigener Player spielt den Stream (hls.js), nicht eine der MP4', src0 == 'blob:' and playing(pg), src0)
+    items = wait_item(pg, lambda it: len([1 for l, _ in it if l == ITEM]) >= 2)
+    offers = [sub for l, sub in items if l == ITEM]
+    check('Bei laufendem HLS: genau die zwei gebundenen MP4 angeboten (720p, 360p)', len(offers) == 2 and '720p' in offers[0] and '360p' in offers[1], items)
+    check('… Init des Streams (als <source type=video/mp4>), JSON-LD-MP4 und Quelle eines anderen Videos nicht angeboten', not any('1080p' in x or '480p' in x for x in offers), offers)
+    check('… Menü öffnen lädt nichts (kein Helfer- oder Browserabruf der MP4)', not [x for x in MHITS if x['path'] in alt], [x['path'] for x in MHITS if x['path'] in alt])
+    close_menu(pg)
+    t0 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    dl_menu(pg); ok = pick_sub(pg, ITEM, '720p')
+    check('HLS-Seite: Startvoraussetzung – Tipp auf „%s · 720p“ ausgeführt' % ITEM, ok, '' if ok else player_diag(pg))
+    check('… gespeichert (Hinweis)', wait_toast(pg, 'Gespeichert in Download/Video-Assistent', 30), toasts(pg))
+    hh = helper_hits('/videos/alt720.mp4')
+    check('… genau ein Abruf der gewählten MP4, ohne Cookie, Authorization, Referer', len(hh) == 1 and not hh[0]['cookie'] and not hh[0]['auth'] and not hh[0]['ref'], hh)
+    check('… Adresse unverändert (Reihenfolge, doppelte Parameter, %-Escapes)', hh and hh[0]['query'] == 'sig=ALT-A&x=2&x=1&h=a%2Fb', hh and hh[0]['query'])
+    check('… keine andere Qualität, kein anderes Video, keine Seitendaten-MP4 abgerufen', not [x for x in MHITS if x['path'] in alt[1:]], [x['path'] for x in MHITS if x['path'] in alt[1:]])
+    check('… Datei vollständig beim Helfer (Name = Seitentitel)', any(f.startswith('HLS_mit_MP4') and f.endswith(':%d' % len(CLIP)) for f in files(helper)), files(helper))
+    src1 = pg.evaluate('() => %s.querySelector(".vv").currentSrc.slice(0, 5)' % R)
+    t1 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    check('… Wiedergabe bleibt beim HLS-Stream und läuft weiter (keine Umschaltung, kein Sprung zurück)', src1 == 'blob:' and t1 >= t0 and playing(pg), [src1, t0, t1])
+    # M06: Menü offen, dann wechselt die Seite das Medium desselben Elements – die alte Auswahl gilt nicht mehr
+    items = wait_item(pg, lambda it: any(l == ITEM and '360p' in sub for l, sub in it))
+    check('Medienwechsel: Auswahl vorher angeboten', any(l == ITEM and '360p' in sub for l, sub in items), items)
+    pg.evaluate('() => { const v = document.getElementById("v"); v.removeAttribute("src"); v.load(); }')
+    pg.wait_for_timeout(300)
+    ok = pick_sub(pg, ITEM, '360p')
+    check('… Tipp auf den alten Eintrag: verweigert mit Hinweis, kein Start', ok and wait_toast(pg, 'Quelle hat sich geändert', 5) and not helper_hits('/videos/alt360.mp4'), toasts(pg))
+    items = dl_menu(pg); close_menu(pg)
+    check('… danach keine Geister-Einträge aus dem alten Medium', not any(l == ITEM and '360p' in sub for l, sub in items), items)
+    close_player(pg)
+
+    # M03: Hauptframe ohne Video; HLS-Seite im Cross-Origin-iframe, daneben ein Werbe-iframe mit eigener MP4
+    n_ad = len([x for x in MHITS if x['path'] == '/videos/ad.mp4' and not x['browser']])
+    outer_ad = 'http://127.0.0.1:8791/c3-iframe.html?' + urllib.parse.urlencode({'frame': B + 'hlsalt.html', 'ad': 'http://127.0.0.1:8791/c3-ad.html'})
+    with pg.expect_event('framenavigated', predicate=lambda f: f.url.startswith(B + 'hlsalt.html')) as nav:
+        pg.goto(outer_ad, wait_until='domcontentloaded')
+    fr = nav.value
+    fr.wait_for_function('() => { const v = document.getElementById("v"); return v && v.currentTime > 0.8; }', timeout=20000)
+    fr.evaluate('() => { document.getElementById("v").muted = false; }')
+    fr.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+    fr.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
+    fr.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
+    watch_toasts(fr)
+    items = wait_item(fr, lambda it: len([1 for l, _ in it if l == ITEM]) >= 2)
+    offers = [sub for l, sub in items if l == ITEM]
+    check('Cross-Origin-iframe: dieselben zwei MP4 des Videos im Fenster angeboten, nichts aus dem Werbe-iframe', pg.locator('video').count() == 0 and len(offers) == 2 and not any('1080p' in x for x in offers), items)
+    dl_menu(fr); ok = pick_sub(fr, ITEM, '360p')
+    check('… Tipp startet genau diese Datei (360p)', ok and wait_toast(fr, 'Gespeichert in Download/Video-Assistent', 30) and len(helper_hits('/videos/alt360.mp4')) == 1, toasts(fr))
+    check('… Werbung nie an den Helfer', len([x for x in MHITS if x['path'] == '/videos/ad.mp4' and not x['browser']]) == n_ad == 0)
+    close_player(fr)
 
     # ---------- nichts Sensibles gespeichert oder angezeigt ----------
     stored = json.dumps(sw.evaluate('async () => await chrome.storage.local.get(null)'))

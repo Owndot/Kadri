@@ -51,7 +51,7 @@ function probeHarness(text) {
   const st = {};
   const ctx = {
     st, vp: st, bDl: { dataset: {} }, vid: { readyState: 4 },
-    hdlUrl: () => h.url, KADRI_DOWNLOAD: () => {}, hdlActive: (j) => !!j && j.state === 'running',
+    hdlUrl: () => h.url, hdlPrimary: () => h.url, KADRI_DOWNLOAD: () => {}, hdlActive: (j) => !!j && j.state === 'running',
     hdlSet: (j) => h.sets.push(j),
     helperDl: (op, a) => new Promise((resolve) => h.calls.push({ op, url: a && a.url, resolve })),
   };
@@ -165,10 +165,10 @@ if (process.argv.includes('--mutations')) {
     ['if (vp === st) st.refreshDl();', 'st.refreshDl();'],
     // capability probe: stale answers, generation, pending/checked separation, transient failures, ready events
     ['st.hdl.pending.gen === gen', 'true'],
-    ["if (hdlUrl() !== u) { drop('stale'); hdlProbe(); return; }   //", '//'],
+    ["if (hdlPrimary() !== u) { drop('stale'); hdlProbe(); return; }   //", '//'],
     ["{ drop('stale'); hdlProbe(); return; }\n          if (!(f && f.ok))", "{}\n          if (!(f && f.ok))"],
     ['st.hdl.pending = { u, gen };', 'st.hdl.pending = { u, gen }; st.hdl.checked = u;'],
-    ['(st.hdl.pending && st.hdl.pending.u === u) || ', ''],
+    [' || (st.hdl.pending && st.hdl.pending.u === u)', ''],
     ["drop('unreachable'); return; }   // vorübergehend", "st.hdl.checked = u; drop('unreachable'); return; }   // vorübergehend"],
     ["const current = () => vp === st && ", 'const current = () => '],
     ["['canplay', 'seeked'].forEach((ev) => vid.addEventListener(ev, () => { if (vp === st) hdlProbe(); }));", ''],
