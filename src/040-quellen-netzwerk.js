@@ -293,6 +293,7 @@
   const dirOf = (u) => urlKey(u).replace(/[^\/]*$/, '');
   const plInfo = new Map();    // urlKey → { u, kids:Set(urlKey), segDirs:[Ordner], dur, live, t }
   const segHits = new Map();   // Ordner der Stücke → zuletzt geladen
+  const plParts = new Map();   // urlKey eines Stücks/Init/Unterliste aus einer gelesenen Liste → Rolle (Quellenmodell)
   const SEGFILE_RE = /\.(ts|m4s|mp4|m4a|m4v|aac|cmfv|cmfa|webm|mp3)(\?|#|$)/i;
   function isoDur(s) {
     const m = /P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/.exec(s || '');
@@ -307,6 +308,8 @@
       const info = { u: reqUrl, kids: new Set(), segDirs: [], dur: NaN, live: false, t: Date.now() };
       const dirs = new Set();
       const addDir = (a) => { if (!a) return; const d = dirOf(a); try { if (new URL(d).pathname.length > 1) dirs.add(d); } catch (e) {} };
+      // Rolle jeder in der Liste genannten Adresse (begrenzt): ein Stück oder Init bleibt ein Stück, auch mit „.mp4“
+      const part = (a, role) => { if (!a) return; const k = urlKey(a); if (plParts.get(k) === 'init') return; plParts.delete(k); plParts.set(k, role); if (plParts.size > 4000) plParts.delete(plParts.keys().next().value); };
       const head = text.slice(0, 600).trimStart();
       if (head.startsWith('#EXTM3U')) {
         const lines = text.split(/\r?\n/);
@@ -317,12 +320,12 @@
           if (l[0] === '#') {
             if (l.startsWith('#EXTINF:')) { sum += parseFloat(l.slice(8)) || 0; segs++; }
             else if (l.startsWith('#EXT-X-STREAM-INF')) kidNext = true;
-            else if (l.startsWith('#EXT-X-MEDIA:') || l.startsWith('#EXT-X-I-FRAME-STREAM-INF')) { const m = /URI="([^"]+)"/.exec(l); if (m) info.kids.add(urlKey(abs(m[1]))); }
-            else if (l.startsWith('#EXT-X-MAP:')) { const m = /URI="([^"]+)"/.exec(l); if (m) addDir(abs(m[1])); }
+            else if (l.startsWith('#EXT-X-MEDIA:') || l.startsWith('#EXT-X-I-FRAME-STREAM-INF')) { const m = /URI="([^"]+)"/.exec(l); if (m) { info.kids.add(urlKey(abs(m[1]))); part(abs(m[1]), 'media-playlist'); } }
+            else if (l.startsWith('#EXT-X-MAP:')) { const m = /URI="([^"]+)"/.exec(l); if (m) { addDir(abs(m[1])); part(abs(m[1]), 'init'); } }
             continue;
           }
-          if (kidNext) { info.kids.add(urlKey(abs(l))); kidNext = false; }
-          else addDir(abs(l));
+          if (kidNext) { info.kids.add(urlKey(abs(l))); part(abs(l), 'media-playlist'); kidNext = false; }
+          else { addDir(abs(l)); part(abs(l), 'segment'); }
         }
         if (segs) { info.live = text.indexOf('#EXT-X-ENDLIST') < 0; if (!info.live) info.dur = sum; }
       } else if (/<MPD[\s>]/.test(head) || /<MPD[\s>]/.test(text.slice(0, 4000))) {
@@ -407,6 +410,17 @@
     return null;
   }
   const lenTol = (d) => Math.max(4, d * 0.015);
+  // Rolle einer Adresse nach den Belegen des Netzwerks (für das Quellenmodell): aus gelesenen Listen, sonst nach
+  // eindeutigen Mustern für Stücke und Einzelspuren. Nur ein Hinweis für die Einordnung – nie eine Transferidentität.
+  function mediaRoleHint(u) {
+    const k = urlKey(u);
+    if (plParts.has(k)) return plParts.get(k);
+    const p = plInfo.get(k);
+    if (p) return p.kids.size ? 'master' : 'media-playlist';
+    if (SEGMENT_RE.test(u)) return 'segment';
+    try { if (isSplitTrack(u)) return 'track'; } catch (e) {}
+    return 'unknown';
+  }
 
   try {
     new PerformanceObserver((list) => {

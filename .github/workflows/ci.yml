@@ -259,6 +259,7 @@ jobs:
           set -euo pipefail
           node tests/popup_downloads_check.js --mutations
           node tests/download_source_check.js --mutations
+          node tests/media_registry_check.js --mutations
           git fetch --no-tags origin 7f6d037e865d57fbaaa382f78e19c7acb451f5aa
           git show 7f6d037e865d57fbaaa382f78e19c7acb451f5aa:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-download-source.js"
           if node tests/download_source_check.js "$RUNNER_TEMP/previous-download-source.js" > "$RUNNER_TEMP/previous-download-source.log" 2>&1; then
