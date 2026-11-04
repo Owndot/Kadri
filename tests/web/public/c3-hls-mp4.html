@@ -1,0 +1,25 @@
+<!doctype html><html lang=de><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Kadri C3 – HLS mit zwei MP4-Alternativen</title>
+<script src="../hls.min.js"></script></head>
+<body style="margin:0;font:15px sans-serif;background:#f4f4f4">
+<!-- Öffentliche Gerätetestseite (D2, wie Fixture M02): Die Seite spielt HLS (hls.js, blob:). Dasselbe Videoelement nennt
+     zwei vollständige MP4-Dateien desselben Clips als <source> (preload=none: der Browser lädt sie nicht selbst).
+     Eigenes Testmaterial aus diesem Repository; keine fremden Medien, keine Anmeldung. -->
+<video id=v muted playsinline controls preload=none style="width:100%;display:block;background:#000">
+  <source src="../clip.mp4" type="video/mp4" size="360">
+  <source src="../clip-180.mp4" type="video/mp4" size="180">
+</video>
+<div style="padding:10px 12px">
+  <b>Kadri C3 – HLS mit MP4-Alternativen</b><br>
+  Wiedergabe: <span id=s>HLS lädt …</span><br>
+  Erwartung: Video im Kadri-Player öffnen, ⬇ antippen → zwei Einträge „Mit der Helfer-App speichern · 360p / 180p“.
+  Ein Tipp startet genau diese Datei; das Video läuft dabei weiter.
+</div>
+<script>
+  const v = document.getElementById('v'), s = document.getElementById('s');
+  if (window.Hls && Hls.isSupported()) {
+    const h = new Hls(); h.loadSource('../hls/master.m3u8'); h.attachMedia(v);
+    h.on(Hls.Events.MANIFEST_PARSED, () => { s.textContent = 'HLS (hls.js)'; v.play().catch(() => {}); });
+    h.on(Hls.Events.ERROR, (e, d) => { if (d && d.fatal) s.textContent = 'HLS-Fehler: ' + d.type; });
+  } else s.textContent = 'hls.js nicht verfügbar';
+</script></body></html>
