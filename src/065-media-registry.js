@@ -189,7 +189,7 @@
     });
     if (PH && phCache && phCache.length) {
       const single = countEligible() <= 1;
-      phCache.slice(0, 16).forEach((c) => mediaPut(ctx, c.u, 'adapter', 'ph-media', single ? 'bound' : 'ambiguous',
+      phCache.slice(0, 16).forEach((c) => mediaPut(ctx, c.u, 'adapter', 'site-adapter', single ? 'bound' : 'ambiguous',
         single ? ['adapter-variant-set', 'single-video'] : ['adapter-variant-set'],
         c.res ? { quality: { status: 'claimed', value: { height: c.res }, evidenceIds: ['adapter-quality'] } } : {}));
     }

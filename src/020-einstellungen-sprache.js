@@ -158,7 +158,7 @@
     'Kein passendes Video gefunden – kurz laufen lassen und nochmal tippen': 'No matching video found – let it play briefly and tap again',
     'Link kopiert – in YTDLnis einfügen': 'Link copied – paste it into YTDLnis', 'Link kopiert': 'Link copied', 'Link wird geteilt': 'sharing the link',
     'klappt nicht? Nochmal tippen': 'not working? Tap again', 'Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben': 'New tab was blocked – allow pop-ups for this site',
-    'Videodatei gefunden': 'Video file found', 'Loslassen, um die Diagnose zu kopieren': 'Release to copy the diagnostics', 'Diagnose kopiert': 'Diagnostics copied',
+    'Videodatei gefunden': 'Video file found', 'Loslassen, um die Diagnose zu kopieren': 'Release to copy the diagnostics', 'Diagnose kopiert': 'Diagnostics copied', 'Anonymisiert kopieren': 'Copy anonymized', 'Anonymisierte Diagnose kopiert': 'Anonymized diagnostics copied',
     // Helfer-App: direkte MP4-Downloads (Texte kommen fest aus dem Hintergrund, channel/channel-downloads.js)
     'Startet …': 'Starting …',
     'Verbindung unterbrochen – Stand wird geprüft': 'Connection interrupted – checking status',

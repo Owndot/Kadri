@@ -13,6 +13,78 @@
     if (CONFIG.systemHelper === false || typeof KADRI_DOWNLOAD !== 'function') return null;
     try { return await KADRI_DOWNLOAD(op, args || {}); } catch (e) { return null; }
   }
+  // ---------- Diagnose der Helfer-Downloads (Seitenleben, NICHT an den Player gebunden; nie eine Adresse) ----------
+  // Je gestartetem oder gefundenem Auftrag: Herkunft/Bindung/Art der Quelle (aus der Registry, ohne Adresse), Alter beim
+  // Start, Zustand, Grundcode, Zeit bis zum Fehler und – einmal bei einem HTTP-Fehler – ein Vergleichsabruf aus dem
+  // Browser OHNE Cookies und OHNE Referer (1 Byte, Kadris Hintergrund mit Netzschutz). Bleibt nach dem Schließen oder
+  // Neuöffnen des Players erhalten; nach dem Schließen fragt die Seite den Stand weiter ab (höchstens 15 min, nur sichtbar).
+  // Die Adresse liegt nur im Arbeitsspeicher, bis der Vergleich gelaufen oder der Auftrag beendet ist.
+  const hdlDiags = [];   // jüngste zuerst, höchstens 4
+  let hdlDiagChanged = null;   // (der offene Player zeigt den Stand am Download-Knopf, für Tests)
+  const hdlDiagUrl = new WeakMap();
+  const HDL_TERMINAL = ['done', 'failed', 'cancelled', 'interrupted'];
+  function hdlDiagFor(id) { return hdlDiags.find((d) => d.id === id) || null; }
+  function hdlDiagNew(info, url, job) {
+    if (!job || !job.id) return null;
+    let d = hdlDiagFor(job.id);
+    if (!d) {
+      d = Object.assign({ id: job.id, at: Date.now(), state: '', reason: '', failAfter: 0, probe: '' }, info);
+      hdlDiags.unshift(d);
+      while (hdlDiags.length > 4) hdlDiags.pop();
+      if (url) hdlDiagUrl.set(d, url);
+      hdlDiagWatch(d);
+    }
+    hdlDiagUpdate(job);
+    return d;
+  }
+  function hdlDiagUpdate(job) {
+    const d = job && hdlDiagFor(job.id);
+    if (!d || HDL_TERMINAL.indexOf(d.state) >= 0) return;
+    d.state = String(job.state || '');
+    if (d.state === 'failed') {
+      d.reason = String(job.reason || '');
+      d.failAfter = Math.round((Date.now() - d.at) / 1000);
+      if (/^http_\d{3}$/.test(d.reason)) hdlDiagProbe(d);
+    }
+    if (HDL_TERMINAL.indexOf(d.state) >= 0 && d.probe !== 'läuft') hdlDiagUrl.delete(d);
+    if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
+  }
+  function hdlDiagProbe(d) {
+    const u = hdlDiagUrl.get(d), x = gmXhr();
+    if (d.probe) return;
+    if (!x || !u) { d.probe = 'nicht möglich'; return; }
+    d.probe = 'läuft';
+    let req = null, fin = false;
+    const end = (v) => {
+      if (fin) return; fin = true; d.probe = v; hdlDiagUrl.delete(d);
+      try { if (req) req.abort(); } catch (e) {}
+      if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
+    };
+    try {
+      req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0' }, anonymous: true, timeout: 15000, responseType: 'arraybuffer',
+        onreadystatechange: (r) => { if (r && r.readyState === 2 && r.status) end('HTTP ' + r.status); },
+        onload: (r) => end('HTTP ' + ((r && r.status) || '?')), onerror: () => end('Netzwerkfehler'), ontimeout: () => end('Zeitüberschreitung') });
+    } catch (e) { end('nicht möglich'); }
+  }
+  function hdlDiagWatch(d) {
+    const tick = () => {
+      if (HDL_TERMINAL.indexOf(d.state) >= 0 || Date.now() - d.at > 15 * 60e3) { if (d.probe !== 'läuft') hdlDiagUrl.delete(d); return; }
+      if (document.hidden) { setTimeout(tick, 3000); return; }
+      helperDl('status', { id: d.id }).then((r) => {
+        if (r && r.ok && r.value && r.value.job) hdlDiagUpdate(r.value.job);
+        setTimeout(tick, 2000);
+      });
+    };
+    setTimeout(tick, 2000);
+  }
+  function hdlDiagText(d) {
+    if (!d) return '-';
+    return 'Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
+      ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
+      ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
+      ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') + (d.existing ? ' · Auftrag bestand schon' : '') +
+      (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '');
+  }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
   try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}
   // ---------- Laden über den Browser (für Server, die nur dem eingeloggten Browser etwas geben) ----------

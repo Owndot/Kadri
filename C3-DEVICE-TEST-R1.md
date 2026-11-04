@@ -24,7 +24,7 @@ Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner 
 | # | Ablauf | Erwartung / bitte melden |
 |---|---|---|
 | R1 | Mozilla-MP4 im Kadri-Player, auf der Zeitleiste ziehen | Vorschau ja/nein; danach Kadri-Menü → „Diagnose anzeigen“: Zeile **„Vorschau (…)“** abschreiben. In **Kadri-Einstellungen → Spul-Vorschau** den Wert in Test- *und* Produktionserweiterung nennen. Dasselbe Video einmal in der Produktionserweiterung prüfen. |
-| R2 | Öffentliche Testseite (Link im Bericht), Video im Kadri-Player öffnen, ⬇ | HLS läuft weiter; zwei Einträge „Mit der Helfer-App speichern · 360p / 180p“; Tipp auf 360p → eine Datei (ca. 309 KB), abspielbar |
+| R2 | Öffentliche Testseite (Link im Bericht), Video im Kadri-Player öffnen, ⬇ | HLS läuft weiter; zwei Einträge „Mit der Helfer-App speichern · 360p / 180p“; Tipp auf 360p → eine Datei (H.264, ca. 670 KB), abspielbar |
 | R3 | site-a: Video öffnen, im Kadri-Player abspielen lassen, ⬇ → Download starten | Ergebnis; nach dem Fehler Diagnose öffnen und **nur die Zeile „Helfer-Download: …“** abschreiben |
 | R4 | site-b: Video öffnen | angeboten ja/nein; Diagnose: Zeilen „Stream-Nachweis“ und „Helfer-Download“ (ohne Adressen) |
 | R5 | Bitmovin-Demo wie zuvor | Erwartet: kein Eintrag (MP4 steht dort nur in der Player-Konfiguration, siehe Bericht) |

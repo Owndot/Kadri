@@ -101,6 +101,8 @@ jobs:
         run: node --expose-gc tests/pip_lifecycle_check.js
       - name: No confidential site names in tracked files (hash-based, names not in the repository)
         run: node tests/confidential_names_check.js
+      - name: Downloadable MP4 fixtures are Android-playable (H.264 / VP9 profile 0, 8-bit 4:2:0)
+        run: node tests/media_fixture_check.js
 
 
   proxy-memory-regression:

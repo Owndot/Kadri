@@ -48,6 +48,8 @@ class M(http.server.BaseHTTPRequestHandler):
         # Vergleichsabruf der Diagnose (Browser ohne Cookies/Referer, nur 1 Byte): hier wie ein Server, der ohne Sitzung 404 gibt
         if browser and q.get('anon404') == '1' and (self.headers.get('Range') or '') == 'bytes=0-0' and not self.headers.get('Referer') and not self.headers.get('Cookie'):
             self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
+        if not browser and q.get('late404') == '1':   # Helfer bekommt 404 erst nach 4 s (Player ist dann schon zu)
+            time.sleep(4); self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
         if not browser and q.get('missing') in ('404', '410'):
             self.send_response(int(q['missing'])); self.send_header('Content-Length', '0'); self.end_headers(); return
         if q.get('auth') == '1' and 'sess=' not in (self.headers.get('Cookie') or ''):
@@ -327,6 +329,36 @@ with sync_playwright() as p:
     journal_after = sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"]')
     check('Schließen verändert weder Downloadjournal noch Fehlerursachen', journal_before == journal_after)
     pm.close()
+    # ---------- R3: Fehler erst nach dem Schließen des Players – Diagnose bleibt seitenweit erhalten ----------
+    player(pg, page('/videos/late404.mp4?late404=1&sig=SECRET-LATE&token=abc123def456ghi789jkl012'))
+    start_item(pg, '/videos/late404.mp4', 'spätes HTTP 404')
+    close_player(pg)
+    time.sleep(9)   # 4 s Server + Abfrage der Seite alle 2 s
+    def anon_diag():
+        sw.evaluate("""async () => { const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+          await chrome.tabs.sendMessage(t.id, { t: 'kadri-menu' }, { frameId: 0 }); }""")
+        pg.wait_for_function('() => !!%s.querySelector(".diag textarea")' % R, timeout=10000)
+        full = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)
+        pg.evaluate('() => %s.querySelector(".diag .danon").click()' % R); time.sleep(0.4)
+        anon = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)
+        pg.evaluate('() => { const b = %s.querySelector(".diag"); if (b) b.remove(); }' % R)
+        return full, anon
+    full, anon = anon_diag()
+    check('R3: Fehler nach Schließen des Players erscheint in der Diagnose (Helfer 404, Vergleich ohne Sitzung)',
+          'Grund http_404' in full and 'Browser ohne Cookies/Referer: HTTP 206' in full, re.findall(r'Helfer-Download:[^|]*', full))
+    check('Anonymisierte Diagnose: Zustand, Grundcode und Vergleich enthalten',
+          'anonymisierte Diagnose' in anon and 'Grund http_404' in anon and 'Browser ohne Cookies/Referer: HTTP 206' in anon and 'Player: geschlossen' in anon, anon)
+    leaks = re.findall(r'127\.0\.0\.1|8791|8790|https?:|/videos|late404|missing|\.mp4\b|SECRET|abc123|sig=|token=|Testclip|mp4\.html', anon)
+    check('Anonymisierte Diagnose: keine Hosts, Ports, Pfade, Abfragen, Token, Dateinamen oder Seitentitel', not leaks, leaks)
+    # mit offenem Player: Quellen anonymisiert (Art, Rolle, Bindung, Qualität), weiterhin ohne Adressteile
+    player(pg, page('/videos/pub.mp4?sig=SECRET-A'))
+    wait_item(pg, lambda it: any(l.startswith(ITEM) for l, _ in it)); close_menu(pg)
+    full2, anon2 = anon_diag()
+    leaks2 = re.findall(r'127\.0\.0\.1|8791|8790|https?:|/videos|pub\.mp4|\.mp4\b|SECRET|sig=|Testclip|mp4\.html', anon2)
+    check('Anonymisierte Diagnose mit offenem Player: Quellen als Art/Rolle/Bindung, ohne Adressteile',
+          'Player: offen' in anon2 and ' mp4:' in anon2 and 'Bindung bound(own-player-loaded)' in anon2 and not leaks2, [leaks2, anon2])
+    check('… die interne Diagnose enthält dagegen Adressteile (Kontrolle des Tests)', '127.0.0.1' in full2 or 'pub.mp4' in full2)
+    close_player(pg)
     # Server gibt die Datei auch dem Browser ohne Sitzung nicht: Diagnose zeigt das (technische Grenze, kein Ausweichweg)
     player(pg, page('/videos/anon404.mp4?missing=404&anon404=1'))
     start_item(pg, '/videos/anon404.mp4', 'HTTP 404 auch ohne Sitzung')

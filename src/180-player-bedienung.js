@@ -199,52 +199,28 @@
       !!(st.media.own && mediaRegistry.idOf(st.media.own, st.hdl.url)));
     const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
     const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
-    // Diagnose eines Helfer-Fehlers mit HTTP-Status (nie eine Adresse): Herkunft und Bindung der gestarteten Quelle, Alter
-    // der Beobachtung beim Start, Zeit bis zum Fehler und – einmal je Auftrag – ein Vergleich: derselbe Abruf aus dem
-    // Browser OHNE Cookies und OHNE Referer (nur 1 Byte, Kadris Hintergrund mit Netzschutz). Das zeigt, ob der Server
-    // die Datei ohne Sitzung überhaupt herausgibt. Kein Download, kein anderer Weg, nichts geht an den Helfer.
-    function hdlDiagStart(o, u, job) {
+    // Diagnose der Helfer-Downloads: Zustand liegt seitenweit in 080 (hdlDiags), hier nur die Angaben zur Quelle (ohne Adresse)
+    // Angaben zur Quelle beim Tipp festhalten (danach kann der Player schon zu sein)
+    function hdlDiagInfo(o) {
       let e = null;
       try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
       const first = e && e.provenance && e.provenance[0];
-      st.hdl.diag = {
-        id: job && job.id, at: Date.now(), u: u, probe: '', reason: '', failAfter: 0,
+      return {
         origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
         binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
+        kind: e ? e.kind : '?', role: e ? e.role : '?',
+        height: e && e.quality && e.quality.status !== 'unknown' && e.quality.value ? e.quality.value.height || 0 : 0,
         ageSec: first && first.observedAt ? Math.round((Date.now() - first.observedAt) / 1000) : -1,
         loaded: !!(e && e.browser === 'loaded'),
       };
     }
-    function hdlDiagFail(j) {
-      const d = st.hdl.diag;
-      if (!d || !j || d.id !== j.id || d.reason || j.state !== 'failed') return;
-      d.reason = String(j.reason || '');
-      d.failAfter = Math.round((Date.now() - d.at) / 1000);
-      try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {}   // (für Tests: Text ohne Adresse am Knopf im Shadow-DOM)
-      if (!/^http_\d{3}$/.test(d.reason)) { d.u = ''; return; }
-      const x = gmXhr(), u = d.u;
-      d.u = '';   // Adresse nur bis zu diesem einen Abruf im Speicher
-      if (!x || !u) { d.probe = 'nicht möglich'; return; }
-      d.probe = 'läuft';
-      let req = null, fin = false;
-      const end = (v) => { if (fin) return; fin = true; d.probe = v; try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {} try { if (req) req.abort(); } catch (e) {} };
-      try {
-        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0' }, anonymous: true, timeout: 15000, responseType: 'arraybuffer',
-          onreadystatechange: (r) => { if (r && r.readyState === 2 && r.status) end('HTTP ' + r.status); },
-          onload: (r) => end('HTTP ' + ((r && r.status) || '?')), onerror: () => end('Netzwerkfehler'), ontimeout: () => end('Zeitüberschreitung') });
-      } catch (e) { end('nicht möglich'); }
-    }
-    st.hdlDiagText = () => {
-      const d = st.hdl && st.hdl.diag;
-      if (!d) return '-';
-      return 'Grund ' + (d.reason || 'läuft/ok') + (d.reason ? ' nach ' + d.failAfter + ' s' : '') + ' · Herkunft ' + d.origin + ' · Bindung ' + d.binding +
-        ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') + ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') +
-        (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '');
-    };
+    st.hdlDiagText = () => hdlDiagText(hdlDiags[0]);
+    hdlDiagChanged = () => { if (vp === st) { try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {} } };
+    st.cleanup.push(() => { if (vp === st) hdlDiagChanged = null; });
     function hdlSet(j, quiet) {
       const before = st.hdl.job;
       st.hdl.job = j || null;
-      hdlDiagFail(j);
+      if (j) hdlDiagUpdate(j);
       bDl.classList.toggle('on', hdlActive(j));
       if (!quiet && j && before && before.id === j.id && before.state !== j.state && !hdlActive(j)) toast(j.label);
       if (menuOpen() && st.hdl.menu) dlMenu(false, true);   // offenes Menü zeigt den Stand live
@@ -302,6 +278,8 @@
           if (hdlPrimary() !== u) { drop('stale'); hdlProbe(); return; }
           if (!(f && f.ok)) { drop('unreachable'); return; }
           st.hdl.checked = u; st.hdl.url = u; drop('ok');
+          // laufender Auftrag zu dieser Datei (z. B. nach Neuöffnen des Players): Diagnose auch dafür, Quelle unbekannt
+          if (f.value && hdlActive(f.value) && !hdlDiagFor(f.value.id)) hdlDiagNew({ origin: '?', binding: '?', ageSec: -1, existing: true }, u, f.value);
           hdlSet(f.value && hdlActive(f.value) ? f.value : null, true);
         });
       });
@@ -316,13 +294,15 @@
       if (hdlActive(st.hdl.job) && st.hdl.url === u) { toast(hdlText(st.hdl.job)); return; }
       st.hdl.busy = true;
       toast('Helfer-App startet den Download …');
+      const info = hdlDiagInfo(o);
       helperDl('start', { url: u, name: (pageTitle() || 'Video').slice(0, 100) }).then((r) => {
         st.hdl.busy = false;
+        // Diagnose unabhängig vom Player: auch wenn er inzwischen zu oder ersetzt ist (Gerätetest R3)
+        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
         st.hdl.url = u;
-        if (!r.value.existing) hdlDiagStart(o, u, r.value.job);
         hdlSet(r.value.job, true);
         toast(r.value.existing ? tr('Läuft schon') + ': ' + hdlText(r.value.job) : (r.value.job.state === 'unconfirmed'
           ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – Fortschritt hier im Menü und in der Benachrichtigung'));
