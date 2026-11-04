@@ -4,12 +4,19 @@
 
 | | |
 |---|---|
-| Kadri-Quelle | `afe6d67cfb80e860683b5f6993c0e5266636fa2d` (Branch `feature/c3-helper-mp4`) |
+| Kadri-Quelle | `08d4d521fcf425c24eda141179050caa9a08626c` (Branch `feature/c3-helper-mp4`) |
 | Helper | unverändert `ca605408924644eeba6c29b4037dd90a324bb078` – vorhandene Test-APK `de.evp.helfer.channeltest` weiter benutzen |
-| Paket | Actions-Artefakt `kadri-c3-afe6d67-vivaldi-test` des Workflows „C3 isolated extension test package“ |
+| Paket | Actions-Artefakt `kadri-c3-08d4d52-vivaldi-test` des Workflows „C3 isolated extension test package“ |
 | Test-Erweiterungs-ID | `fhjmppadldgkhdgkdplpalmoooocoinn` (unverändert) |
 
 Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner ersetzen, „Neu laden“, nicht neu koppeln).
+
+## Nachtest nach R1–R5 (Paket `08d4d52`)
+
+- R2: Die Test-MP4s waren VP9 Profil 1 (RGB 4:4:4) – auf Android nicht abspielbar. Jetzt 360p H.264/AAC und 180p VP9
+  Profil 0. Die Testseite unter dem neuen Commit öffnen (Link im Bericht).
+- R3: Die Diagnose „Helfer-Download“ bleibt seitenweit erhalten (auch nach Schließen des Players). Neue Taste
+  **„Anonymisiert kopieren“** im Diagnosefenster: nur technische Zustände, keine Adressen, Titel oder Kennungen.
 
 ## Was sich gegenüber `6e9747c` ändert
 
