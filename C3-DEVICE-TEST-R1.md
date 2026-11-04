@@ -4,14 +4,14 @@
 
 | | |
 |---|---|
-| Kadri-Quelle | `bfdb3b41f74c4ab08159796bb03e034567fcd226` (Branch `feature/c3-helper-mp4`) |
+| Kadri-Quelle | `49949a70d22504cd38828c02e91dae7b013a7a16` (Branch `feature/c3-helper-mp4`) |
 | Helper | unverändert `ca605408924644eeba6c29b4037dd90a324bb078` – vorhandene Test-APK `de.evp.helfer.channeltest` weiter benutzen |
-| Paket | Actions-Artefakt `kadri-c3-bfdb3b4-vivaldi-test` des Workflows „C3 isolated extension test package“ |
+| Paket | Actions-Artefakt `kadri-c3-49949a7-vivaldi-test` des Workflows „C3 isolated extension test package“ |
 | Test-Erweiterungs-ID | `fhjmppadldgkhdgkdplpalmoooocoinn` (unverändert) |
 
 Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner ersetzen, „Neu laden“, nicht neu koppeln).
 
-## Nachtest 2 (R2-Fixture, R3-Eingrenzung; Paket `bfdb3b4`)
+## Nachtest 2 (R2-Fixture, R3-Eingrenzung; Paket `49949a7`)
 
 - R2: Alle MP4-Testdateien waren 12-s-Ausschnitte (ffprobe), der HLS-Stream der Seite läuft 60 s; der 180p-Datei fehlte
   die Tonspur. Die Testseite nennt jetzt zwei vollständige 60-s-Dateien (360p und 180p, H.264 Main + AAC, Bild + Ton
