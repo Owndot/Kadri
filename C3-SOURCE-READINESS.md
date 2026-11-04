@@ -13,7 +13,7 @@ This validates the selected player source, **not** whether the remote server wil
 ## Device evidence supplied by the user
 
 - First site's diagnosis includes four MP4 candidates from its own metadata endpoint, while the recorded opening had no confirmed own-player playback yet. This is consistent with the reproduced early-offer defect, but is not proof that it caused the reported 404. Expiry, request binding and a different server response remain unverified.
-- Eporner's current playback source is HLS. A metadata contentUrl and several network URLs have MP4 suffixes. Neither the suffix nor the metadata alone proves a complete, matching, independently downloadable file; network entries may belong to the stream. No candidate was silently substituted for the playing source.
+- site-b's current playback source is HLS. A metadata contentUrl and several network URLs have MP4 suffixes. Neither the suffix nor the metadata alone proves a complete, matching, independently downloadable file; network entries may belong to the stream. No candidate was silently substituted for the playing source.
 - Cinemar's supplied candidates are all HLS manifests, including paths containing `.mp4:hls:manifest.m3u8`. C3 still does not download HLS.
 
 The diagnostics were captured with the own player closed, so they do not establish the exact source and readiness at the download click. The device-specific cause of HTTP 404 is still to be confirmed. No full signed URL, cookie or authorization value is requested or stored.

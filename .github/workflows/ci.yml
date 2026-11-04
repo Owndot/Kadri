@@ -99,6 +99,8 @@ jobs:
         run: node tests/helper_route_check.js
       - name: PiP/background and overlapping cleanup regression
         run: node --expose-gc tests/pip_lifecycle_check.js
+      - name: No confidential site names in tracked files (hash-based, names not in the repository)
+        run: node tests/confidential_names_check.js
 
 
   proxy-memory-regression:

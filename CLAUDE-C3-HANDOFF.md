@@ -198,7 +198,7 @@ Die frühere Architekturidee eines separaten Helper-Metadatenprüfers ist eine m
 
 Keine Medien-Probe bei bloßer Erkennung oder Öffnen des Menüs. Der explizite Klick startet den geprüften Downloadversuch; Klick auf den allgemeinen Downloadknopf öffnet nur die Auswahl. Bestehende Browser-/YTDLnis-Wege dürfen nicht als automatischer Ausweichweg nach Helperfehler dienen. HTTP 401/403/404/410, `no_length`, `type`, `not_mp4`, TLS-/Adress-/Redirectfehler bleiben kontrollierte Fehler. Die URL wird nicht durch eine andere Qualität ersetzt. Eine spätere bewusste Auswahl einer anderen Quelle ist ein neuer Nutzerauftrag und muss noch offene Abbrüche/Idempotenz beachten.
 
-Auswahlgrund und Fehlerzustand verständlich anzeigen; HLS/DASH vor P4 als erkannt, derzeit nicht herunterladbar kennzeichnen. Keine falsche Zusicherung, der konkrete Pornhub-404 oder die Eporner-MP4 sei bereits gelöst. Der Gerätetest muss das erst zeigen.
+Auswahlgrund und Fehlerzustand verständlich anzeigen; HLS/DASH vor P4 als erkannt, derzeit nicht herunterladbar kennzeichnen. Keine falsche Zusicherung, der konkrete site-a-404 oder die site-b-MP4 sei bereits gelöst. Der Gerätetest muss das erst zeigen.
 
 ## 6. HLS-VOD: geprüfte Komponenten und separater Auftrag P4
 

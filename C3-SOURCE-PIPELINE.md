@@ -45,7 +45,7 @@ Stand `0cdf202` scheitert genau an „re-probe required after temporary unsuitab
   `verified` aus Seiten-/Element-/Adapterangaben wird abgelehnt.
 - **Bindung:** `bound` nur mit Beleg: `element-src`, `element-source` (`<source>`-Kinder desselben Elements),
   `segments-loaded` (Stücke genau dieses Streams geladen), `asset-id` (Facebook/Instagram), `adapter-variant-set` +
-  `single-video` (vorhandener Pornhub-Adapter nur bei einem Video), `own-player-loaded` (vom eigenen Player tatsächlich
+  `single-video` (vorhandener site-a-Adapter nur bei einem Video), `own-player-loaded` (vom eigenen Player tatsächlich
   geladene Datei, bisherige C3-Regel). Zeitpunkt/Vorschaubild = `ambiguous`, „zuletzt geladen“ = `unbound`,
   Seitennähe = `ambiguous`. Keine neue Site-Sonderlogik.
 - **Schema:** strikt; unbekannte Felder (z. B. Header, Cookie), Nicht-http(s), Zugangsdaten in der URL, > 4096 Zeichen,
@@ -84,7 +84,7 @@ keine Track-/Vollständigkeitsprüfung; es gibt keine „verifiziert“-Anzeige 
 | M09–M10, M14–M15 | Helper-Java-Tests (`tests/java/{net,dl}`), `channel_netguard_failure_check.js` | unverändert, Helper nicht geändert |
 | M11–M13, M16 | `test_mp4.py`, `popup_downloads_check.js` | Dreifachtipp, Abbruch, SW-/Browser-/Helper-Neustart, Popup |
 
-Externe Seiten (Pornhub-404, Eporner, Kinogo/cinemar) sind damit **nicht** als repariert belegt; nur Gerätetests zeigen
+Externe Seiten (site-a-404, site-b, Kinogo/cinemar) sind damit **nicht** als repariert belegt; nur Gerätetests zeigen
 das. Bekannte Grenzen: Ein `<source>`-Kind ist eine Angabe der Seite (untrusted) – gebunden an das Element, nicht
 inhaltlich geprüft; der Helfer prüft nur Typ/Signatur/Länge. Firefox/Userscript haben keinen Kanal und bieten nichts an.
 

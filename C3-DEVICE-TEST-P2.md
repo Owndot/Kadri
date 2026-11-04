@@ -29,7 +29,7 @@
 | D3 | Reine HLS-Seite (z. B. Kinogo/cinemar) | kein MP4-Eintrag; ggf. „Helfer-App: Stream erkannt“; kein Download startet |
 | D4 | Laufenden Download abbrechen; Vivaldi beenden und neu starten | „Abgebrochen“ bleibt; kein automatischer Neustart; Popup zeigt keine alte Erfolgshistorie |
 | D5 | Fehlschlag (z. B. Seite mit Anmeldung oder abgelaufene Adresse) | verständlicher Fehler (403/404/410 …), kein anderer Weg, Fehler im Popup einzeln schließbar |
-| D6 | Pornhub-/Eporner-Seite (optional) | Beobachtung melden: angeboten ja/nein, Ergebnis; **nicht** als repariert vorausgesetzt |
+| D6 | site-a-/site-b-Seite (optional) | Beobachtung melden: angeboten ja/nein, Ergebnis; **nicht** als repariert vorausgesetzt |
 | D7 | Danach Test-App stoppen, Produktions-App öffnen | Produktion unverändert nutzbar |
 
 Bitte zusätzlich: Dateigröße/Abspielbarkeit der gespeicherten Datei(en) und, falls möglich, deren SHA-256.

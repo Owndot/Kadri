@@ -23,7 +23,7 @@ Unabhängig reproduziert wurde eine Race in `src/180-player-bedienung.js:hdlProb
 
 Popup-Korrektur ist bereits implementiert: alte Erfolge unsichtbar, aktive Aufträge sichtbar, beobachteter Erfolg vier Sekunden, Fehler einzeln schließbar. UI-Schlüssel `kadri-download-dismissed-v1` ist vom Journal getrennt. Erhalte dies. `http_404`/`http_410` werden als „Datei nicht gefunden“ dargestellt und stammen von HTTP-Antworten, nicht von einer Prüfung lokal verschwundener Dateien. Der alte Screenshot ist nicht verfügbar; seine Einträge nicht nachträglich sicher diagnostizieren.
 
-Der Nutzer bestätigt zwei erfolgreiche Mozilla-MP4-Downloads auf Samsung. Kinogo/cinemar-Diagnosen zeigen HLS, keine bestätigte direkte MP4. Pornhub zeigt HLS plus MP4-Kandidaten, aber einen echten HTTP-404 beim Helper; Ursache nicht bewiesen. Eporner-MP4-Einträge können Metadaten, Segmente oder Init-Ressourcen sein. Dateiendung allein beweist kein Vollvideo. Reproduzierbare Fixtures sind die Abnahmebasis, öffentliche Seiten zusätzliche Gerätetests.
+Der Nutzer bestätigt zwei erfolgreiche Mozilla-MP4-Downloads auf Samsung. Kinogo/cinemar-Diagnosen zeigen HLS, keine bestätigte direkte MP4. site-a zeigt HLS plus MP4-Kandidaten, aber einen echten HTTP-404 beim Helper; Ursache nicht bewiesen. site-b-MP4-Einträge können Metadaten, Segmente oder Init-Ressourcen sein. Dateiendung allein beweist kein Vollvideo. Reproduzierbare Fixtures sind die Abnahmebasis, öffentliche Seiten zusätzliche Gerätetests.
 
 ## P0 – Testbasis stabilisieren, bevor die Architektur migriert wird
 
