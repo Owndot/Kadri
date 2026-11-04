@@ -199,9 +199,52 @@
       !!(st.media.own && mediaRegistry.idOf(st.media.own, st.hdl.url)));
     const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
     const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
+    // Diagnose eines Helfer-Fehlers mit HTTP-Status (nie eine Adresse): Herkunft und Bindung der gestarteten Quelle, Alter
+    // der Beobachtung beim Start, Zeit bis zum Fehler und – einmal je Auftrag – ein Vergleich: derselbe Abruf aus dem
+    // Browser OHNE Cookies und OHNE Referer (nur 1 Byte, Kadris Hintergrund mit Netzschutz). Das zeigt, ob der Server
+    // die Datei ohne Sitzung überhaupt herausgibt. Kein Download, kein anderer Weg, nichts geht an den Helfer.
+    function hdlDiagStart(o, u, job) {
+      let e = null;
+      try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
+      const first = e && e.provenance && e.provenance[0];
+      st.hdl.diag = {
+        id: job && job.id, at: Date.now(), u: u, probe: '', reason: '', failAfter: 0,
+        origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
+        binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
+        ageSec: first && first.observedAt ? Math.round((Date.now() - first.observedAt) / 1000) : -1,
+        loaded: !!(e && e.browser === 'loaded'),
+      };
+    }
+    function hdlDiagFail(j) {
+      const d = st.hdl.diag;
+      if (!d || !j || d.id !== j.id || d.reason || j.state !== 'failed') return;
+      d.reason = String(j.reason || '');
+      d.failAfter = Math.round((Date.now() - d.at) / 1000);
+      try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {}   // (für Tests: Text ohne Adresse am Knopf im Shadow-DOM)
+      if (!/^http_\d{3}$/.test(d.reason)) { d.u = ''; return; }
+      const x = gmXhr(), u = d.u;
+      d.u = '';   // Adresse nur bis zu diesem einen Abruf im Speicher
+      if (!x || !u) { d.probe = 'nicht möglich'; return; }
+      d.probe = 'läuft';
+      let req = null, fin = false;
+      const end = (v) => { if (fin) return; fin = true; d.probe = v; try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {} try { if (req) req.abort(); } catch (e) {} };
+      try {
+        req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0' }, anonymous: true, timeout: 15000, responseType: 'arraybuffer',
+          onreadystatechange: (r) => { if (r && r.readyState === 2 && r.status) end('HTTP ' + r.status); },
+          onload: (r) => end('HTTP ' + ((r && r.status) || '?')), onerror: () => end('Netzwerkfehler'), ontimeout: () => end('Zeitüberschreitung') });
+      } catch (e) { end('nicht möglich'); }
+    }
+    st.hdlDiagText = () => {
+      const d = st.hdl && st.hdl.diag;
+      if (!d) return '-';
+      return 'Grund ' + (d.reason || 'läuft/ok') + (d.reason ? ' nach ' + d.failAfter + ' s' : '') + ' · Herkunft ' + d.origin + ' · Bindung ' + d.binding +
+        ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') + ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') +
+        (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '');
+    };
     function hdlSet(j, quiet) {
       const before = st.hdl.job;
       st.hdl.job = j || null;
+      hdlDiagFail(j);
       bDl.classList.toggle('on', hdlActive(j));
       if (!quiet && j && before && before.id === j.id && before.state !== j.state && !hdlActive(j)) toast(j.label);
       if (menuOpen() && st.hdl.menu) dlMenu(false, true);   // offenes Menü zeigt den Stand live
@@ -279,6 +322,7 @@
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
         st.hdl.url = u;
+        if (!r.value.existing) hdlDiagStart(o, u, r.value.job);
         hdlSet(r.value.job, true);
         toast(r.value.existing ? tr('Läuft schon') + ': ' + hdlText(r.value.job) : (r.value.job.state === 'unconfirmed'
           ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – Fortschritt hier im Menü und in der Benachrichtigung'));

@@ -40,11 +40,14 @@ class M(http.server.BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
             self.wfile.write(body); return
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
-        MHITS.append({'path': u.path, 'query': u.query, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', '')})
+        MHITS.append({'path': u.path, 'query': u.query, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', ''), 'range': self.headers.get('Range', '')})
         gate = BROWSER_GATES.get(u.path) if browser else None
         if gate:
             gate[0].set()
             if not gate[1].wait(15): return
+        # Vergleichsabruf der Diagnose (Browser ohne Cookies/Referer, nur 1 Byte): hier wie ein Server, der ohne Sitzung 404 gibt
+        if browser and q.get('anon404') == '1' and (self.headers.get('Range') or '') == 'bytes=0-0' and not self.headers.get('Referer') and not self.headers.get('Cookie'):
+            self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
         if not browser and q.get('missing') in ('404', '410'):
             self.send_response(int(q['missing'])); self.send_header('Content-Length', '0'); self.end_headers(); return
         if q.get('auth') == '1' and 'sess=' not in (self.headers.get('Cookie') or ''):
@@ -155,6 +158,22 @@ with sync_playwright() as p:
     hh = helper_hits('/videos/pub.mp4')
     check('… genau eine Anfrage des Helfers, ohne Cookie, Authorization, Referer', len(hh) == 1 and not hh[0]['cookie'] and not hh[0]['auth'] and not hh[0]['ref'], hh)
     check('… Video läuft weiter', playing(pg))
+    # ---------- Seek-Vorschau (P0 Gerätetest D1): gekoppelt, fremde MP4, Modus „kleines Bild“ ----------
+    # Getrennt geprüft: Vorschaubild beim Ziehen (zweites Video, kein Sprung des Videos) und der Sprung nach dem Loslassen.
+    pg.evaluate('() => %s.querySelector(".vp").classList.add("ctl")' % R)
+    bx = pg.evaluate('() => { const b = %s.querySelector(".vbar").getBoundingClientRect(); return [b.left, b.top, b.width, b.height]; }' % R)
+    t_before = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    pg.mouse.move(bx[0] + bx[2] * 0.2, bx[1] + bx[3] / 2); pg.mouse.down()
+    for i in range(25):
+        pg.mouse.move(bx[0] + bx[2] * (0.2 + i * 0.024), bx[1] + bx[3] / 2); time.sleep(0.1)
+    time.sleep(0.8)
+    pv = pg.evaluate('''() => { const r = %s, p = r.querySelector(".vprev"), v = r.querySelector("video.vpv");
+      return { cls: p.className, n: +(p.dataset.n || 0), pvReady: v ? v.readyState : -1, pvErr: v && v.error ? v.error.code : 0 }; }''' % R)
+    check('Seek-Vorschau: beim Ziehen sichtbares Vorschaubild (kleines Bild, gekoppelter Helfer, fremde MP4)',
+          'on' in pv['cls'] and 'img' in pv['cls'] and 'noimg' not in pv['cls'] and pv['n'] > 0 and not pv['pvErr'], pv)
+    pg.mouse.up(); time.sleep(1.0)
+    t_after = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
+    check('… Spulen selbst: nach dem Loslassen springt das Video (getrennt von der Vorschau)', abs(t_after - t_before) > 2, [t_before, t_after])
     close_player(pg)
 
     # ---------- sichtbare Seiten-Brücke ist noch keine geladene eigene MP4 ----------
@@ -274,10 +293,24 @@ with sync_playwright() as p:
 
 
     # ---------- echte 404/410: verständlich, einzeln ausblendbar; Journal bleibt unangetastet ----------
+    def hdl_diag(pg, want, secs=15):
+        end = time.time() + secs; d = ''
+        while time.time() < end:
+            d = pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").dataset.hdlDiag || ""' % R)
+            if want in d: return d
+            time.sleep(0.3)
+        return d
     for code in (404, 410):
         player(pg, page('/videos/missing%d.mp4?missing=%d' % (code, code)))
         start_item(pg, '/videos/missing%d.mp4' % code, 'HTTP %d' % code)
         check('HTTP %d: Datei nicht gefunden' % code, wait_toast(pg, 'Datei nicht gefunden', 15), toasts(pg))
+        d = hdl_diag(pg, 'Browser ohne Cookies/Referer: HTTP')
+        check('HTTP %d: Diagnose trennt Helfer- und Browserantwort (Helfer %d, Browser ohne Sitzung 206)' % (code, code),
+              ('Grund http_%d' % code) in d and 'Browser ohne Cookies/Referer: HTTP 206' in d and 'Bindung bound:own-player-loaded' in d, d)
+        probe = [x for x in MHITS if x['path'] == '/videos/missing%d.mp4' % code and x['browser'] and x['range'] == 'bytes=0-0']
+        check('HTTP %d: Vergleichsabruf genau einmal, ohne Cookie und Referer (Seite hatte ein Sitzungs-Cookie)' % code,
+              len(probe) == 1 and not probe[0]['cookie'] and not probe[0]['ref'] and not probe[0]['auth'], probe)
+        check('HTTP %d: Diagnose ohne Adresse' % code, not re.search(r'http:|127\.0\.0\.1|missing|\.mp4', d), d)
         close_player(pg)
     pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
     missing = pm.locator('#downloads .dl[data-state=failed]').filter(has_text='Datei nicht gefunden')
@@ -294,6 +327,13 @@ with sync_playwright() as p:
     journal_after = sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"]')
     check('Schließen verändert weder Downloadjournal noch Fehlerursachen', journal_before == journal_after)
     pm.close()
+    # Server gibt die Datei auch dem Browser ohne Sitzung nicht: Diagnose zeigt das (technische Grenze, kein Ausweichweg)
+    player(pg, page('/videos/anon404.mp4?missing=404&anon404=1'))
+    start_item(pg, '/videos/anon404.mp4', 'HTTP 404 auch ohne Sitzung')
+    d = hdl_diag(pg, 'Browser ohne Cookies/Referer: HTTP')
+    check('Ohne Sitzung auch im Browser 404: Diagnose zeigt es', 'Grund http_404' in d and 'Browser ohne Cookies/Referer: HTTP 404' in d, d)
+    check('… danach kein weiterer Abruf des Helfers', len(helper_hits('/videos/anon404.mp4')) == 1)
+    close_player(pg)
 
     # ---------- Cross-Origin-iframe: der tatsächliche eigene Player liefert die C3-Quelle ----------
     outer = 'http://127.0.0.1:8791/c3-iframe.html'
