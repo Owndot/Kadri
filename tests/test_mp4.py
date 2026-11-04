@@ -39,6 +39,14 @@ class M(http.server.BaseHTTPRequestHandler):
                     '<source src="http://127.0.0.1:8791/videos/ad.mp4" type="video/mp4" size="1080"></video>').encode()
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body))); self.end_headers()
             self.wfile.write(body); return
+        # Öffentliche Gerätetestseite unverändert aus dem Repository (Seite, hls.js, HLS-Material, 60-s-MP4): hier, weil der
+        # Desktop-Harness des Helfers nur diesen Testport erlaubt
+        static = None
+        if u.path.startswith(('/public/', '/hls/')) or u.path == '/hls.min.js':
+            fp = os.path.normpath(os.path.join(WEB, u.path.lstrip('/')))
+            if not fp.startswith(WEB + os.sep) or not os.path.isfile(fp):
+                self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
+            static = open(fp, 'rb').read()
         browser = bool(self.headers.get('Sec-Fetch-Mode'))
         MHITS.append({'path': u.path, 'query': u.query, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''), 'ref': self.headers.get('Referer', ''), 'range': self.headers.get('Range', '')})
         gate = BROWSER_GATES.get(u.path) if browser else None
@@ -54,15 +62,18 @@ class M(http.server.BaseHTTPRequestHandler):
             self.send_response(int(q['missing'])); self.send_header('Content-Length', '0'); self.end_headers(); return
         if q.get('auth') == '1' and 'sess=' not in (self.headers.get('Cookie') or ''):
             self.send_response(403); self.send_header('Content-Length', '0'); self.end_headers(); return
-        start, end, code = 0, len(CLIP) - 1, 200
+        data = CLIP if static is None else static
+        ctype = 'video/mp4' if static is None else {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.m3u8': 'application/vnd.apple.mpegurl',
+                                                    '.mp4': 'video/mp4', '.m4s': 'video/iso.segment'}.get(os.path.splitext(u.path)[1], 'application/octet-stream')
+        start, end, code = 0, len(data) - 1, 200
         m = re.match(r'bytes=(\d*)-(\d*)$', self.headers.get('Range') or '')
-        if m: start = int(m.group(1) or 0); end = min(int(m.group(2)) if m.group(2) else len(CLIP) - 1, len(CLIP) - 1); code = 206
+        if m: start = int(m.group(1) or 0); end = min(int(m.group(2)) if m.group(2) else len(data) - 1, len(data) - 1); code = 206
         self.send_response(code)
-        self.send_header('Content-Type', 'video/mp4'); self.send_header('Content-Length', str(end - start + 1)); self.send_header('ETag', '"kadri-clip-v1"')
+        self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(end - start + 1)); self.send_header('ETag', '"kadri-clip-v1"' if static is None else '"kadri-static-%d"' % len(data))
         self.send_header('Accept-Ranges', 'bytes'); self.send_header('Cache-Control', 'no-store'); self.send_header('Access-Control-Allow-Origin', '*')
-        if code == 206: self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, len(CLIP)))
+        if code == 206: self.send_header('Content-Range', 'bytes %d-%d/%d' % (start, end, len(data)))
         self.end_headers()
-        body = CLIP[start:end + 1]; rate = 0 if browser else int(q.get('rate', '0'))
+        body = data[start:end + 1]; rate = 0 if browser else int(q.get('rate', '0'))
         try:
             if not rate: self.wfile.write(body); return
             step = max(1024, rate // 10)
@@ -149,6 +160,7 @@ with sync_playwright() as p:
     player(pg, page('/videos/pub.mp4?sig=SECRET-A'))
     items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
     check('gekoppelt: Eintrag „%s“ im Download-Menü' % ITEM, any(l == ITEM for l, _ in items), items)
+    check('… Unterzeile „diese Wiedergabe“ (genau diese Datei hat der Browser im Player geladen)', any(l == ITEM and 'diese Wiedergabe' in sub for l, sub in items), items)
     pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").click()' % R); time.sleep(0.5)
     menu_items = pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).map(b => b.firstChild.textContent)' % R)
     check('Tipp auf ⬇ öffnet nur die Auswahl – kein automatischer Download', ITEM in menu_items and not helper_hits('/videos/pub.mp4'), menu_items)
@@ -313,6 +325,8 @@ with sync_playwright() as p:
         check('HTTP %d: Vergleichsabruf genau einmal, ohne Cookie und Referer (Seite hatte ein Sitzungs-Cookie)' % code,
               len(probe) == 1 and not probe[0]['cookie'] and not probe[0]['ref'] and not probe[0]['auth'], probe)
         check('HTTP %d: Diagnose ohne Adresse' % code, not re.search(r'http:|127\.0\.0\.1|missing|\.mp4', d), d)
+        check('HTTP %d: Diagnose belegt die Browser-Wiedergabe genau dieser Datei (dekodiertes Bild, Höhe beobachtet)' % code,
+              'Identität diese Wiedergabe' in d and 'Höhe observed' in d and re.search(r'Wiedergabe beim Start: Bild 640x360 dekodiert, Bereitschaft [234]', d), d)
         close_player(pg)
     pm = ctx.new_page(); pm.goto('chrome-extension://%s/popup.html' % ext_id)
     missing = pm.locator('#downloads .dl[data-state=failed]').filter(has_text='Datei nicht gefunden')
@@ -346,6 +360,8 @@ with sync_playwright() as p:
     full, anon = anon_diag()
     check('R3: Fehler nach Schließen des Players erscheint in der Diagnose (Helfer 404, Vergleich ohne Sitzung)',
           'Grund http_404' in full and 'Browser ohne Cookies/Referer: HTTP 206' in full, re.findall(r'Helfer-Download:[^|]*', full))
+    check('R3: Wiedergabe-Beleg vom Start bleibt; Nachbeobachtung bei geschlossenem Player: nicht prüfbar',
+          'Wiedergabe beim Start: Bild 640x360 dekodiert' in full and 'nach dem Fehler: Player zu oder anderes Medium' in full, re.findall(r'Helfer-Download:[^|]*', full))
     check('Anonymisierte Diagnose: Zustand, Grundcode und Vergleich enthalten',
           'anonymisierte Diagnose' in anon and 'Grund http_404' in anon and 'Browser ohne Cookies/Referer: HTTP 206' in anon and 'Player: geschlossen' in anon, anon)
     leaks = re.findall(r'127\.0\.0\.1|8791|8790|https?:|/videos|late404|missing|\.mp4\b|SECRET|abc123|sig=|token=|Testclip|mp4\.html', anon)
@@ -364,6 +380,20 @@ with sync_playwright() as p:
     start_item(pg, '/videos/anon404.mp4', 'HTTP 404 auch ohne Sitzung')
     d = hdl_diag(pg, 'Browser ohne Cookies/Referer: HTTP')
     check('Ohne Sitzung auch im Browser 404: Diagnose zeigt es', 'Grund http_404' in d and 'Browser ohne Cookies/Referer: HTTP 404' in d, d)
+    # R3: Wie site-a – Browser-Wiedergabe lief, Helfer und Abruf ohne Sitzung 404. Nach 20 s: passiver Blick auf dieselbe
+    # Wiedergabe (kein weiterer Abruf durch Kadri), mit einem der festen Ergebnisse.
+    n_before = len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['range'] == 'bytes=0-0'])
+    d = hdl_diag(pg, 'nach dem Fehler: ', 5)
+    d2 = ''
+    end = time.time() + 30
+    while time.time() < end:
+        d2 = pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").dataset.hdlDiag || ""' % R)
+        if 'nach dem Fehler: ' in d2 and 'wird 20 s beobachtet' not in d2: break
+        time.sleep(0.5)
+    check('R3: Ergebnis der passiven Nachbeobachtung (Browser lud weiter / keine neuen Daten / Medienfehler)',
+          re.search(r'nach dem Fehler: (Browser lud danach weiter|keine neuen Daten|Browser-Medienfehler)', d2), [d, d2])
+    check('… Nachbeobachtung ohne zusätzlichen Abruf (kein Helfer-, kein Vergleichsabruf)',
+          len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['range'] == 'bytes=0-0']) == n_before)
     check('… danach kein weiterer Abruf des Helfers', len(helper_hits('/videos/anon404.mp4')) == 1)
     close_player(pg)
 
@@ -420,6 +450,7 @@ with sync_playwright() as p:
     offers = [sub for l, sub in items if l == ITEM]
     check('Bei laufendem HLS: genau die zwei gebundenen MP4 angeboten (720p, 360p)', len(offers) == 2 and '720p' in offers[0] and '360p' in offers[1], items)
     check('… Init des Streams (als <source type=video/mp4>), JSON-LD-MP4 und Quelle eines anderen Videos nicht angeboten', not any('1080p' in x or '480p' in x for x in offers), offers)
+    check('… beide als „laut Seite, Länge/Inhalt ungeprüft“ – nicht als die laufende Wiedergabe ausgegeben', all('laut Seite, Länge/Inhalt ungeprüft' in x and 'diese Wiedergabe' not in x for x in offers), offers)
     check('… Menü öffnen lädt nichts (kein Helfer- oder Browserabruf der MP4)', not [x for x in MHITS if x['path'] in alt], [x['path'] for x in MHITS if x['path'] in alt])
     close_menu(pg)
     t0 = pg.evaluate('() => %s.querySelector(".vv").currentTime' % R)
@@ -443,6 +474,27 @@ with sync_playwright() as p:
     check('… Tipp auf den alten Eintrag: verweigert mit Hinweis, kein Start', ok and wait_toast(pg, 'Quelle hat sich geändert', 5) and not helper_hits('/videos/alt360.mp4'), toasts(pg))
     items = dl_menu(pg); close_menu(pg)
     check('… danach keine Geister-Einträge aus dem alten Medium', not any(l == ITEM and '360p' in sub for l, sub in items), items)
+    close_player(pg)
+
+    # ---------- R2-Nachtest: öffentliche Gerätetestseite mit vollständigen 60-s-MP4 und dem echten Helfer ----------
+    pub_sizes = {h: os.path.getsize(os.path.join(WEB, 'public', 'clip-%d-h264.mp4' % h)) for h in (360, 180)}
+    player(pg, 'http://127.0.0.1:8791/public/c3-hls-mp4.html')
+    src0 = pg.evaluate('() => %s.querySelector(".vv").currentSrc.slice(0, 5)' % R)
+    check('Testseite: eigener Player spielt den HLS-Stream', src0 == 'blob:' and playing(pg), src0)
+    items = wait_item(pg, lambda it: len([1 for l, _ in it if l == ITEM]) >= 2); close_menu(pg)
+    offers = [sub for l, sub in items if l == ITEM]
+    check('Testseite: zwei Einträge 360p und 180p, beide „laut Seite“', len(offers) == 2 and '360p' in offers[0] and '180p' in offers[1] and
+          all('laut Seite' in x for x in offers), items)
+    for h in (360, 180):
+        dl_menu(pg); ok = pick_sub(pg, ITEM, '%dp' % h)
+        check('Testseite: Tipp auf %dp ausgeführt' % h, ok, '' if ok else player_diag(pg))
+        end = time.time() + 40
+        while time.time() < end and not any(f.endswith(':%d' % pub_sizes[h]) for f in files(helper)): time.sleep(0.5)
+        check('… %dp vollständig beim Helfer (%d Bytes = 60-s-Testdatei)' % (h, pub_sizes[h]), any(f.endswith(':%d' % pub_sizes[h]) for f in files(helper)), [files(helper), toasts(pg)[-3:], pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").dataset.hdlDiag || ""' % R)])
+        check('… %dp: Auftrag abgeschlossen (Zustand done)' % h, 'Zustand done' in hdl_diag(pg, 'Zustand done', 20))
+        hh = helper_hits('/public/clip-%d-h264.mp4' % h)
+        check('… %dp: genau ein Helfer-Abruf, ohne Cookie, Authorization, Referer' % h, len(hh) == 1 and not hh[0]['cookie'] and not hh[0]['auth'] and not hh[0]['ref'], hh)
+    check('Testseite: HLS läuft währenddessen weiter', playing(pg))
     close_player(pg)
 
     # M03: Hauptframe ohne Video; HLS-Seite im Cross-Origin-iframe, daneben ein Werbe-iframe mit eigener MP4

@@ -201,11 +201,21 @@
     const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
     // Diagnose der Helfer-Downloads: Zustand liegt seitenweit in 080 (hdlDiags), hier nur die Angaben zur Quelle (ohne Adresse)
     // Angaben zur Quelle beim Tipp festhalten (danach kann der Player schon zu sein)
-    function hdlDiagInfo(o) {
+    // Zustand der eigenen Wiedergabe genau dieser Adresse (nur Zahlen; null = Player zu, anderes Medium oder MSE)
+    const ranges = (r) => { let t = 0; try { for (let i = 0; i < r.length; i++) t += r.end(i) - r.start(i); } catch (e) {} return Math.round(t); };
+    function hdlPlaySample(u) {
+      if (vp !== st || !vid || vid.srcObject) return null;
+      try { if (!u || vid.currentSrc !== new URL(u).href) return null; } catch (e) { return null; }
+      return { rs: vid.readyState, w: vid.videoWidth || 0, h: vid.videoHeight || 0, buf: ranges(vid.buffered), played: ranges(vid.played),
+        err: vid.error ? vid.error.code : 0, paused: !!vid.paused };
+    }
+    function hdlDiagInfo(o, u) {
       let e = null;
       try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
       const first = e && e.provenance && e.provenance[0];
+      const play = o.ctx === st.media.own ? hdlPlaySample(u) : null;
       return {
+        identity: o.identity || '?', qstate: e && e.quality ? e.quality.status : '?', play: play,
         origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
         binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
         kind: e ? e.kind : '?', role: e ? e.role : '?',
@@ -294,11 +304,13 @@
       if (hdlActive(st.hdl.job) && st.hdl.url === u) { toast(hdlText(st.hdl.job)); return; }
       st.hdl.busy = true;
       toast('Helfer-App startet den Download …');
-      const info = hdlDiagInfo(o);
+      const info = hdlDiagInfo(o, u);
+      // Nur für die eigene Wiedergabe: nach einem Fehler einmal nachsehen, ob der Browser dieselbe Adresse weiter lädt
+      const local = info.play ? () => hdlPlaySample(u) : null;
       helperDl('start', { url: u, name: (pageTitle() || 'Video').slice(0, 100) }).then((r) => {
         st.hdl.busy = false;
         // Diagnose unabhängig vom Player: auch wenn er inzwischen zu oder ersetzt ist (Gerätetest R3)
-        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job);
+        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, local);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
@@ -351,8 +363,10 @@
           if (j.state !== 'cancelling') items.push({ label: 'Download abbrechen', sub: 'Helfer-App hört sofort auf und löscht die Teil-Datei', fn: hdlCancel });
         } else {
           // je auswählbare MP4 ein Eintrag (beste bekannte Qualität zuerst); keine Qualitätsangabe = unbekannt
+          // Ist der Eintrag nachweislich das gesehene Video oder nur von der Seite zugeordnet? (siehe selectDownloads)
           can.slice(0, 4).forEach((o) => items.push({ label: 'Mit der Helfer-App speichern',
-            sub: 'direkt aufs Handy · ohne Anmeldung der Seite' + (o.height ? ' · ' + o.height + 'p' : ''), fn: () => hdlStart(o) }));
+            sub: tr('direkt aufs Handy · ohne Anmeldung der Seite') + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' +
+              tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => hdlStart(o) }));
         }
       } else if (st.hdl.ok) {
         // erkannt, aber (noch) nicht über die Helfer-App: verständlich sagen warum – ohne Adresse

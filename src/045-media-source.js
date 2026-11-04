@@ -98,6 +98,10 @@
   }
   // Auswahl für das Download-Menü: nur MP4-Einträge, beste bekannte Höhe zuerst. caps: { supported, active }.
   // Reine Funktion über einem Snapshot – kein Netzabruf, keine Medien-Probe.
+  // identity trennt belegte Gleichheit von bloßer Zuordnung (Gerätetest R2: eine am Element genannte MP4 hatte 12 s, der
+  // laufende Stream 60 s): 'played' = genau diese Datei hat der Browser in diesem Player geladen und Bilder daraus gezeigt
+  // (browser: loaded) – sie IST das gesehene Video; 'declared' = die Seite ordnet sie dem Video zu (<source>, src,
+  // Seitendaten, Adapter), Inhalt und Länge sind nicht geprüft. Kein Abruf, um das zu klären.
   function selectDownloads(snapshot, caps) {
     const out = [];
     (snapshot || []).forEach((s, i) => {
@@ -106,7 +110,8 @@
       if (d.state === 'attemptable' && !(caps && caps.supported)) d = { state: 'unavailable', reason: 'helper-unavailable' };
       if (d.state === 'attemptable' && caps && caps.active === s.sourceId) d = { state: 'active', reason: null };
       const h = s.quality.status !== 'unknown' && s.quality.value.height ? s.quality.value.height : 0;
-      out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, height: h, quality: s.quality.status, i: i });
+      out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, height: h, quality: s.quality.status,
+        identity: s.browser === 'loaded' ? 'played' : 'declared', i: i });
     });
     out.sort((a, b) => (b.height - a.height) || (a.i - b.i));
     out.forEach((x) => { delete x.i; });

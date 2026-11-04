@@ -11,6 +11,19 @@
 
 Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner ersetzen, „Neu laden“, nicht neu koppeln).
 
+## Nachtest 2 (R2-Fixture, R3-Eingrenzung)
+
+- R2: Alle MP4-Testdateien waren 12-s-Ausschnitte (ffprobe), der HLS-Stream der Seite läuft 60 s; der 180p-Datei fehlte
+  die Tonspur. Die Testseite nennt jetzt zwei vollständige 60-s-Dateien (360p und 180p, H.264 Main + AAC, Bild + Ton
+  wie HLS). CI prüft Dauer, Spuren und Bildinhalt gegen das HLS-Material (`tests/media_fixture_check.js`,
+  `tests/media_fixture_match.py`).
+- Download-Menü: Einträge, die nur die Seite dem Video zuordnet (`<source>`, Seitendaten), heißen jetzt
+  „laut Seite, Länge/Inhalt ungeprüft“; nur die Datei, die der Browser im Kadri-Player tatsächlich geladen hat, heißt
+  „diese Wiedergabe“. Kein zusätzlicher Abruf.
+- R3: Die Zeile „Helfer-Download“ nennt zusätzlich „Identität“, die Herkunft der Höhe (observed = aus dem dekodierten
+  Bild), den Zustand der eigenen Wiedergabe beim Start (Bildgröße, Bereitschaft, gepufferte/gespielte Sekunden) und
+  20 s nach dem Fehler, ob der Browser dieselbe Datei ohne Fehler weiter lädt (nur Hinweis, kein zusätzlicher Abruf).
+
 ## Nachtest nach R1–R5 (Paket `08d4d52`)
 
 - R2: Die Test-MP4s waren VP9 Profil 1 (RGB 4:4:4) – auf Android nicht abspielbar. Jetzt 360p H.264/AAC und 180p VP9
@@ -31,7 +44,7 @@ Vorbereitung wie in `C3-DEVICE-TEST-P2.md` (Produktions-App stoppen, Testordner 
 | # | Ablauf | Erwartung / bitte melden |
 |---|---|---|
 | R1 | Mozilla-MP4 im Kadri-Player, auf der Zeitleiste ziehen | Vorschau ja/nein; danach Kadri-Menü → „Diagnose anzeigen“: Zeile **„Vorschau (…)“** abschreiben. In **Kadri-Einstellungen → Spul-Vorschau** den Wert in Test- *und* Produktionserweiterung nennen. Dasselbe Video einmal in der Produktionserweiterung prüfen. |
-| R2 | Öffentliche Testseite (Link im Bericht), Video im Kadri-Player öffnen, ⬇ | HLS läuft weiter; zwei Einträge „Mit der Helfer-App speichern · 360p / 180p“; Tipp auf 360p → eine Datei (H.264, ca. 670 KB), abspielbar |
+| R2 | Öffentliche Testseite (Link im Bericht), Video im Kadri-Player öffnen, ⬇ | HLS läuft weiter; zwei Einträge „Mit der Helfer-App speichern · 360p / 180p · laut Seite …“; 360p → 1 176 524 Byte, 180p → 753 098 Byte, je 60 s mit Ton, abspielbar |
 | R3 | site-a: Video öffnen, im Kadri-Player abspielen lassen, ⬇ → Download starten | Ergebnis; nach dem Fehler Diagnose öffnen und **nur die Zeile „Helfer-Download: …“** abschreiben |
 | R4 | site-b: Video öffnen | angeboten ja/nein; Diagnose: Zeilen „Stream-Nachweis“ und „Helfer-Download“ (ohne Adressen) |
 | R5 | Bitmovin-Demo wie zuvor | Erwartet: kein Eintrag (MP4 steht dort nur in der Player-Konfiguration, siehe Bericht) |

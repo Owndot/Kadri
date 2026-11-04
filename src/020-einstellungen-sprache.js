@@ -199,6 +199,8 @@
     'Helfer-App: Verbindung fehlgeschlagen': 'Helper app: connection failed',
     'Mit der Helfer-App speichern': 'Save with the helper app',
     'direkt aufs Handy · ohne Anmeldung der Seite': 'straight to the phone · without the site login',
+    'diese Wiedergabe': 'this playback',
+    'laut Seite, Länge/Inhalt ungeprüft': 'per page, length/content unverified',
     'Download abbrechen': 'Cancel download',
     'Helfer-App hört sofort auf und löscht die Teil-Datei': 'the helper app stops at once and deletes the partial file',
     'Stand wird abgefragt': 'checking status',

@@ -87,6 +87,12 @@ function verify(modelText, regText) {
   ok(opts.every((o) => snap.find((s) => s.sourceId === o.sourceId).kind === 'mp4'), 'download options are MP4 only');
   eq(A.selectDownloads(snap, { supported: false }).filter((o) => o.state === 'attemptable').length, 0, 'no helper: nothing attemptable');
   eq(A.selectDownloads(snap, { supported: true, active: r1.sourceId }).find((o) => o.sourceId === r1.sourceId).state, 'active', 'active job marked');
+  // R2-Nachtest: am Element genannt ≠ belegt dasselbe Video. Nur was der Browser in diesem Player geladen hat, gilt als
+  // „diese Wiedergabe“; alles andere bleibt „laut Seite“ (Länge/Inhalt ungeprüft) – ohne zusätzlichen Abruf.
+  eq(opts.find((o) => o.sourceId === r1.sourceId).identity, 'declared', 'element-declared MP4 is not claimed to be the played video');
+  const pl = reg.observe(ctx, obs('https://cdn.example/played.mp4', { browser: 'loaded', provenance: { kind: 'player', origin: 'own-player' },
+    association: { state: 'bound', evidence: ['own-player-loaded'] } }));
+  eq(A.selectDownloads(reg.snapshot(ctx), { supported: true }).find((o) => o.sourceId === pl.sourceId).identity, 'played', 'browser-loaded MP4 is this playback');
   // ---------- merge never downgrades evidence; knowledge never jumps ----------
   const b2 = reg.observe(ctx, obs(signed, { association: { state: 'unbound', evidence: [] }, provenance: { kind: 'network', origin: 'recent' } }));
   eq([b2.sourceId, reg.snapshot(ctx).find((s) => s.sourceId === r1.sourceId).association.state], [r1.sourceId, 'bound'], 'same URL in same player merges; binding kept');

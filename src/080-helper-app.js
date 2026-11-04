@@ -22,9 +22,10 @@
   const hdlDiags = [];   // jüngste zuerst, höchstens 4
   let hdlDiagChanged = null;   // (der offene Player zeigt den Stand am Download-Knopf, für Tests)
   const hdlDiagUrl = new WeakMap();
+  const hdlDiagLocal = new WeakMap();   // Blick auf die eigene Wiedergabe derselben Adresse (nur Zahlen, einmal nach dem Fehler)
   const HDL_TERMINAL = ['done', 'failed', 'cancelled', 'interrupted'];
   function hdlDiagFor(id) { return hdlDiags.find((d) => d.id === id) || null; }
-  function hdlDiagNew(info, url, job) {
+  function hdlDiagNew(info, url, job, local) {
     if (!job || !job.id) return null;
     let d = hdlDiagFor(job.id);
     if (!d) {
@@ -32,6 +33,7 @@
       hdlDiags.unshift(d);
       while (hdlDiags.length > 4) hdlDiags.pop();
       if (url) hdlDiagUrl.set(d, url);
+      if (typeof local === 'function') hdlDiagLocal.set(d, local);
       hdlDiagWatch(d);
     }
     hdlDiagUpdate(job);
@@ -45,6 +47,7 @@
       d.reason = String(job.reason || '');
       d.failAfter = Math.round((Date.now() - d.at) / 1000);
       if (/^http_\d{3}$/.test(d.reason)) hdlDiagProbe(d);
+      hdlDiagAfter(d);
     }
     if (HDL_TERMINAL.indexOf(d.state) >= 0 && d.probe !== 'läuft') hdlDiagUrl.delete(d);
     if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
@@ -66,6 +69,25 @@
         onload: (r) => end('HTTP ' + ((r && r.status) || '?')), onerror: () => end('Netzwerkfehler'), ontimeout: () => end('Zeitüberschreitung') });
     } catch (e) { end('nicht möglich'); }
   }
+  // Nach einem Fehler: Lädt der Browser im eigenen Player DIESELBE Adresse ohne Fehler weiter? Kein zusätzlicher Abruf –
+  // nur gepufferte Sekunden und Fehlercode des Videoelements, jetzt und 20 s später. Hinweis, kein Beweis (der Browser
+  // kann Vorgeladenes nachreichen); sagt nichts über Cookies vs. Referer.
+  function hdlDiagAfter(d) {
+    const f = hdlDiagLocal.get(d);
+    hdlDiagLocal.delete(d);
+    if (!f) return;
+    const a = f();
+    if (!a) { d.after = 'Player zu oder anderes Medium – nicht prüfbar'; return; }
+    d.after = 'wird 20 s beobachtet';
+    setTimeout(() => {
+      const b = f();
+      d.after = !b ? 'Player zu oder anderes Medium – nicht prüfbar'
+        : b.err ? 'Browser-Medienfehler ' + b.err
+        : b.buf > a.buf ? 'Browser lud danach weiter (+' + (b.buf - a.buf) + ' s gepuffert, kein Fehler)'
+        : 'keine neuen Daten (' + (b.paused ? 'pausiert' : 'evtl. schon vollständig gepuffert') + ') – nicht aussagekräftig';
+      if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
+    }, 20000);
+  }
   function hdlDiagWatch(d) {
     const tick = () => {
       if (HDL_TERMINAL.indexOf(d.state) >= 0 || Date.now() - d.at > 15 * 60e3) { if (d.probe !== 'läuft') hdlDiagUrl.delete(d); return; }
@@ -82,8 +104,12 @@
     return 'Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
       ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
       ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
+      ' · Identität ' + (d.identity === 'played' ? 'diese Wiedergabe' : d.identity === 'declared' ? 'laut Seite' : '?') +
+      (d.height ? ' · Höhe ' + (d.qstate || '?') : '') +
+      (d.play ? ' · Wiedergabe beim Start: Bild ' + d.play.w + 'x' + d.play.h + ' dekodiert, Bereitschaft ' + d.play.rs +
+        ', gepuffert ' + d.play.buf + ' s, gespielt ' + d.play.played + ' s' + (d.play.err ? ', Medienfehler ' + d.play.err : '') : '') +
       ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') + (d.existing ? ' · Auftrag bestand schon' : '') +
-      (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '');
+      (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '') + (d.after ? ' · nach dem Fehler: ' + d.after : '');
   }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
   try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}

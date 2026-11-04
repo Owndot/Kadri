@@ -129,6 +129,9 @@ Absturz-Wiederherstellung) ist in C2 auf Emulatoren API 26 und 34 geprüft und i
 Das Testvideo `tests/web/clip.mp4` ist eigenes Material (aus `tests/web/clip.webm` neu kodiert: VP9 in MP4, 12 s,
 ohne Ton, `ffmpeg -c:v libvpx-vp9 -b:v 300k -an -movflags +faststart -t 12`), weil Playwright-Chromium kein H.264
 abspielt. Keine echten Medien-URLs, Cookies oder Zugangsdaten.
+Die öffentliche Gerätetestseite `tests/web/public/c3-hls-mp4.html` nennt dagegen zwei vollständige 60-s-Fassungen des
+HLS-Clips (360p/180p, H.264 Main + AAC, aus `clip.webm`); `tests/media_fixture_check.js` und
+`tests/media_fixture_match.py` prüfen Dauer, Spuren und Bildinhalt gegen das HLS-Material.
 
 ## 7. Im Helfer gefunden und behoben (C3-Branch, nicht am C2-PR)
 
