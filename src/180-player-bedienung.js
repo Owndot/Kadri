@@ -152,7 +152,7 @@
       try { if (vid.currentSrc !== new URL(d).href) return ''; } catch (e) { return ''; }
       return !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : '';
     };
-    st.hdl = { ok: false, probed: '', gen: 0, job: null, url: '', busy: false, timer: 0 };
+    st.hdl = { ok: false, checked: '', pending: null, gen: 0, job: null, url: '', busy: false, timer: 0 };
     const hdlShown = () => !!(st.hdl.ok && hdlUrl());
     const hdlActive = (j) => !!j && ['starting', 'unconfirmed', 'running', 'cancelling'].indexOf(j.state) >= 0;
     const hdlText = (j) => tr(j.label) + (j.progress ? ' · ' + j.progress : '');
@@ -185,24 +185,36 @@
     onVisChange(onHdlVis);
     st.cleanup.push(() => { hdlStop(); offVisChange(onHdlVis); });
     // Kann der gekoppelte Helfer das? Und läuft für diese Datei schon ein Auftrag (z. B. nach Neustart des Browsers)?
+    // Drei getrennte Dinge: pending = die laufende Prüfung (Adresse + Generation), checked = die Adresse, für die
+    // caps und find vollständig beantwortet sind, gen = Zähler. Eine veraltete Antwort (anderer Player, neuere
+    // Prüfung, Quelle inzwischen ungeeignet oder eine andere) wird verworfen, OHNE die spätere Prüfung derselben
+    // Adresse zu sperren. Neu geprüft wird nur auf einen Anlass (Laden, Sprung fertig, Quellwechsel) – keine
+    // Schleife, keine Wiederholung von selbst und kein Medienabruf (caps/find fragen nur den Helfer).
     // Zustand der Prüfung am Download-Knopf (im geschlossenen Shadow-DOM; nur Zustand und Zähler, nie eine Adresse) –
     // für die Diagnose der Tests, wenn ein erwarteter Eintrag fehlt.
     const hdlMark = (s) => { try { bDl.dataset.hdl = s; bDl.dataset.hdlGen = String(st.hdl.gen); } catch (e) {} };
     function hdlProbe() {
       const u = hdlUrl();
-      if (!u || st.hdl.probed === u || typeof KADRI_DOWNLOAD !== 'function') return;
-      st.hdl.probed = u;
-      st.hdl.gen = (st.hdl.gen || 0) + 1; hdlMark('pending');
+      if (!u || st.hdl.checked === u || (st.hdl.pending && st.hdl.pending.u === u) || typeof KADRI_DOWNLOAD !== 'function') return;
+      const gen = ++st.hdl.gen;
+      st.hdl.pending = { u, gen };
+      hdlMark('pending');
+      const current = () => vp === st && !!st.hdl.pending && st.hdl.pending.gen === gen;
+      const drop = (why) => { st.hdl.pending = null; hdlMark(why); };
       helperDl('caps').then((r) => {
-        if (vp !== st) return;
-        if (hdlUrl() !== u) { hdlMark('stale'); return; }
-        st.hdl.ok = !!(r && r.ok && r.value && r.value.supported);
-        hdlMark(st.hdl.ok ? 'ok' : (r && r.ok && r.value && r.value.reachable) ? 'unsupported' : 'unreachable');
-        if (!st.hdl.ok) return;
+        if (!current()) return;
+        if (hdlUrl() !== u) { drop('stale'); hdlProbe(); return; }   // (eine jetzt geeignete andere Quelle gleich prüfen)
+        const v = r && r.ok && r.value;
+        st.hdl.ok = !!(v && v.supported);
+        if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
+        if (!st.hdl.ok) { st.hdl.checked = u; drop('unsupported'); return; }
+        hdlMark('find');
         st.refreshDl();
         helperDl('find', { url: u }).then((f) => {
-          if (vp !== st || hdlUrl() !== u || !(f && f.ok)) return;
-          st.hdl.url = u;
+          if (!current()) return;
+          if (hdlUrl() !== u) { drop('stale'); hdlProbe(); return; }
+          if (!(f && f.ok)) { drop('unreachable'); return; }
+          st.hdl.checked = u; st.hdl.url = u; drop('ok');
           hdlSet(f.value && hdlActive(f.value) ? f.value : null, true);
         });
       });
@@ -364,5 +376,8 @@
     // Instagram: MP4 mit Ton schon vorab holen, damit "In App öffnen" sofort klappt (nur eine kleine Datenabfrage)
     if (IG) igVideoUrl(orig).then((x) => { if (x) { st.igUrl = x; st.refreshDl(); } }, () => {});
     vid.addEventListener('loadeddata', () => { if (vp === st) st.refreshDl(); });
+    // Wieder geeignet nach einem Sprung/Puffern (z. B. springt die Brücke beim Öffnen): danach kommt kein loadeddata
+    // mehr. hdlProbe tut nichts, wenn die Quelle schon geprüft ist oder gerade geprüft wird.
+    ['canplay', 'seeked'].forEach((ev) => vid.addEventListener(ev, () => { if (vp === st) hdlProbe(); }));
     st.refreshDl();
 
