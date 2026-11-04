@@ -204,10 +204,12 @@
     // Zustand der eigenen Wiedergabe genau dieser Adresse (nur Zahlen; null = Player zu, anderes Medium oder MSE)
     const ranges = (r) => { let t = 0; try { for (let i = 0; i < r.length; i++) t += r.end(i) - r.start(i); } catch (e) {} return Math.round(t); };
     function hdlPlaySample(u) {
-      if (vp !== st || !vid || vid.srcObject) return null;
-      try { if (!u || vid.currentSrc !== new URL(u).href) return null; } catch (e) { return null; }
-      return { rs: vid.readyState, w: vid.videoWidth || 0, h: vid.videoHeight || 0, buf: ranges(vid.buffered), played: ranges(vid.played),
-        err: vid.error ? vid.error.code : 0, paused: !!vid.paused };
+      const el = vid;   // (eigener Name: die Freigabeprüfung oben bleibt in den Mutationsproben eindeutig)
+      if (vp !== st || !el || el.srcObject) return null;
+      try { if (!u || el.currentSrc !== new URL(u).href) return null; } catch (e) { return null; }
+      const me = el.error;
+      return { rs: el.readyState, w: el.videoWidth || 0, h: el.videoHeight || 0, buf: ranges(el.buffered), played: ranges(el.played),
+        err: me ? me.code : 0, paused: !!el.paused };
     }
     function hdlDiagInfo(o, u) {
       let e = null;
