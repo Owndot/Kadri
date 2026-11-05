@@ -30,7 +30,9 @@
   // ein Download-Start) kommen NICHT in diese Liste.
   // dlstatus/dlcancel ändern beim zweiten Mal nichts (Abfrage bzw. Abbruch derselben Kennung). dlstart NICHT: ob ein
   // Start wiederholt wird, entscheidet die Download-Verwaltung (channel-downloads.js) mit derselben Kennung.
-  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright', 'dlstatus', 'dlcancel']);
+  // hlsplan (P4b) legt nur einen kurzlebigen Plan beim Helfer an (keine Wirkung auf dem Gerät): wiederholbar. hlsstart
+  // NICHT – wie dlstart entscheidet die Download-Verwaltung (mit derselben Kennung).
+  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright', 'dlstatus', 'dlcancel', 'hlsplan']);
   const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);
 
   // Steuerbefehl → Record-Inhalt, genau in der Form, die der Helfer annimmt (ControlCommands.java): nur "op" und "v",
@@ -51,7 +53,41 @@
   const DL_ID = /^[0-9a-f]{32}$/;
   const DL_URL = /^https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
   const DL_NAME_BAD = /[\\"\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+  // P4b: HLS. bind = {player, gen, rev} aus Kadris Quellen-Registry (Player-Kennung, Medien-Epoche, Revision der Quelle).
+  const HLS_PLAYER = /^[A-Za-z0-9_-]{1,64}$/;
+  const HLS_PLAN = /^[0-9a-f]{32}$/, HLS_OPTION = /^[0-9a-f]{24}$/;
+  const hlsInt = (x) => Number.isSafeInteger(x) && x >= 0 && x <= 999999999;
+  function hlsBind(b) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+    const k = Object.keys(b);
+    if (k.length !== 3 || !k.every((x) => x === 'player' || x === 'gen' || x === 'rev')) return null;
+    if (typeof b.player !== 'string' || !HLS_PLAYER.test(b.player) || !hlsInt(b.gen) || !hlsInt(b.rev)) return null;
+    return { player: b.player, gen: b.gen, rev: b.rev };
+  }
+  function hlsMessage(op, a) {
+    if (!a || typeof a !== 'object') return null;
+    const keys = Object.keys(a);
+    const bind = hlsBind(a.bind);
+    if (!bind) return null;
+    if (op === 'hlsplan') {
+      if (!keys.every((k) => k === 'url' || k === 'bind')) return null;
+      const url = typeof a.url === 'string' ? a.url : '';
+      if (!url || url.length > 2048 || !DL_URL.test(url)) return null;   // (wie bei dlstart)
+      return { op, v: 1, url, bind };
+    }
+    if (!keys.every((k) => k === 'id' || k === 'planId' || k === 'option' || k === 'bind' || k === 'name')) return null;
+    if (typeof a.id !== 'string' || !DL_ID.test(a.id) || typeof a.planId !== 'string' || !HLS_PLAN.test(a.planId) ||
+        typeof a.option !== 'string' || !HLS_OPTION.test(a.option)) return null;
+    const m = { op, v: 1, id: a.id, planId: a.planId, option: a.option, bind };
+    if (a.name !== undefined) {
+      const name = typeof a.name === 'string' ? a.name : null;
+      if (name === null || name.length > 120 || DL_NAME_BAD.test(name)) return null;
+      m.name = name;
+    }
+    return m;
+  }
   function downloadMessage(op, a) {
+    if (op === 'hlsplan' || op === 'hlsstart') return hlsMessage(op, a);
     if (!a || typeof a !== 'object' || typeof a.id !== 'string' || !DL_ID.test(a.id)) return null;
     const keys = Object.keys(a);
     if (op === 'dlstatus' || op === 'dlcancel') return keys.every((k) => k === 'id') ? { op, id: a.id } : null;
@@ -273,5 +309,6 @@
   NS.createChannel = createChannel;
   NS.controlMessage = controlMessage;
   NS.downloadMessage = downloadMessage;
+  NS.hlsBindValid = (b) => !!hlsBind(b);
   NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);

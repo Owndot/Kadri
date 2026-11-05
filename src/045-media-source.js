@@ -117,3 +117,31 @@
     out.forEach((x) => { delete x.i; });
     return out;
   }
+  // ---------- P4b: HLS-Streams über die Helfer-App ----------
+  // Speicherbar (Versuch) ist eine HLS-Liste (Haupt- oder Medienliste), die an genau dieses Video gebunden und nicht als
+  // verschlüsselt bekannt ist. Ob sie wirklich ein unterstütztes VOD-Profil ist (H.264/AAC, TS/fMP4, ohne AES/DRM, nicht
+  // live), prüft erst der Helfer streng beim Plan (hlsplan) – hier kein Abruf. DASH nur erkannt, nie angeboten.
+  function mediaStreamState(s) {
+    if (s.kind === 'dash') return { state: 'unavailable', reason: 'dash-not-supported' };
+    if (s.kind !== 'hls') return { state: 'unavailable', reason: 'not-a-stream' };
+    if (s.role !== 'master' && s.role !== 'media-playlist' && s.role !== 'unknown') return { state: 'unavailable', reason: 'not-standalone' };
+    if (['encrypted', 'drm'].indexOf(s.protection) >= 0) return { state: 'unavailable', reason: 'protected' };
+    if (s.association.state === 'bound') return { state: 'attemptable', reason: null };
+    return { state: 'candidate', reason: s.association.state === 'ambiguous' ? 'ambiguous' : 'not-bound' };
+  }
+  // Auswahl „Stream speichern …“: gebundene Haupt-/Medienlisten; Hauptliste vor Medienliste, die gerade gespielte zuerst.
+  function selectStreams(snapshot, caps) {
+    const out = [];
+    (snapshot || []).forEach((s, i) => {
+      if (s.kind !== 'hls') return;
+      let d = mediaStreamState(s);
+      if (d.state === 'attemptable' && !(caps && caps.hls)) d = { state: 'unavailable', reason: 'helper-unavailable' };
+      out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, role: s.role,
+        identity: s.browser === 'loaded' ? 'played' : 'declared', i: i });
+    });
+    const rank = (x) => (x.identity === 'played' ? 0 : 2) + (x.role === 'master' ? 0 : 1);
+    out.sort((a, b) => (rank(a) - rank(b)) || (a.i - b.i));
+    out.forEach((x) => { delete x.i; });
+    return out;
+  }
+

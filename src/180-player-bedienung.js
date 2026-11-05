@@ -152,7 +152,7 @@
       try { if (vid.currentSrc !== new URL(d).href) return ''; } catch (e) { return ''; }
       return !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : '';
     };
-    st.hdl = { ok: false, checked: '', pending: null, gen: 0, job: null, url: '', busy: false, timer: 0 };
+    st.hdl = { ok: false, hls: false, checked: '', pending: null, gen: 0, job: null, url: '', busy: false, timer: 0 };
     // ---------- Downloadauswahl aus dem gemeinsamen Quellenbestand (P2) ----------
     // Angeboten wird jede MP4, die nach den Belegen eigenständig, an dieses Video gebunden und auswählbar ist – unabhängig
     // davon, was der Player gerade spielt (HLS läuft weiter, nichts wird umgeschaltet). Zwei Herkünfte: (1) die vom eigenen
@@ -184,16 +184,46 @@
       return out;
     }
     const hdlAttemptable = (refresh) => hdlOptions(refresh).filter((o) => o.state === 'attemptable');
+    // ---------- P4b: HLS-Streams über die Helfer-App ----------
+    // Angeboten werden an dieses Video gebundene HLS-Listen: die vom eigenen Player tatsächlich gespielte (hls.js hat
+    // Bilder daraus gezeigt) und vom Originalvideo belegte. Erst der Tipp auf „Stream speichern …“ fragt den Helfer nach
+    // einem Plan (hlsplan: er lädt und prüft die Listen selbst); erst der Tipp auf eine Option startet (hlsstart).
+    function hlsOwnObserve() {
+      const u = st.cur, el = vid;   // (eigener Name: die Freigabeprüfung der MP4 oben bleibt in den Mutationsproben eindeutig)
+      if (!st.hls || !u || !/^https?:/i.test(u) || !/\.m3u8(\?|#|$)/i.test(u) || el.readyState < 2 || el.error) return '';
+      const c = mediaRegistry.contextFor(vid);
+      st.media.own = c;
+      const r = mediaRegistry.observe(c, { url: u, kind: 'hls', provenance: { kind: 'player', origin: 'own-player' },
+        association: { state: 'bound', evidence: ['own-player-loaded'] }, browser: 'loaded' });
+      return r.ok ? r.sourceId : '';
+    }
+    function hlsOptions(caps) {
+      const out = [];
+      const own = hlsOwnObserve();
+      if (own && st.media.own) selectStreams(mediaRegistry.snapshot(st.media.own), caps).forEach((o) => { if (o.sourceId === own) out.push(Object.assign({ ctx: st.media.own }, o)); });
+      if (st.media.orig) {
+        const dup = own && st.cur ? mediaRegistry.idOf(st.media.orig, st.cur) : '';
+        selectStreams(mediaRegistry.snapshot(st.media.orig), caps).forEach((o) => { if (o.sourceId !== dup) out.push(Object.assign({ ctx: st.media.orig }, o)); });
+      }
+      return out;
+    }
+    const hlsAttemptable = (assume) => hlsOptions({ hls: assume || st.hdl.hls }).filter((o) => o.state === 'attemptable');
     // Adresse, für die geprüft wird (caps/find): die geladene eigene Datei, sonst die erste auswählbare Alternative
     function hdlPrimary() {
       const u = hdlUrl();
       if (u) return u;
       const o = hdlAttemptable(false)[0];
-      if (!o) return '';
-      const r = mediaRegistry.resolveSelection(o.ctx, o.sourceId, o.revision);
+      if (o) {
+        const r = mediaRegistry.resolveSelection(o.ctx, o.sourceId, o.revision);
+        return r.ok ? r.url : '';
+      }
+      // sonst ein speicherbarer Stream (P4b): caps sagen dann, ob der Helfer HLS kann; find findet einen laufenden Auftrag
+      const h = hlsAttemptable(true)[0];
+      if (!h) return '';
+      const r = mediaRegistry.resolveStream(h.ctx, h.sourceId, h.revision);
       return r.ok ? r.url : '';
     }
-    const hdlShown = () => !!(st.hdl.ok && hdlAttemptable(false).length);
+    const hdlShown = () => !!(st.hdl.ok && (hdlAttemptable(false).length || (st.hdl.hls && hlsAttemptable(false).length)));
     // Gehört der laufende Auftrag zu diesem Player (eine seiner bekannten Quellen)?
     const hdlJobHere = () => !!st.hdl.url && (st.hdl.url === hdlUrl() || !!(st.media.orig && mediaRegistry.idOf(st.media.orig, st.hdl.url)) ||
       !!(st.media.own && mediaRegistry.idOf(st.media.own, st.hdl.url)));
@@ -281,6 +311,7 @@
         if (hdlPrimary() !== u) { drop('stale'); hdlProbe(); return; }   // (eine jetzt geeignete andere Quelle gleich prüfen)
         const v = r && r.ok && r.value;
         st.hdl.ok = !!(v && v.supported);
+        st.hdl.hls = !!(v && v.supported && v.hls);   // P4b: nur ein Helfer, der HLS meldet (alte: nie)
         if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
         if (!st.hdl.ok) { st.hdl.checked = u; drop('unsupported'); return; }
         hdlMark('find');
@@ -322,6 +353,51 @@
           ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – Fortschritt hier im Menü und in der Benachrichtigung'));
       });
     }
+    // P4b: Plan holen (Tipp auf „Stream speichern …“) und die Optionen zeigen; nichts startet von selbst.
+    const hlsOptLabel = (x) => (x.height ? x.height + 'p' : tr('Qualität unbekannt')) + ' · ' +
+      (x.audio === 'muxed' ? tr('Ton im Stream') : tr('Ton') + ': ' + (x.audio.name || x.audio.lang || tr('eigene Spur')));
+    function hlsPlanMenu(o) {
+      if (!o || st.hdl.busy) return;
+      const sel = mediaRegistry.resolveStream(o.ctx, o.sourceId, o.revision);
+      if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut auswählen'); return; }
+      st.hdl.busy = true;
+      toast('Helfer-App prüft den Stream …');
+      helperDl('hlsplan', { url: sel.url, bind: sel.bind }).then((r) => {
+        st.hdl.busy = false;
+        if (vp !== st) return;
+        if (!r) { toast('Helfer-App nicht erreichbar'); return; }
+        if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
+        const p = r.value;
+        if (p.job && hdlActive(p.job)) { st.hdl.url = sel.url; hdlSet(p.job, true); toast(tr('Läuft schon') + ': ' + hdlText(p.job)); return; }
+        const resume = p.job && p.job.state === 'interrupted' ? p.job : null;
+        const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
+        const items = p.options.slice(0, 12).map((x) => ({
+          label: (resume ? tr('Fortsetzen') + ': ' : '') + hlsOptLabel(x),
+          sub: dur + (x.bandwidth ? Math.round(x.bandwidth / 1000) + ' kbit/s · ' : '') +
+            tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft') + (x.codecs === 'ok' ? '' : ' · ' + tr('Format wird beim Laden geprüft')),
+          fn: () => hlsGo(sel.url, p.planId, x, resume, o) }));
+        openMenu(resume ? 'Stream fortsetzen' : 'Stream speichern', items);
+      });
+    }
+    function hlsGo(u, planId, x, resume, o) {
+      if (st.hdl.busy) return;
+      st.hdl.busy = true;
+      toast(resume ? 'Helfer-App setzt den Download fort …' : 'Helfer-App startet den Download …');
+      const info = Object.assign(hdlDiagInfo(o, u), { stream: true });
+      const op = resume ? 'hlsresume' : 'hlsstart';
+      const args = resume ? { id: resume.id, planId, option: x.id } : { planId, option: x.id, name: (pageTitle() || 'Video').slice(0, 100) };
+      helperDl(op, args).then((r) => {
+        st.hdl.busy = false;
+        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), null, r.value.job, null);
+        if (vp !== st) return;
+        if (!r) { toast('Helfer-App nicht erreichbar'); return; }
+        if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
+        st.hdl.url = u;
+        hdlSet(r.value.job, true);
+        toast(r.value.job.state === 'unconfirmed' ? 'Verbindung unterbrochen – Stand wird geprüft'
+          : 'Helfer-App lädt den Stream – Fortschritt hier im Menü und in der Benachrichtigung');
+      });
+    }
     function hdlCancel() {
       const j = st.hdl.job;
       if (!hdlActive(j)) return;
@@ -357,8 +433,10 @@
       st.hdl.menu = false;
       const opts = st.hdl.ok ? hdlOptions(!keep) : [];
       const can = opts.filter((o) => o.state === 'attemptable');
+      const sOpts = st.hdl.ok ? hlsOptions({ hls: st.hdl.hls }) : [];
+      const streams = sOpts.filter((o) => o.state === 'attemptable');
       const j = hdlActive(st.hdl.job) && hdlJobHere() ? st.hdl.job : null;
-      if (j || can.length) {
+      if (j || can.length || streams.length) {
         st.hdl.menu = true;
         if (j) {
           items.push({ label: 'Helfer-App: ' + tr(j.label), sub: j.progress || 'Stand wird abgefragt', stay: true, fn: () => {} });
@@ -369,10 +447,16 @@
           can.slice(0, 4).forEach((o) => items.push({ label: 'Mit der Helfer-App speichern',
             sub: tr('direkt aufs Handy · ohne Anmeldung der Seite') + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' +
               tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => hdlStart(o) }));
+          // P4b: Streams – erst Plan (Qualität/Ton wählen), dann Start; je Stream ein Eintrag, die gespielte zuerst
+          streams.slice(0, 2).forEach((o) => items.push({ label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
+              tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => hlsPlanMenu(o) }));
         }
       } else if (st.hdl.ok) {
-        // erkannt, aber (noch) nicht über die Helfer-App: verständlich sagen warum – ohne Adresse
-        if (st.hls || PLAYLIST_RE.test(st.cur || '')) items.push({ label: 'Helfer-App: Stream erkannt', sub: 'HLS/DASH speichert die Helfer-App noch nicht', stay: true, fn: () => {} });
+        // erkannt, aber nicht über die Helfer-App: verständlich sagen warum – ohne Adresse
+        if (/\.mpd(\?|#|$)/i.test(st.cur || '') || sOpts.some((o) => o.reason === 'dash-not-supported')) items.push({ label: 'Helfer-App: DASH-Stream erkannt', sub: 'DASH speichert die Helfer-App nicht', stay: true, fn: () => {} });
+        else if ((st.hls || PLAYLIST_RE.test(st.cur || '')) && !st.hdl.hls) items.push({ label: 'Helfer-App: Stream erkannt', sub: 'Diese Helfer-App-Version speichert keine Streams', stay: true, fn: () => {} });
+        else if (sOpts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: Stream nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
+        else if (sOpts.some((o) => o.reason === 'protected')) items.push({ label: 'Helfer-App: Stream geschützt', sub: 'verschlüsselt (DRM/AES) – nicht speicherbar', stay: true, fn: () => {} });
         else if (opts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: MP4 nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
       }
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });

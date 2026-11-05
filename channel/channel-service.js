@@ -51,7 +51,7 @@
   }).catch((e) => { saltP = null; throw e; }));
   const hex = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, '0')).join('');
   const downloads = NS.createDownloads({
-    channel: { download: (op, a) => ready().then((c) => c.download(op, a)) },
+    channel: { download: (op, a) => ready().then((c) => c.download(op, a)), status: () => ready().then((c) => c.command('status')) },
     storage: { get: () => local.get('kadri-dl-jobs').then((o) => o['kadri-dl-jobs']), set: (v) => local.set({ 'kadri-dl-jobs': v }) },
     digest: async (url) => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode((await salt()) + '\n' + url)))),
     random: () => hex(crypto.getRandomValues(new Uint8Array(16))),
@@ -66,11 +66,19 @@
     cancel: { keys: ['id'], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: (m) => downloads.cancel(m.id) },
     caps: { keys: [], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: () => downloads.capabilities() },
     list: { keys: [], ok: (s) => isPage(s, 'popup.html'), run: () => downloads.list() },
+    // P4b: HLS-Streams – nur aus Kadris Inhaltsskript und nur nach Tipp (Plan, Start, Fortsetzen)
+    hlsplan: { keys: ['url', 'bind'], ok: (s) => fromTab(s), run: (m) => downloads.hlsPlan(m.url, m.bind) },
+    hlsstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.hlsStart(m.planId, m.option, m.name) },
+    hlsresume: { keys: ['id', 'planId', 'option'], ok: (s) => fromTab(s), run: (m) => downloads.hlsResume(m.id, m.planId, m.option) },
   };
+  const HEX = (n) => new RegExp('^[0-9a-f]{' + n + '}$');
   const dlValid = (m, d) => Object.keys(m).every((k) => k === 't' || k === 'op' || d.keys.includes(k)) &&
     (!d.keys.includes('id') || (typeof m.id === 'string' && ID.test(m.id))) &&
     (!d.keys.includes('url') || (typeof m.url === 'string' && m.url.length <= 4096)) &&
-    (m.name === undefined || (typeof m.name === 'string' && m.name.length <= 400));
+    (m.name === undefined || (typeof m.name === 'string' && m.name.length <= 400)) &&
+    (!d.keys.includes('planId') || (typeof m.planId === 'string' && HEX(32).test(m.planId))) &&
+    (!d.keys.includes('option') || (typeof m.option === 'string' && HEX(24).test(m.option))) &&
+    (!d.keys.includes('bind') || NS.hlsBindValid(m.bind));
 
   const own = (sender) => !!sender && sender.id === api.runtime.id;
   const pageOf = (sender) => (sender && typeof sender.url === 'string' ? sender.url.split(/[?#]/)[0] : '');
@@ -96,7 +104,11 @@
         if (value && value.job) text(value.job); else if (Array.isArray(value)) value.forEach(text); else if (value && value.id) text(value);
         if (value && value.error) value.message = NS.downloadErrorText(value.error);
         reply({ ok: true, value });
-      }, (e) => { const kind = (e && e.kind) || 'error'; reply({ ok: false, error: { kind, message: NS.downloadErrorText(kind) } }); });
+      }, (e) => {
+        const kind = (e && e.kind) || 'error';
+        const reason = e && typeof e.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(e.reason) ? e.reason : '';
+        reply({ ok: false, error: Object.assign({ kind, message: reason ? NS.downloadReasonText(reason) : NS.downloadErrorText(kind) }, reason ? { reason } : {}) });
+      });
       return true;
     }
     if (m.t === 'kadri-helper') {

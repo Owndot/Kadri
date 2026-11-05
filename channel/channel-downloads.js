@@ -45,6 +45,9 @@
   // storage: { get(): Promise<array|undefined>, set(array): Promise } · digest(text): Promise<hex> · random(): hex(32)
   function createDownloads({ channel, storage, digest, random, now = () => Date.now() }) {
     const pending = new Map();   // id → URL, nur solange der Start unbestätigt ist (nie gespeichert)
+    // P4b: Pläne des Helfers (hlsplan), nur im Arbeitsspeicher: planId → { key, url, bind, options, at }. Die URL bleibt
+    // hier, solange der Plan gilt (10 min), damit ein abgelaufener Plan einmal neu erstellt werden kann – nie gespeichert.
+    const plans = new Map();
     let chain = Promise.resolve();
     const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
     let caps = null;
@@ -63,11 +66,18 @@
       }
       await storage.set(jobs);
     }
-    const view = (j) => ({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at });
+    const view = (j) => Object.assign({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at },
+      j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {});
 
     // Antwort des Helfers in den Auftrag übernehmen (nur bekannte Felder und Werte).
     function apply(j, r) {
       if (r.ok === false) {
+        if (r.state === 'rejected') {   // P4b hlsstart: Plan abgelaufen/fremd, Option unbekannt, Kennung schon vergeben
+          const e = new Error('plan-rejected');
+          e.kind = 'plan-rejected';
+          e.reason = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason) ? r.reason : 'rejected';
+          throw e;
+        }
         const e = new Error(r.state === 'busy' ? 'helper-busy' : 'unsupported');
         e.kind = r.state === 'busy' ? 'helper-busy' : 'unsupported';
         throw e;
@@ -80,6 +90,13 @@
       j.bytes = Number.isSafeInteger(r.bytes) && r.bytes >= 0 ? r.bytes : j.bytes;
       j.total = Number.isSafeInteger(r.total) ? r.total : j.total;
       j.reason = typeof r.reason === 'string' && /^[a-z0-9_]{0,40}$/.test(r.reason) ? r.reason : '';
+      if (r.kind === 'hls' || j.kind === 'hls') {
+        if (r.kind !== 'hls') { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }   // nie die Art wechseln
+        j.kind = 'hls';
+        j.done = Number.isSafeInteger(r.done) && r.done >= 0 ? r.done : j.done || 0;
+        j.of = Number.isSafeInteger(r.of) && r.of >= 0 ? r.of : j.of || 0;
+        j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
+      }
       j.seen = now();
       if (j.state !== 'starting' && j.state !== 'unconfirmed') pending.delete(j.id);
       return r.state;
@@ -194,6 +211,126 @@
 
     const list = () => serial(async () => (await load()).map(view));
 
+    // ---------------------------------------------------------------- P4b: HLS-Streams
+    const HEX24 = /^[0-9a-f]{24}$/, HEX32 = /^[0-9a-f]{32}$/;
+    const cleanText = (x, max) => (typeof x === 'string' ? x.replace(/[^A-Za-z0-9 _-]/g, '').slice(0, max) : '');
+    // Antwort auf hlsplan streng übernehmen: nur bekannte Felder, Zahlen begrenzt, Texte bereinigt; nie eine Adresse.
+    function planOf(r) {
+      if (!r || r.ok !== true || typeof r.planId !== 'string' || !HEX32.test(r.planId) || !Array.isArray(r.options) ||
+          !r.options.length || r.options.length > 64) return null;
+      const opts = [];
+      for (const o of r.options) {
+        if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !HEX24.test(o.id)) return null;
+        const n = (x) => (Number.isSafeInteger(x) && x >= 0 && x <= 1e9 ? x : 0);
+        const audio = o.audio === 'muxed' ? 'muxed' : (o.audio && typeof o.audio === 'object' ? { lang: cleanText(o.audio.lang, 16), name: cleanText(o.audio.name, 32) } : null);
+        if (!audio) return null;
+        opts.push({ id: o.id, height: n(o.height), width: n(o.width), bandwidth: n(o.bandwidth), audio, codecs: o.codecs === 'ok' ? 'ok' : 'unknown' });
+      }
+      const duration = typeof r.duration === 'number' && isFinite(r.duration) && r.duration >= 0 ? r.duration : 0;
+      return { planId: r.planId, duration, options: opts };
+    }
+    // Gleiche Auswahl in einem neuen Plan (Optionskennungen sind je Plan gesalzen): Höhe, Breite, Bandbreite, Ton.
+    const sameOption = (a, b) => a.height === b.height && a.width === b.width && a.bandwidth === b.bandwidth &&
+      JSON.stringify(a.audio) === JSON.stringify(b.audio);
+    function keepPlan(p) {
+      plans.set(p.planId, p);
+      for (const [k, v] of plans) if (now() - v.at > 9 * 60_000 || plans.size > 8) plans.delete(k);
+    }
+
+    // hlsplan: Optionen (Qualität, Ton) für einen vom Nutzer gewählten Stream. Antwort ohne Adressen; dazu ein
+    // laufender oder unterbrochener Auftrag derselben Quelle (zum Fortsetzen).
+    function hlsPlan(rawUrl, bind) {
+      return serial(async () => {
+        const url = normalizeUrl(rawUrl);
+        if (!url) { const e = new Error('input'); e.kind = 'input'; throw e; }
+        const key = await digest(url);
+        // Fortsetz-Schlüssel ohne Abfrage: dieselbe Quelle mit neuem Zugangs-Token (abgelaufene Adresse) wiederfinden.
+        // Nur für das Angebot „Fortsetzen“; ob die Listen wirklich gleich sind, prüft der Helfer (Form-Fingerabdruck,
+        // sonst lädt er neu). Doppelte Starts erkennt weiterhin nur der volle Schlüssel.
+        const skey = await digest('hls-resume\n' + url.split(/[?#]/)[0]);
+        const r = await channel.download('hlsplan', { url, bind });
+        if (r && r.ok === false) {
+          // Helfer lehnt ab: mit Grund (Live, verschlüsselt, Netzgrenze …) – ohne Grund ist es ein Helfer ohne HLS
+          const ok = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason);
+          const e = new Error(ok ? 'plan' : 'unsupported'); e.kind = ok ? 'plan' : 'unsupported'; if (ok) e.reason = r.reason;
+          throw e;
+        }
+        const p = planOf(r);
+        if (!p) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }
+        keepPlan(Object.assign({ key, skey, url, bind, at: now() }, p));
+        const all = await load();
+        const job = all.find((x) => x.key === key && x.kind === 'hls' && !TERMINAL.has(x.state)) ||
+          all.find((x) => x.kind === 'hls' && x.state === 'interrupted' && (x.key === key || x.skey === skey));
+        return { planId: p.planId, duration: p.duration, options: p.options, job: job ? view(job) : null };
+      });
+    }
+
+    // hlsstart mit gespeicherter Kennung; ist der Plan beim Helfer abgelaufen (plan_stale, z. B. neue Kanal-Sitzung),
+    // genau einmal neu planen und dieselbe Auswahl erneut senden – mit DERSELBEN Kennung.
+    async function hlsSend(j, plan, option, name) {
+      const args = (p, o) => Object.assign({ id: j.id, planId: p.planId, option: o, bind: p.bind }, name != null ? { name } : {});
+      try { return apply(j, await channel.download('hlsstart', args(plan, option))); }
+      catch (e) {
+        const stale = (e && e.kind === 'plan-rejected' && e.reason === 'plan_stale') || (e && e.kind === 'stale-session' && e.notSent);
+        if (!stale) throw e;
+        const want = plan.options.find((o) => o.id === option);
+        const fresh = planOf(await channel.download('hlsplan', { url: plan.url, bind: plan.bind }));
+        const again = fresh && want && fresh.options.find((o) => sameOption(o, want));
+        if (!again) { const e2 = new Error('plan-changed'); e2.kind = 'plan-rejected'; e2.reason = 'plan_changed'; throw e2; }
+        const np = Object.assign({ key: plan.key, skey: plan.skey, url: plan.url, bind: plan.bind, at: now() }, fresh);
+        keepPlan(np);
+        return apply(j, await channel.download('hlsstart', args(np, again.id)));
+      }
+    }
+
+    // Start nach Tipp auf eine Option. Dieselbe Quelle läuft schon → derselbe Auftrag (kein zweiter Start).
+    function hlsStart(planId, option, rawName) {
+      return serial(async () => {
+        const plan = plans.get(planId);
+        if (!plan || !plan.options.some((o) => o.id === option)) { const e = new Error('plan-rejected'); e.kind = 'plan-rejected'; e.reason = 'plan_stale'; throw e; }
+        const jobs = await load();
+        const same = jobs.find((x) => x.key === plan.key && !TERMINAL.has(x.state));
+        if (same) return { job: view(same), existing: true };
+        const named = rawName != null && String(rawName).trim() !== '';
+        const j = { id: random(), key: plan.key, skey: plan.skey, kind: 'hls', name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '',
+          done: 0, of: 0, phase: '', at: now(), seen: 0 };
+        jobs.unshift(j);
+        await save(jobs);                // erst gespeichert, dann gesendet
+        try {
+          await hlsSend(j, plan, option, named ? j.name : null);
+        } catch (e) {
+          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); return { job: view(j), existing: false }; }
+          await save(jobs.filter((x) => x.id !== j.id));
+          throw e;
+        }
+        await save(jobs);
+        return { job: view(j), existing: false };
+      });
+    }
+
+    // Unterbrochenen HLS-Auftrag fortsetzen: gleiche Quelle (Schlüssel), neuer Plan, DIESELBE Kennung. Der Helfer
+    // übernimmt nur Segmente, die er per starkem ETag als unverändert bestätigt; ein dauerhafter Abbruch gewinnt immer.
+    function hlsResume(id, planId, option) {
+      return serial(async () => {
+        const plan = plans.get(planId);
+        const jobs = await load();
+        const j = jobs.find((x) => x.id === id);
+        if (!j || j.kind !== 'hls' || j.state !== 'interrupted') { const e = new Error('input'); e.kind = 'input'; throw e; }
+        if (!plan || (plan.key !== j.key && plan.skey !== j.skey) || !plan.options.some((o) => o.id === option)) { const e = new Error('plan-rejected'); e.kind = 'plan-rejected'; e.reason = 'plan_stale'; throw e; }
+        j.state = 'starting';
+        await save(jobs);
+        try { await hlsSend(j, plan, option, j.named ? j.name : null); }
+        catch (e) {
+          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); return { job: view(j), existing: true }; }
+          j.state = 'interrupted';
+          await save(jobs);
+          throw e;
+        }
+        await save(jobs);
+        return { job: view(j), existing: true };
+      });
+    }
+
     // Kann der gekoppelte Helfer direkte Downloads? (dlstatus einer nie vergebenen Kennung; 60 s zwischengespeichert)
     function capabilities() {
       return serial(async () => {
@@ -201,22 +338,29 @@
         let value;
         try {
           const r = await channel.download('dlstatus', { id: PROBE_ID });
-          value = { reachable: true, supported: r.ok === true && r.state === 'unknown' };
-        } catch (e) { value = { reachable: false, supported: false, error: e.kind || 'error' }; }
+          value = { reachable: true, supported: r.ok === true && r.state === 'unknown', hls: false };
+          // P4b: HLS nur, wenn der Helfer es im Status meldet (alte Helfer: kein Feld → kein Angebot)
+          if (value.supported && typeof channel.status === 'function') {
+            try { const st = await channel.status(); value.hls = !!(st && st.hls && st.hls.v === 1); } catch (e) { value.hls = false; }
+          }
+        } catch (e) { value = { reachable: false, supported: false, hls: false, error: e.kind || 'error' }; }
         if (value.reachable) caps = { at: now(), value };
         return value;
       });
     }
 
-    return { start, status, cancel, find, list, capabilities };
+    return { start, status, cancel, find, list, capabilities, hlsPlan, hlsStart, hlsResume };
   }
 
   // Für Anzeigen (Menü, Player): feste Texte je Zustand und Grund – nie Server-Text oder URL.
   function describe(j) {
     if (!j) return { label: 'Unbekannt', progress: '' };
     const mb = (n) => (n / 1048576).toFixed(n >= 104857600 ? 0 : 1).replace('.', ',');
+    const hlsProgress = () => (j.phase === 'mux' ? 'Wird zusammengesetzt …' : j.phase === 'verify' ? 'Wird geprüft …' : j.phase === 'save' ? 'Wird gespeichert …'
+      : (j.of > 0 ? 'Teil ' + Math.min(j.done, j.of) + ' / ' + j.of : '') + (j.bytes > 0 ? (j.of > 0 ? ' · ' : '') + mb(j.bytes) + ' MB' : ''));
     const progress = j.state === 'running' || j.state === 'cancelling'
-      ? (j.total > 0 ? Math.floor(j.bytes * 100 / j.total) + ' % · ' + mb(j.bytes) + ' / ' + mb(j.total) + ' MB' : (j.bytes > 0 ? mb(j.bytes) + ' MB' : ''))
+      ? (j.kind === 'hls' ? hlsProgress()
+        : j.total > 0 ? Math.floor(j.bytes * 100 / j.total) + ' % · ' + mb(j.bytes) + ' / ' + mb(j.total) + ' MB' : (j.bytes > 0 ? mb(j.bytes) + ' MB' : ''))
       : '';
     switch (j.state) {
       case 'starting': return { label: 'Startet …', progress };
@@ -225,7 +369,8 @@
       case 'cancelling': return { label: 'Wird abgebrochen …', progress };
       case 'done': return { label: 'Gespeichert in Download/Video-Assistent', progress };
       case 'cancelled': return { label: 'Abgebrochen', progress };
-      case 'interrupted': return { label: 'Unterbrochen (Helfer neu gestartet) – erneut starten', progress };
+      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – im Player „Stream fortsetzen“' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
+        : 'Unterbrochen (Helfer neu gestartet) – erneut starten', progress };
       default: return { label: reasonText(j.reason), progress };
     }
   }
@@ -245,7 +390,18 @@
       changed: 'Datei hat sich beim Laden geändert', range_ignored: 'Fortsetzen nicht möglich', not_started: 'Start nicht bestätigt – bitte erneut starten',
       busy: 'Helfer lädt schon zwei Dateien – später erneut', stopped: 'Helfer-App beendet', long_body: 'Fehlerhafte Antwort des Servers',
       timeout: 'Server antwortet nicht',
+      // P4b: HLS
+      plan_changed: 'Stream hat sich geändert – bitte erneut auswählen', plan_stale: 'Auswahl abgelaufen – bitte erneut auswählen',
+      option_unknown: 'Auswahl abgelaufen – bitte erneut auswählen', id_in_use: 'Kennung schon vergeben – bitte erneut starten',
+      restarted: 'Helfer-App neu gestartet', segment_size: 'Teil des Streams zu groß', size_limit: 'Stream zu groß (über 16 GiB)',
+      segments_limit: 'Stream hat zu viele Teile', samples_limit: 'Stream zu lang für dieses Handy', memory: 'Zu wenig Arbeitsspeicher auf dem Handy',
+      encrypted: 'Stream ist verschlüsselt (DRM/AES) – nicht speicherbar', live: 'Live-Stream – nicht speicherbar', no_audio: 'Stream ohne Ton – nicht gespeichert',
+      audio_codec: 'Tonformat wird nicht unterstützt', video_codec: 'Bildformat wird nicht unterstützt', no_supported_variant: 'Kein unterstütztes Format (H.264/AAC)',
+      av_duration_mismatch: 'Bild und Ton passen nicht zusammen', container_mismatch: 'Bild und Ton passen nicht zusammen',
+      discontinuity: 'Stream mit Unterbrechungen – nicht unterstützt', byterange: 'Stream-Form nicht unterstützt', remux: 'Zusammensetzen fehlgeschlagen',
+      internal: 'Interner Fehler der Helfer-App', expired: 'Unterbrochener Download abgelaufen', incomplete: 'Teile fehlen – bitte erneut starten',
     };
+    if (r.startsWith('verify_')) return 'Prüfung des Ergebnisses fehlgeschlagen – nichts gespeichert';
     if (T[r]) return T[r];
     if (r.startsWith('range_')) return 'Fortsetzen nicht möglich';
     return 'Download fehlgeschlagen';
@@ -260,6 +416,8 @@
       unsupported: 'Diese Helfer-App-Version kann keine direkten Downloads',
       'helper-busy': 'Helfer lädt schon zwei Dateien – später erneut',
       input: 'Diese Adresse lässt sich nicht direkt laden',
+      plan: 'Stream lässt sich nicht speichern',
+      'plan-rejected': 'Auswahl abgelaufen – bitte erneut auswählen',
     })[kind] || 'Helfer-App: Verbindung fehlgeschlagen';
   }
 

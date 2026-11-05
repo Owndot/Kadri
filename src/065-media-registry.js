@@ -146,10 +146,22 @@
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
       return { ok: true, url: urls.get(sourceId) };
     }
+    // P4b: gewählten Stream auflösen – nur aktuell, gebunden, auswählbar. Dazu die Bindung, die der Helfer prüft
+    // (Player-Kennung, Medien-Epoche, Revision): ein Plan gilt nur für genau diesen Stand.
+    function resolveStream(ctx, sourceId, revision) {
+      const p = playerOf(ctx);
+      if (!p) return { ok: false, reason: 'stale-context' };
+      const s = p.sources.get(sourceId);
+      if (!s) return { ok: false, reason: 'unknown-source' };
+      if (revision !== s.revision) return { ok: false, reason: 'stale-revision' };
+      const d = mediaStreamState(s);
+      if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
+      return { ok: true, url: urls.get(sourceId), bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };
+    }
     // Ist diese genaue Adresse für den Player bekannt? (nur Kennung, keine Adresse heraus)
     function idOf(ctx, url) { const p = playerOf(ctx); return (p && p.byUrl.get(url)) || ''; }
     const stats = () => ({ players: live.length, sources: total });
-    return { contextFor, observe, snapshot, invalidate, subscribe, selectPlayback, resolveSelection, idOf, stats };
+    return { contextFor, observe, snapshot, invalidate, subscribe, selectPlayback, resolveSelection, resolveStream, idOf, stats };
   }
   const mediaRegistry = createMediaRegistry();
   // ---------- Adapter: vorhandene Erkennung liefert Beobachtungen (keine neue Site-Logik) ----------
