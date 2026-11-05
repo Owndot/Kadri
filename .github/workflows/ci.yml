@@ -303,6 +303,21 @@ jobs:
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         run: TESTS="test_helper.py test_menu.py test_mp4.py test_hls.py" tests/run_all.sh
+      - name: P4 test extension identity - deterministic package from two build paths, fixed ID and separate data in a disposable Chromium (nothing uploaded)
+        run: |
+          set -euo pipefail
+          node tests/channel/p4_identity_check.js
+          python3 tests/p4_device_page_check.py
+          python3 tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/p4-a.zip"
+          mkdir -p "$RUNNER_TEMP/p4-second"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/p4-second"
+          (cd "$RUNNER_TEMP/p4-second" && node tools/build.js)
+          python3 tools/p4test/pack-extension.py "$RUNNER_TEMP/p4-second/dist/chrome" "$RUNNER_TEMP/p4-b.zip"
+          cmp "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip"
+          mkdir -p "$RUNNER_TEMP/p4-packed"
+          unzip -q "$RUNNER_TEMP/p4-a.zip" -d "$RUNNER_TEMP/p4-packed"
+          NODE_PATH="$PWD/node_modules" xvfb-run -a node tools/p4test/isolation.cjs "$RUNNER_TEMP/p4-packed" "$PWD/dist/chrome"
+          rm -rf "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip" "$RUNNER_TEMP/p4-packed" "$RUNNER_TEMP/p4-second"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
