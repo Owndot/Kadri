@@ -45,3 +45,22 @@ Ergebnis: **nötig.** Die C3-Testerweiterung (`fhjmppadldgkhdgkdplpalmoooocoinn`
   Erweiterung und vom C3-Paar, kein privates Material, Produktion UNAPPROVED.
 - Gepackt und ausgeliefert wird sie erst in P4c (nach Freigabe), nach dem Muster des C3-Testpakets (nur Name,
   Beschreibung und `key` verschieden).
+
+## P4c-Vorbereitung (ohne Auslieferung, ohne Installation)
+
+- **Testerweiterung „Kadri P4 TEST“:** `tools/p4test/pack-extension.py` packt aus `dist/chrome` ein entpacktes
+  Testpaket; nur Name, Beschreibung und der feste öffentliche Schlüssel unterscheiden sich. CI baut es aus zwei
+  Wegen bytegleich und prüft in einem Wegwerf-Chromium: ID `pcccpjllneffccpenbepmfbkjedllkkf`, getrennte
+  Erweiterungsdaten neben einer zweiten Kadri-Fassung, dieselbe ID nach Verschieben (`tools/p4test/isolation.cjs`).
+  Kein Paket wird hochgeladen.
+- **Gerätetestseite `tests/web/public/p4-hls.html`:** eigenes synthetisches Material (`tests/web/public/p4/`, erzeugt
+  mit `tools/p4test/make-device-page.sh`; Testbild, Blitz + Piepton alle 2 s): T1 TS getrennt, T2 TS gemuxt, T3 fMP4
+  getrennt, T4 fMP4 gemuxt, T5 360p/180p, T6 Tonspuren de (hoher Piepton) / en (tiefer Piepton), T7 „langsam“
+  (5 min, ≈ 600 Abrufe) für Abbruch, Fortsetzen, Parallelität und Bildschirm aus, T14a AES-128 (eigener
+  Wegwerf-Schlüssel) und T14b Live müssen abgelehnt werden. `tests/p4_device_page_check.py` (CI) prüft Verweise,
+  Prüfsummen und dass keine Datei unbenutzt ist. Gegen die echte HlsEngine des Helfers geprüft: alle unterstützten
+  Fälle planen und laden vollständig; AES → `encrypted`, Live → `live`. Öffentlich erst über einen Commit-Link,
+  wenn P4c freigegeben ist.
+- Samsung-Testmatrix und Mac-Signieranleitung: im Helfer-Repository `P4C-VORBEREITUNG.md`.
+- Android 10: der MediaStore-Befund des Helfers (P4B-A10-SIZE) betrifft Kadri nicht; vom Eigentümer nur für den
+  P4c-Test auf Android 17 hingenommen.
