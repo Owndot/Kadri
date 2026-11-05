@@ -294,6 +294,7 @@ jobs:
           node tests/channel/download_integration_check.js
           # P4b: Stream speichern (HLS) – strenge Befehle, Verwaltung, Registry; Ende-zu-Ende gegen die echte HlsEngine
           node tests/channel/hls_unit_check.js
+          node tests/channel/p4_identity_check.js
           node tests/channel/hls_integration_check.js
           node tests/channel/channel_browser_check.js
           node tests/channel/channel_netguard_failure_check.js
