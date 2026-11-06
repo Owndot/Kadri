@@ -21,8 +21,8 @@ concurrency:
   group: p4-test-extension
   cancel-in-progress: false
 env:
-  SOURCE_SHA: 63e5cd7d7f423c4b1368430254813e51219ee723
-  HELPER_SHA: 9da44342b26516d6b4ef4448e01ae4691508ad1d
+  SOURCE_SHA: cb4f5ac3c5ee604c1a98637d2b7f8f02cb518efe
+  HELPER_SHA: ad3c59723524fd202021f7335eca98bf390768bf
   P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
   RETENTION_DAYS: 2
 jobs:
@@ -78,7 +78,7 @@ jobs:
         test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d' ' -f1)" = "$(sed -n 's/^sha256_wasm=//p' vendor/kadri-pairing-poc/SOURCE)"
         test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d' ' -f1)" = "$(sed -n 's/^sha256_js=//p' vendor/kadri-pairing-poc/SOURCE)"
         echo 'PASS: vendored WASM core rebuilt bit-identically from the helper commit of the P4 test APK'
-    - name: Desktop helper (real ChannelServer and engines of helper 9da4434)
+    - name: Desktop helper (real ChannelServer and engines of the paired helper commit)
       run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
     - name: Playwright (Chromium) and xvfb
       run: |
@@ -122,7 +122,7 @@ jobs:
         unzip -q "$RUNNER_TEMP/p4-a.zip" -d "$RUNNER_TEMP/packaged-extension"
         sha256sum "$RUNNER_TEMP/p4-a.zip" > "$RUNNER_TEMP/zip-before.sha256"
         rm -rf "$RUNNER_TEMP/second-source" "$RUNNER_TEMP/p4-b.zip"
-    - name: Pairing with helper 9da4434 - exact packaged extension against the real ChannelServer (channel security, fail-closed)
+    - name: Pairing with the paired helper - exact packaged extension against the real ChannelServer (channel security, fail-closed)
       env:
         HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         CHANNEL_DIST_DIR: ${{ runner.temp }}/packaged-extension
@@ -200,7 +200,7 @@ jobs:
     - name: Short-lived isolated P4 TEST extension only (public Actions artifact, not a release)
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: kadri-p4test-63e5cd7-vivaldi-test
+        name: kadri-p4test-cb4f5ac-vivaldi-test
         path: ${{ runner.temp }}/deliver/
         retention-days: ${{ env.RETENTION_DAYS }}
         if-no-files-found: error
