@@ -279,6 +279,10 @@ Abschnitt „Fortschritt“ einzutragen.
 | Datum | Paket | Zustand | Commits | Tests | Nächster Schritt |
 |---|---|---|---|---|---|
 | 2026-11-06 | Übergabe | DONE | dieses Dokument | – | P0 Reproduktion |
+| 2026-11-06 | P0 Reproduktion Desktop | DONE (nicht reproduziert) | – | Desktop-Helfer: Prozess während HLS-Download beendet, mit gleichem Zustand neu gestartet → neuer MP4 per Knopf fertig, alter HLS-Download setzt fort (`done`). F1 ist auf dem JVM **nicht nachgewiesen** → vermutlich Android-spezifisch (Dienst, statische Objekte, Store) oder Kadri-Anzeige bei unerreichbarem Helfer | echte Prozess-Neustarttests auf dem Emulator |
+| 2026-11-06 | P0 Neustarttest Android | IN_PROGRESS | Helfer `52ae07b` | `ProcessRestartInstrumentedTest` Phase A/B (force-stop und Prozesswechsel) in `tools/run-channel-instrumentation.sh`; CI-Ergebnis ausstehend | Ergebnis auswerten, Ursache beheben |
+| 2026-11-06 | Befund (neu) | NEEDS_TEST | Helfer `52ae07b` (nur Diagnose) | API 34, Lauf 42240436344: `Mp4DownloadsInstrumentedTest#interruptionFailsCleanOrResumesExactly` endete einmal `failed:storage` statt `done` (auf `ad3c597`/`fcbc23c` grün). Assertion unverändert, Meldung enthält jetzt die Ursache | Ursache aus nächstem Lauf lesen |
+| 2026-11-06 | P0 Kadri-Kandidat (vermutet) | TODO | – | Code-Lesen: unbestätigter Start bei unerreichbarem Helfer endet nach 3 Nachfragen ohne Endzustand → „Verbindung unterbrochen – Stand wird geprüft“ bleibt stehen | Endzustand mit Grund nach letzter Nachfrage |
 
 ---
 
