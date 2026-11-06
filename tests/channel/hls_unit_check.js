@@ -98,6 +98,18 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
 
 (async () => {
   {
+    // P4c: fertiger Stream (Stand im Speicher veraltet, Player war zu): neuer Plan nennt keinen „laufenden“ Auftrag,
+    // ein neuer Start ist möglich
+    const w = world();
+    const p = await w.dl.hlsPlan(URL1, BIND);
+    const r = await w.dl.hlsStart(p.planId, p.options[0].id, 'x');
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const p2 = await w.dl.hlsPlan(URL1, BIND);
+    check('P4c HLS: veralteter Stand – Plan nennt keinen laufenden Auftrag', !p2.job || p2.job.state === 'done', JSON.stringify(p2.job));
+    const r2 = await w.dl.hlsStart(p2.planId, p2.options[0].id, 'x');
+    check('P4c HLS: neuer Start derselben Quelle nach dem Ende', !r2.existing && r2.job.id !== r.job.id && ops(w, 'hlsstart').length === 2, JSON.stringify(r2));
+  }
+  {
     // P4c: Player sofort nach dem Tipp geschlossen, hlsstart-Antwort verloren: Nachprüfung ohne Player mit DERSELBEN
     // Kennung und demselben Plan; hatte der Helfer gestartet, kein zweiter hlsstart.
     for (const arrived of [false, true]) {
@@ -111,7 +123,7 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
       const p = await w.dl.hlsPlan(URL1, BIND);
       const r = await w.dl.hlsStart(p.planId, p.options[0].id, 'x');
       check('P4c HLS (' + (arrived ? 'angekommen' : 'nicht angekommen') + '): unbestätigt, Nachprüfung geplant', r.job.state === 'unconfirmed' && w.timers.length === 1, JSON.stringify(r));
-      w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+      { const t = w.timers.shift(); if (t) t.f(); } await new Promise((res) => setTimeout(res, 20));
       const j = w.mem.jobs.find((x) => x.id === r.job.id);
       const ids = ops(w, 'hlsstart').map((x) => x.a.id);
       check('P4c HLS (' + (arrived ? 'angekommen' : 'nicht angekommen') + '): läuft, ' + (arrived ? 'kein zweiter hlsstart' : 'genau ein erneuter hlsstart mit derselben Kennung und demselben Plan'),

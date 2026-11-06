@@ -113,13 +113,32 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     check('Gleichzeitiger Doppeltipp: ein dlstart, ein Auftrag', starts(w).length === 1 && a.job.id === b.job.id && b.existing && w.mem.jobs.length === 1);
   }
   {
+    // P4c: gespeicherter Stand veraltet (fertig, aber niemand hat nachgefragt – Player zu): erneuter Start derselben
+    // Datei fragt zuerst den Helfer und startet dann bewusst neu; läuft er wirklich noch → derselbe Auftrag
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const again = await w.dl.start(URL1);
+    check('P4c: veraltetes „läuft“ blockiert keinen neuen Download (Helfer meldet fertig)', !again.existing && again.job.id !== r.job.id && starts(w).length === 2,
+      JSON.stringify(again));
+    const third = await w.dl.start(URL1);
+    check('P4c: läuft wirklich noch → derselbe Auftrag, kein dritter dlstart', third.existing && third.job.id === again.job.id && starts(w).length === 2);
+    const w2 = world({ dlstatus: () => err('unreachable') });
+    const a = await w2.dl.start(URL1);
+    const b = await w2.dl.start(URL1);
+    check('P4c: Helfer nicht erreichbar → lieber kein zweiter Start', b.existing && b.job.id === a.job.id && starts(w2).length === 1);
+    w.helper.jobs.get(again.job.id).state = 'done';
+    const f = await w.dl.find(URL1);
+    check('P4c: find liefert den aktuellen Stand (fertig), nicht den veralteten', f && f.id === again.job.id && f.state === 'done', JSON.stringify(f));
+  }
+  {
     // P4c: Player/Tab sofort nach dem Tipp geschlossen, Antwort verloren: der Hintergrund klärt selbst nach (ohne
     // Player), mit DERSELBEN Kennung – kein verlorener und kein doppelter Auftrag.
     let drop = true;
     const w = world({ dlstart: (m, h) => { if (drop) { drop = false; h.jobs.set(m.id, { state: 'running', bytes: 0, total: 1000 }); return err('unreachable'); } } });
     const r = await w.dl.start(URL1);
     check('P4c: unbestätigt → Nachprüfung geplant (2 s, ohne Player)', r.job.state === 'unconfirmed' && w.timers.length === 1 && w.timers[0].ms === 2000, JSON.stringify(w.timers));
-    w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+    { const t = w.timers.shift(); if (t) t.f(); } await new Promise((res) => setTimeout(res, 20));
     const j = w.mem.jobs.find((x) => x.id === r.job.id);
     check('P4c: Nachprüfung: Helfer hatte gestartet → läuft, kein zweiter dlstart, keine weitere Nachprüfung', j.state === 'running' && starts(w).length === 1 && w.timers.length === 0, JSON.stringify(j));
   }
@@ -127,7 +146,7 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     let drop = true;
     const w = world({ dlstart: () => { if (drop) { drop = false; return err('timeout'); } } });
     const r = await w.dl.start(URL1);
-    w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+    { const t = w.timers.shift(); if (t) t.f(); } await new Promise((res) => setTimeout(res, 20));
     const ids = starts(w).map((x) => x.a.id);
     const j = w.mem.jobs.find((x) => x.id === r.job.id);
     check('P4c: Nachprüfung: nicht angekommen → genau ein erneuter dlstart mit derselben Kennung', j.state === 'running' && ids.length === 2 && ids[0] === ids[1], JSON.stringify(ids));

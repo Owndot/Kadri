@@ -131,7 +131,7 @@
         const key = await digest(url);
         const jobs = await load();
         const same = jobs.find((x) => x.key === key && !TERMINAL.has(x.state));
-        if (same) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
+        if (same && await stillActive(jobs, same)) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key, name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '', at: now(), seen: 0 };
         jobs.unshift(j);                 // neuester zuerst (bei gleicher Zeit bleibt die Reihenfolge, sort ist stabil)
@@ -157,6 +157,19 @@
         const j = jobs.find((x) => x.id === id);
         if (!j) return null;
         if (TERMINAL.has(j.state)) return { job: view(j), reachable: true };
+        return refresh(jobs, j);
+      });
+    }
+    // P4c: gespeicherter Stand kann veraltet sein (niemand hat nachgefragt, z. B. Player zu): vor der Doppelstart-Prüfung
+    // beim Helfer nachfragen. Nicht erreichbar → als laufend behandeln (lieber kein zweiter Start).
+    async function stillActive(jobs, j) {
+      if (TERMINAL.has(j.state)) return false;
+      try { await refresh(jobs, j); } catch (e) { return true; }
+      return !TERMINAL.has(j.state);
+    }
+    async function refresh(jobs, j) {
+      const id = j.id;
+      {
         let s;
         try { s = apply(j, await channel.download('dlstatus', { id })); }
         catch (e) {
@@ -186,7 +199,7 @@
         }
         await save(jobs);
         return { job: view(j), reachable: true };
-      });
+      }
     }
 
     // Abbruch: dlcancel; der Helfer bricht auch den Verbindungsaufbau ab und räumt auf. Danach meldet dlstatus "cancelled".
@@ -218,7 +231,9 @@
         const url = normalizeUrl(rawUrl);
         if (!url) return null;
         const key = await digest(url);
-        const j = (await load()).find((x) => x.key === key);
+        const jobs = await load();
+        const j = jobs.find((x) => x.key === key);
+        if (j) await stillActive(jobs, j);   // P4c: gespeicherter Stand kann veraltet sein (Player war zu)
         return j ? view(j) : null;
       });
     }
@@ -291,6 +306,7 @@
         if (!p) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }
         keepPlan(Object.assign({ key, skey, url, bind, at: now() }, p));
         const all = await load();
+        for (const x of all) if (x.kind === 'hls' && (x.key === key || x.skey === skey) && !TERMINAL.has(x.state)) await stillActive(all, x);
         const job = all.find((x) => x.key === key && x.kind === 'hls' && !TERMINAL.has(x.state)) ||
           all.find((x) => x.kind === 'hls' && x.state === 'interrupted' && (x.key === key || x.skey === skey));
         return { planId: p.planId, duration: p.duration, options: p.options, job: job ? view(job) : null };
@@ -322,7 +338,7 @@
         if (!plan || !plan.options.some((o) => o.id === option)) { const e = new Error('plan-rejected'); e.kind = 'plan-rejected'; e.reason = 'plan_stale'; throw e; }
         const jobs = await load();
         const same = jobs.find((x) => x.key === plan.key && !TERMINAL.has(x.state));
-        if (same) return { job: view(same), existing: true };
+        if (same && await stillActive(jobs, same)) return { job: view(same), existing: true };
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key: plan.key, skey: plan.skey, kind: 'hls', name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '',
           done: 0, of: 0, phase: '', at: now(), seen: 0 };

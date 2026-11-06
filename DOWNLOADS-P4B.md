@@ -76,3 +76,25 @@ Ergebnis: **nötig.** Die C3-Testerweiterung (`fhjmppadldgkhdgkdplpalmoooocoinn`
   `SHA256SUMS`, Nachweis (Commits, ID, Testseiten-Link, Ablauf). Öffentliches Actions-Artefakt, **2 Tage**.
 - Gegenstück im Helfer: `.github/workflows/p4-test-package.yml` (Wegwerf-signierte Test-APK, Anleitung und Portregel in
   `P4C-VORBEREITUNG.md` §6). Produktion bleibt UNAPPROVED.
+
+## P4c-2: Download-Knopf am Video, Downloads unabhängig vom Player, automatische Wiederaufnahme
+
+- **⬇ neben ▶** (`src/105-download-knopf.js`, `[ ▶ Player ] [ ⬇ Video speichern ]`): speichert das laufende Video der
+  Seite, ohne den Kadri-Player zu öffnen; das Video läuft weiter. Gleiche Quellen und Belege wie im Player (Registry:
+  Element-Adresse, gerade geladene Stücke genau dieses Streams, Seitendaten mit Video-ID, Adapter; zusätzlich, was das
+  Element nachweislich spielt), gleiche Auswahl (`selectDownloads`/`selectStreams`) und dieselbe zentrale
+  Download-Verwaltung im Hintergrund (Doppelstarts zwischen Knopf und Player erkannt). Eine eindeutige Option ⇒ ein Tipp
+  startet; mehrere Qualitäten/Tonspuren ⇒ kompaktes Menü; laufender Auftrag ⇒ Stand und „Abbrechen“; nicht gekoppelt,
+  nicht erreichbar oder kein sicher zugeordnetes Format ⇒ klarer Grund. HLS-Stücke werden nie als MP4 gespeichert.
+  YTDLnis und Teilen bleiben im Menü, lange drücken teilt wie bisher; ohne Helfer-Kanal (Firefox/Userscript) wie bisher.
+- **Unabhängig vom Player:** unbestätigte Starts klärt der Hintergrund selbst (2 s, 6 s, 20 s, dieselbe Kennung);
+  gespeicherte Zustände werden vor Doppelstart-Prüfung, `find` und Liste beim Helfer aufgefrischt (ein veraltetes
+  „läuft“ blockierte sonst einen erneuten Download derselben Datei).
+- **Wiederaufnahme:** der Helfer wartet selbst auf Netz bzw. den nächsten Versuch; Kadri zeigt „Wartet auf Internet –
+  setzt automatisch fort“ bzw. „Verbindung gestört – neuer Versuch in Kürze“. Gekoppelt mit Helfer `469e07b`.
+- **T4:** Die Fixture `fmp4_muxed` verwies auf `init_%v.mp4` (ffmpeg ersetzt `%v` bei genau einer Variante nicht; „%v“ ist
+  keine gültige Prozent-Kodierung). Jetzt `init_0.mp4`; Generator korrigiert; `tests/p4_device_page_check.py` lehnt jede
+  ungültig kodierte URI ab.
+- Tests: `tests/test_direct_dl.py` (29, echtes Chromium + echter Helfer: ⬇ für HLS/MP4 ohne Player, Seite verlassen,
+  Tab-Wechsel, Flugmodus mit Wiederaufnahme, Abbruch im Warten, Neustart von Service Worker und Browser);
+  Download-Unit 98, HLS-Unit 69.

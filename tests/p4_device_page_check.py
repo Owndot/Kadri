@@ -25,6 +25,8 @@ def walk(rel):
     refs += re.findall(r'URI="([^"]+)"', text)
     for r in refs:
         assert '/' not in r and '..' not in r and ':' not in r, (rel, r)   # nur Dateien im eigenen Ordner
+        # P4c (T4): nur RFC-3986-Zeichen, „%“ nur mit zwei Hex-Ziffern (ungültige Kodierung wie „init_%v.mp4“ abgelehnt)
+        assert re.fullmatch(r"(?:[A-Za-z0-9\-._~!$&'()*+,;=@]|%[0-9A-Fa-f]{2})+", r), ('invalid URI', rel, r)
         target = os.path.join(base, r)
         if r.endswith('.m3u8'):
             walk(target)

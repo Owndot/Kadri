@@ -20,6 +20,13 @@ hls() {   # hls NAME TYPE SECONDS SEG_SECONDS INPUTS... -- OUTPUT_ARGS...
   ( cd "$OUT/$name" && ffmpeg "${COMMON[@]}" "${ins[@]}" -t "$dur" "${OUTO[@]}" "$@" -f hls -hls_time "$seg" -hls_playlist_type vod \
       -hls_segment_type "$type" -hls_flags independent_segments -hls_segment_filename "s%v_%03d.$ext" \
       $([ "$type" = fmp4 ] && echo -hls_fmp4_init_filename init_%v.mp4) -master_pl_name master.m3u8 'v%v.m3u8' )
+  # ffmpeg ersetzt %v im Init-Namen bei genau einer Variante nicht (Samsung-Test T4: Datei „init_%v.mp4“, Verweis
+  # URI="init_%v.mp4" – „%v“ ist keine gültige Prozent-Kodierung nach RFC 3986, die Wiedergabe scheiterte). Dann wie bei
+  # mehreren Varianten init_0.mp4.
+  if [ -f "$OUT/$name/init_%v.mp4" ]; then
+    mv "$OUT/$name/init_%v.mp4" "$OUT/$name/init_0.mp4"
+    sed -i.bak 's/URI="init_%v\.mp4"/URI="init_0.mp4"/' "$OUT/$name"/v*.m3u8 && rm -f "$OUT/$name"/v*.m3u8.bak
+  fi
 }
 I360=(-f lavfi -i "$(V 640x360)"); I180=(-f lavfi -i "$(V 320x180)"); AHI=(-f lavfi -i "$(A 1000)"); ALO=(-f lavfi -i "$(A 400)")
 # T1/T2: TS, getrennte Tonspur bzw. im Videostrom
