@@ -127,6 +127,11 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     const a = await w2.dl.start(URL1);
     const b = await w2.dl.start(URL1);
     check('P4c: Helfer nicht erreichbar → lieber kein zweiter Start', b.existing && b.job.id === a.job.id && starts(w2).length === 1);
+    const shown = NS.describeDownload(b.job);
+    check('P4c-3: unerreichbar → Auftrag mit Grund statt eines endlosen „Lädt …“', b.job.check === 'unreachable' && w2.mem.jobs[0].check === 'unreachable'
+      && shown.label === 'Helfer-App nicht erreichbar – letzter bekannter Stand', JSON.stringify([b.job, shown]));
+    const fa = await w2.dl.find(URL1);
+    check('P4c-3: find bei unerreichbarem Helfer: gespeicherter Stand mit Grund (kein Fehler)', fa && fa.id === a.job.id && fa.check === 'unreachable', JSON.stringify(fa));
     w.helper.jobs.get(again.job.id).state = 'done';
     const f = await w.dl.find(URL1);
     check('P4c: find liefert den aktuellen Stand (fertig), nicht den veralteten', f && f.id === again.job.id && f.state === 'done', JSON.stringify(f));
@@ -159,6 +164,9 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     for (let i = 0; i < 5 && w.timers.length; i++) { const t = w.timers.shift(); seen.push(t.ms); t.f(); await new Promise((res) => setTimeout(res, 20)); }
     check('P4c: Nachprüfungen begrenzt (2 s, 6 s, 20 s), Auftrag bleibt unbestätigt', JSON.stringify(seen) === '[2000,6000,20000]' && w.timers.length === 0
       && w.mem.jobs.find((x) => x.id === r.job.id).state === 'unconfirmed', JSON.stringify(seen));
+    const uj = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c-3: nach den Nachprüfungen kein endloses „Stand wird geprüft“, sondern der Grund', NS.describeDownload(uj).label
+      === 'Start nicht bestätigt – Helfer-App nicht erreichbar (wird beim nächsten Öffnen geprüft)', NS.describeDownload(uj).label);
   }
   {
     // P4c: Helfer wartet selbst auf Netz bzw. den nächsten Versuch → sichtbar, ohne Nutzeraktion
@@ -372,5 +380,26 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
   check('Text: private Adresse', NS.downloadReasonText('blocked_address').includes('privates Netz'));
   check('Text: Speicherberechtigung (Android 8–9)', NS.downloadReasonText('storage_permission').includes('Speicherzugriff'));
   check('Text: unbekannter Grund → allgemein', NS.downloadReasonText('xyz') === 'Download fehlgeschlagen');
+  // P4c-3 (P1): Zahlen nur aus verlässlichem Zähler/Nenner; Samsung zeigte „über 300 %“ und „5 MB von 2 MB“
+  {
+    const MB = 1048576, d = NS.describeDownload;
+    check('P4c-3: MP4 Prozent aus exakter Länge', d({ state: 'running', bytes: 12 * MB, total: 32 * MB }).progress === '37 % · 12,0 / 32,0 MB');
+    const over = d({ state: 'running', bytes: 5 * MB, total: 2 * MB }).progress;
+    check('P4c-3: MP4 Zähler über Nenner → kein Prozent, kein „von“, nicht auf 100 % abgeschnitten', over === '5,0 MB geladen', over);
+    check('P4c-3: MP4 ohne Größe → nur geladene MB', d({ state: 'running', bytes: 3 * MB, total: -1 }).progress === '3,0 MB geladen');
+    const h = d({ state: 'running', kind: 'hls', bytes: 5.5 * MB, total: -1, done: 12, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS „12/25 Teile · 5,5 MB geladen“', h === '12/25 Teile · 5,5 MB geladen', h);
+    const hs = d({ state: 'running', kind: 'hls', bytes: 5 * MB, total: 2 * MB, done: 3, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS nie Prozent oder Gesamtgröße (auch wenn ein alter Helfer eine Schätzung schickt)', hs === '3/25 Teile · 5,0 MB geladen', hs);
+    const hb = d({ state: 'running', kind: 'hls', bytes: MB, total: -1, done: 30, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS mehr fertige als alle Teile → keine Teilangabe (Fehler nicht verdeckt)', hb === '1,0 MB geladen', hb);
+    check('P4c-3: HLS Phasen', d({ state: 'running', kind: 'hls', phase: 'verify', bytes: 9, done: 1, of: 1 }).progress === 'Wird geprüft …'
+      && d({ state: 'running', kind: 'hls', phase: 'save', bytes: 9, done: 1, of: 1 }).progress === 'Wird gespeichert …');
+    const dn = d({ state: 'done', kind: 'hls', bytes: 472404, total: 472404, done: 0, of: 11 });
+    check('P4c-3: fertig mit exakter Größe der gespeicherten Datei', dn.label === 'Gespeichert in Download/Video-Assistent' && dn.progress === '0,4 MB', JSON.stringify(dn));
+    check('P4c-3: abgerundet (nie mehr als vorhanden)', d({ state: 'done', total: 99.99 * MB }).progress === '99,9 MB' && d({ state: 'done', total: 250 * MB + 1 }).progress === '250 MB');
+    check('P4c-3: Startet mit gescheiterter Abfrage → Grund statt „Startet …“', d({ state: 'starting', check: 'timeout' }).label === 'Start nicht bestätigt – Helfer-App antwortet nicht');
+    check('P4c-3: ohne Grund bleibt „Startet …“ (Antwort steht noch aus)', d({ state: 'starting' }).label === 'Startet …');
+  }
   summary('download_unit');
 })().catch((e) => { console.log('FAIL crash — ' + (e && e.stack)); process.exitCode = 1; });

@@ -21,7 +21,9 @@
   const MAX_JOBS = 20;
   const TERMINAL = new Set(['done', 'failed', 'cancelled', 'interrupted']);
   const STATES = new Set(['running', 'done', 'failed', 'cancelled', 'interrupted']);
-  const PROBE_ID = '0'.repeat(32);   // Fähigkeitsprobe: dlstatus einer nie vergebenen Kennung
+  const PROBE_ID = '0'.repeat(32);
+  // P4c-3: Gründe einer gescheiterten Abfrage, die beim Auftrag vermerkt werden (feste Codes aus channel-session.js)
+  const CHECK_KINDS = new Set(['unreachable', 'timeout', 'unpaired', 'rejected', 'identity-mismatch', 'tampered', 'record-rejected', 'protocol', 'stale-session', 'busy']);   // Fähigkeitsprobe: dlstatus einer nie vergebenen Kennung
 
   // URL für dlstart: http(s), keine Zugangsdaten, ohne Fragment (geht ohnehin nie zum Server), nur RFC-3986-Zeichen
   // (URL.href kodiert Nicht-ASCII; die restlichen erlaubten Zeichen werden hier kodiert). null = nicht direkt ladbar.
@@ -71,6 +73,7 @@
     }
     const view = (j) => Object.assign({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at },
       j.wait ? { wait: j.wait } : {},
+      j.check && !TERMINAL.has(j.state) ? { check: j.check } : {},
       j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {});
 
     // Antwort des Helfers in den Auftrag übernehmen (nur bekannte Felder und Werte).
@@ -104,6 +107,7 @@
         j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
       }
       j.seen = now();
+      j.check = '';   // P4c-3: der Helfer hat geantwortet
       if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); }
       return r.state;
     }
@@ -164,6 +168,8 @@
     // beim Helfer nachfragen. Nicht erreichbar → als laufend behandeln (lieber kein zweiter Start).
     async function stillActive(jobs, j) {
       if (TERMINAL.has(j.state)) return false;
+      // Nicht erreichbar → als laufend behandeln (lieber kein zweiter Start; eine Abbruchabsicht wird nie überholt).
+      // P4c-3: refresh() vermerkt dann den Grund (check) – die Anzeige zeigt ihn statt eines endlosen „Lädt …“.
       try { await refresh(jobs, j); } catch (e) { return true; }
       return !TERMINAL.has(j.state);
     }
@@ -174,6 +180,10 @@
         try { s = apply(j, await channel.download('dlstatus', { id })); }
         catch (e) {
           if (e.kind === 'unsupported' || e.kind === 'helper-busy') throw e;
+          // P4c-3: Grund der gescheiterten Abfrage beim Auftrag vermerken (fester Code, nie Text), damit Menü und Player
+          // statt eines endlosen „Lädt …“/„Startet …“ den Grund zeigen; die nächste erfolgreiche Abfrage löscht ihn.
+          const kind = CHECK_KINDS.has(e.kind) ? e.kind : 'error';
+          if (j.check !== kind) { j.check = kind; await save(jobs); }
           return { job: view(j), reachable: false, error: e.kind || 'error' };
         }
         if (s === 'running' && j.state === 'cancelling') {
@@ -233,7 +243,8 @@
         const key = await digest(url);
         const jobs = await load();
         const j = jobs.find((x) => x.key === key);
-        if (j) await stillActive(jobs, j);   // P4c: gespeicherter Stand kann veraltet sein (Player war zu)
+        // P4c: gespeicherter Stand kann veraltet sein (Player war zu). Nicht erreichbar: gespeicherter Stand mit Grund (check).
+        if (j) await stillActive(jobs, j);
         return j ? view(j) : null;
       });
     }
@@ -405,19 +416,28 @@
   // Für Anzeigen (Menü, Player): feste Texte je Zustand und Grund – nie Server-Text oder URL.
   function describe(j) {
     if (!j) return { label: 'Unbekannt', progress: '' };
-    const mb = (n) => (n / 1048576).toFixed(n >= 104857600 ? 0 : 1).replace('.', ',');
+    // P4c-3: MiB abgerundet (nie mehr als wirklich da ist), eine Stelle unter 100 MB – wie die Benachrichtigung des Helfers.
+    const mb = (n) => (n >= 104857600 ? String(Math.floor(n / 1048576)) : (Math.floor(n * 10 / 1048576) / 10).toFixed(1).replace('.', ','));
+    // P4c-3: Zahlen nur aus verlässlichem Zähler/Nenner. MP4: Prozent der exakten Länge nur bei 0 ≤ bytes ≤ total (ein
+    // Widerspruch wird nicht auf 100 % abgeschnitten, sondern ohne Prozent gezeigt). HLS: fertige von allen Teilen und
+    // geladene MB – nie eine Gesamtgröße vor dem Ende; danach die Phase.
+    const loaded = () => (j.bytes > 0 ? mb(j.bytes) + ' MB geladen' : '');
     const hlsProgress = () => (j.phase === 'mux' ? 'Wird zusammengesetzt …' : j.phase === 'verify' ? 'Wird geprüft …' : j.phase === 'save' ? 'Wird gespeichert …'
-      : (j.of > 0 ? 'Teil ' + Math.min(j.done, j.of) + ' / ' + j.of : '') + (j.bytes > 0 ? (j.of > 0 ? ' · ' : '') + mb(j.bytes) + ' MB' : ''));
-    const progress = j.state === 'running' || j.state === 'cancelling'
+      : (j.of > 0 && j.done <= j.of ? j.done + '/' + j.of + ' Teile' + (j.bytes > 0 ? ' · ' : '') : '') + loaded());
+    const exact = j.total > 0 && j.bytes >= 0 && j.bytes <= j.total;
+    const progress = j.state === 'running' || j.state === 'cancelling' || ((j.state === 'starting' || j.state === 'unconfirmed') && j.bytes > 0)
       ? (j.kind === 'hls' ? hlsProgress()
-        : j.total > 0 ? Math.floor(j.bytes * 100 / j.total) + ' % · ' + mb(j.bytes) + ' / ' + mb(j.total) + ' MB' : (j.bytes > 0 ? mb(j.bytes) + ' MB' : ''))
-      : '';
+        : exact ? Math.floor(j.bytes * 100 / j.total) + ' % · ' + mb(j.bytes) + ' / ' + mb(j.total) + ' MB' : loaded())
+      : j.state === 'done' && j.total > 0 ? mb(j.total) + ' MB' : '';   // exakt die gespeicherte Datei
+    // P4c-3: letzte Abfrage beim Helfer gescheitert → kein „Lädt …“/„Startet …“ ohne Ende, sondern der Grund.
+    const lost = j.check ? errorText(j.check) : '';
     switch (j.state) {
-      case 'starting': return { label: 'Startet …', progress };
-      case 'unconfirmed': return { label: 'Verbindung unterbrochen – Stand wird geprüft', progress };
-      case 'running': return j.wait === 'offline' ? { label: 'Wartet auf Internet – setzt automatisch fort', progress }
+      case 'starting': return { label: lost ? 'Start nicht bestätigt – ' + lost : 'Startet …', progress };
+      case 'unconfirmed': return { label: lost ? 'Start nicht bestätigt – ' + lost + ' (wird beim nächsten Öffnen geprüft)' : 'Verbindung unterbrochen – Stand wird geprüft', progress };
+      case 'running': return lost ? { label: lost + ' – letzter bekannter Stand', progress }
+        : j.wait === 'offline' ? { label: 'Wartet auf Internet – setzt automatisch fort', progress }
         : j.wait === 'retry' ? { label: 'Verbindung gestört – neuer Versuch in Kürze', progress } : { label: 'Lädt …', progress };
-      case 'cancelling': return { label: 'Wird abgebrochen …', progress };
+      case 'cancelling': return { label: lost ? 'Abbruch angefordert – ' + lost : 'Wird abgebrochen …', progress };
       case 'done': return { label: 'Gespeichert in Download/Video-Assistent', progress };
       case 'cancelled': return { label: 'Abgebrochen', progress };
       case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – in der Benachrichtigung der Helfer-App oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
