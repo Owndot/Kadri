@@ -294,6 +294,18 @@ Abschnitt „Fortschritt“ einzutragen.
 
 ---
 
+### Stand bei der letzten Übergabe (2026-11-06)
+- **P0** F1 (Neustart): Helfer-seitig mit echten Prozessneustarts auf API 26/29/34 **nicht reproduzierbar**; der
+  nachgewiesene Kadri-Fehler (endloses „Lädt …/Startet …“ ohne Grund) ist behoben (Kadri `a494942`). Offen:
+  Samsung-Nachtest mit dem neuen P4-Testpaar – falls F1 bleibt, Diagnose „Helfer-Download: …“ und den angezeigten Grund
+  (`check`) erfragen.
+- **P1** F2 (Fortschritt): Ursache nachgewiesen und behoben (Helfer `c977b13`, `8b906c5`; Kadri `a494942`).
+- **P2** verschlüsselte Quelle: HLS (`60a831f`) und MP4 (`13b0893`, Neustart ab Byte 0 bei gleichem ETag/Länge),
+  Kadri fragt „interrupted“ weiter ab (`a02c6a6`). Offen: Instrumentierung des MP4-Tresors auf dem Gerät;
+  byte-genaues MP4-Fortsetzen über ein Prozessende.
+- **P3** Pakete: nach grüner CI von Helfer `8b906c5` und Kadri `ef9a5ed` die SHAs in `p4-test-package.yml` (Helfer)
+  bzw. `p4-test-extension.yml` (Kadri) setzen und pushen; Prüfsummen und Artefakt-Links in „Fortschritt“ eintragen.
+
 ## CODEX – START HERE
 
 Kopierbarer Master-Prompt für einen neuen Codex-Chat:
