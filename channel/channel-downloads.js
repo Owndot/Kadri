@@ -43,11 +43,14 @@
   }
 
   // storage: { get(): Promise<array|undefined>, set(array): Promise } · digest(text): Promise<hex> · random(): hex(32)
-  function createDownloads({ channel, storage, digest, random, now = () => Date.now() }) {
+  function createDownloads({ channel, storage, digest, random, now = () => Date.now(), setTimer = (f, ms) => setTimeout(f, ms) }) {
     const pending = new Map();   // id → URL, nur solange der Start unbestätigt ist (nie gespeichert)
     // P4b: Pläne des Helfers (hlsplan), nur im Arbeitsspeicher: planId → { key, url, bind, options, at }. Die URL bleibt
     // hier, solange der Plan gilt (10 min), damit ein abgelaufener Plan einmal neu erstellt werden kann – nie gespeichert.
     const plans = new Map();
+    // P4c: unbestätigter HLS-Start (Antwort verloren): Plan-Kennung und Auswahl, nur im Arbeitsspeicher, damit die
+    // Nachprüfung denselben Start mit DERSELBEN Kennung erneut senden kann (der Helfer startet je Kennung einmal).
+    const hlsPending = new Map();
     let chain = Promise.resolve();
     const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
     let caps = null;
@@ -67,6 +70,7 @@
       await storage.set(jobs);
     }
     const view = (j) => Object.assign({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at },
+      j.wait ? { wait: j.wait } : {},
       j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {});
 
     // Antwort des Helfers in den Auftrag übernehmen (nur bekannte Felder und Werte).
@@ -90,6 +94,8 @@
       j.bytes = Number.isSafeInteger(r.bytes) && r.bytes >= 0 ? r.bytes : j.bytes;
       j.total = Number.isSafeInteger(r.total) ? r.total : j.total;
       j.reason = typeof r.reason === 'string' && /^[a-z0-9_]{0,40}$/.test(r.reason) ? r.reason : '';
+      // P4c: der Helfer wartet selbst auf Netz bzw. den nächsten Versuch (der Auftrag läuft weiter)
+      j.wait = r.state === 'running' && (r.wait === 'offline' || r.wait === 'retry') ? r.wait : '';
       if (r.kind === 'hls' || j.kind === 'hls') {
         if (r.kind !== 'hls') { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }   // nie die Art wechseln
         j.kind = 'hls';
@@ -98,7 +104,7 @@
         j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
       }
       j.seen = now();
-      if (j.state !== 'starting' && j.state !== 'unconfirmed') pending.delete(j.id);
+      if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); }
       return r.state;
     }
 
@@ -134,7 +140,7 @@
         try {
           await send(j, url);
         } catch (e) {
-          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); return { job: view(j), existing: false }; }
+          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); followUp(j.id); return { job: view(j), existing: false }; }
           pending.delete(j.id);
           await save(jobs.filter((x) => x.id !== j.id));   // nie beim Helfer angekommen bzw. abgelehnt: kein Auftrag
           throw e;
@@ -160,6 +166,14 @@
         if (s === 'running' && j.state === 'cancelling') {
           // Abbruch kam (noch) nicht an, etwa wegen eines Verbindungsabbruchs: erneut senden (dlcancel ist idempotent).
           try { apply(j, await channel.download('dlcancel', { id })); } catch (e) { /* nächste Abfrage versucht es wieder */ }
+        } else if (s === 'unknown' && j.kind === 'hls') {
+          // P4c: unbestätigter HLS-Start: derselbe Start mit derselben Kennung, solange Plan und Auswahl im Speicher sind
+          const hp = hlsPending.get(id);
+          if (j.state === 'cancelling') { hlsPending.delete(id); }
+          else if (hp && plans.get(hp.planId)) {
+            try { await hlsSend(j, plans.get(hp.planId), hp.option, hp.name); }
+            catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : (e.reason || 'not_started'); hlsPending.delete(id); } }
+          } else { j.state = 'failed'; j.reason = 'not_started'; hlsPending.delete(id); }
         } else if (s === 'unknown') {
           const url = pending.get(id);
           // unknown ist kein terminaler Zustand: ein früher gesendeter Start kann noch eintreffen.
@@ -209,7 +223,25 @@
       });
     }
 
-    const list = () => serial(async () => (await load()).map(view));
+    // P4c: Liste für Menü/Popup mit aktuellem Stand: laufende Aufträge einmal beim Helfer nachfragen (höchstens
+    // MAX_JOBS Abfragen; nicht erreichbar → gespeicherter Stand). Der Player muss dafür nicht offen sein.
+    async function list() {
+      const ids = (await serial(async () => (await load()).filter((j) => !TERMINAL.has(j.state)).map((j) => j.id)));
+      for (const id of ids) { try { await status(id); } catch (e) { break; } }
+      return serial(async () => (await load()).map(view));
+    }
+
+    // P4c: unbestätigter Start (Antwort verloren, z. B. Player oder Tab sofort geschlossen, Verbindung kurz weg): der
+    // Hintergrund klärt den Stand selbst nach – unabhängig vom Player –, höchstens dreimal (2 s, 6 s, 20 s), solange der
+    // Service Worker lebt. Danach klärt die nächste Abfrage (Menü, Player) mit derselben Kennung.
+    const FOLLOW_MS = [2_000, 6_000, 20_000];
+    function followUp(id, n = 0) {
+      if (n >= FOLLOW_MS.length) return;
+      setTimer(() => {
+        status(id).then((r) => { if (r && r.job && (r.job.state === 'unconfirmed' || r.job.state === 'starting')) followUp(id, n + 1); },
+          () => followUp(id, n + 1));
+      }, FOLLOW_MS[n]);
+    }
 
     // ---------------------------------------------------------------- P4b: HLS-Streams
     const HEX24 = /^[0-9a-f]{24}$/, HEX32 = /^[0-9a-f]{32}$/;
@@ -296,10 +328,12 @@
           done: 0, of: 0, phase: '', at: now(), seen: 0 };
         jobs.unshift(j);
         await save(jobs);                // erst gespeichert, dann gesendet
+        hlsPending.set(j.id, { planId, option, name: named ? j.name : null });
         try {
           await hlsSend(j, plan, option, named ? j.name : null);
         } catch (e) {
-          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); return { job: view(j), existing: false }; }
+          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); followUp(j.id); return { job: view(j), existing: false }; }
+          hlsPending.delete(j.id);
           await save(jobs.filter((x) => x.id !== j.id));
           throw e;
         }
@@ -365,11 +399,12 @@
     switch (j.state) {
       case 'starting': return { label: 'Startet …', progress };
       case 'unconfirmed': return { label: 'Verbindung unterbrochen – Stand wird geprüft', progress };
-      case 'running': return { label: 'Lädt …', progress };
+      case 'running': return j.wait === 'offline' ? { label: 'Wartet auf Internet – setzt automatisch fort', progress }
+        : j.wait === 'retry' ? { label: 'Verbindung gestört – neuer Versuch in Kürze', progress } : { label: 'Lädt …', progress };
       case 'cancelling': return { label: 'Wird abgebrochen …', progress };
       case 'done': return { label: 'Gespeichert in Download/Video-Assistent', progress };
       case 'cancelled': return { label: 'Abgebrochen', progress };
-      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – im Player „Stream fortsetzen“' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
+      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – in der Benachrichtigung der Helfer-App oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
         : 'Unterbrochen (Helfer neu gestartet) – erneut starten', progress };
       default: return { label: reasonText(j.reason), progress };
     }

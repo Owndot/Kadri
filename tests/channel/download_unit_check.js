@@ -74,8 +74,9 @@ function world(script, now) {
   };
   const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); mem.writes.push(JSON.stringify(v)); } };
   const digest = async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex');
-  const make = () => NS.createDownloads({ channel, storage, digest, random: () => (++n).toString(16).padStart(32, '0'), now: now || (() => Date.now()) });
-  return { mem, sent, helper, make, dl: make() };
+  const timers = [];   // P4c: Nachprüfungen des Hintergrunds (von Hand ausgelöst)
+  const make = () => NS.createDownloads({ channel, storage, digest, setTimer: (f, ms) => timers.push({ f, ms }), random: () => (++n).toString(16).padStart(32, '0'), now: now || (() => Date.now()) });
+  return { mem, sent, helper, make, timers, dl: make() };
 }
 const err = (kind, notSent) => { const e = new Error(kind); e.kind = kind; if (notSent) e.notSent = true; return e; };
 const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
@@ -110,6 +111,58 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     const w = world();
     const [a, b] = await Promise.all([w.dl.start(URL1), w.dl.start(URL1)]);
     check('Gleichzeitiger Doppeltipp: ein dlstart, ein Auftrag', starts(w).length === 1 && a.job.id === b.job.id && b.existing && w.mem.jobs.length === 1);
+  }
+  {
+    // P4c: Player/Tab sofort nach dem Tipp geschlossen, Antwort verloren: der Hintergrund klärt selbst nach (ohne
+    // Player), mit DERSELBEN Kennung – kein verlorener und kein doppelter Auftrag.
+    let drop = true;
+    const w = world({ dlstart: (m, h) => { if (drop) { drop = false; h.jobs.set(m.id, { state: 'running', bytes: 0, total: 1000 }); return err('unreachable'); } } });
+    const r = await w.dl.start(URL1);
+    check('P4c: unbestätigt → Nachprüfung geplant (2 s, ohne Player)', r.job.state === 'unconfirmed' && w.timers.length === 1 && w.timers[0].ms === 2000, JSON.stringify(w.timers));
+    w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+    const j = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c: Nachprüfung: Helfer hatte gestartet → läuft, kein zweiter dlstart, keine weitere Nachprüfung', j.state === 'running' && starts(w).length === 1 && w.timers.length === 0, JSON.stringify(j));
+  }
+  {
+    let drop = true;
+    const w = world({ dlstart: () => { if (drop) { drop = false; return err('timeout'); } } });
+    const r = await w.dl.start(URL1);
+    w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+    const ids = starts(w).map((x) => x.a.id);
+    const j = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c: Nachprüfung: nicht angekommen → genau ein erneuter dlstart mit derselben Kennung', j.state === 'running' && ids.length === 2 && ids[0] === ids[1], JSON.stringify(ids));
+  }
+  {
+    // Helfer dauerhaft nicht erreichbar: höchstens drei Nachprüfungen (2 s, 6 s, 20 s), danach Ruhe
+    const w = world({ dlstart: () => err('unreachable'), dlstatus: () => err('unreachable') });
+    const r = await w.dl.start(URL1);
+    const seen = [];
+    for (let i = 0; i < 5 && w.timers.length; i++) { const t = w.timers.shift(); seen.push(t.ms); t.f(); await new Promise((res) => setTimeout(res, 20)); }
+    check('P4c: Nachprüfungen begrenzt (2 s, 6 s, 20 s), Auftrag bleibt unbestätigt', JSON.stringify(seen) === '[2000,6000,20000]' && w.timers.length === 0
+      && w.mem.jobs.find((x) => x.id === r.job.id).state === 'unconfirmed', JSON.stringify(seen));
+  }
+  {
+    // P4c: Helfer wartet selbst auf Netz bzw. den nächsten Versuch → sichtbar, ohne Nutzeraktion
+    const w = world();
+    const r = await w.dl.start(URL1);
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'offline', bytes: 300 });
+    let st = await w.dl.status(r.job.id);
+    check('P4c: wartet auf Internet: läuft weiter, Text „setzt automatisch fort“', st.job.state === 'running' && st.job.wait === 'offline'
+      && NS.describeDownload(st.job).label === 'Wartet auf Internet – setzt automatisch fort', JSON.stringify(st));
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'retry' });
+    st = await w.dl.status(r.job.id);
+    check('P4c: neuer Versuch in Kürze', NS.describeDownload(st.job).label === 'Verbindung gestört – neuer Versuch in Kürze', JSON.stringify(st));
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'bogus' });
+    st = await w.dl.status(r.job.id);
+    check('P4c: unbekannter Wartegrund ignoriert', !st.job.wait && NS.describeDownload(st.job).label === 'Lädt …', JSON.stringify(st));
+    delete w.helper.jobs.get(r.job.id).wait;
+    w.helper.jobs.get(r.job.id).state = 'done';
+    // Liste (Menü/Popup) fragt laufende Aufträge selbst nach – der Player ist dafür nicht nötig
+    const l = await w.dl.list();
+    check('P4c: Liste zeigt den aktuellen Stand (done) ohne Abfrage durch den Player', l.length === 1 && l[0].state === 'done' && !l[0].wait, JSON.stringify(l));
+    const before = w.sent.length;
+    await w.dl.list();
+    check('P4c: beendete Aufträge werden in der Liste nicht erneut abgefragt', w.sent.length === before);
   }
   {
     // Antwort verloren (Record kann angekommen sein): unbestätigt → dlstatus → unbekannt → dlstart mit DERSELBEN Kennung

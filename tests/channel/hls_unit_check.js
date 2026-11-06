@@ -88,13 +88,38 @@ function world(hooks) {
   };
   const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); mem.writes.push(JSON.stringify(v)); } };
   const digest = async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex');
-  const make = () => NS.createDownloads({ channel, storage, digest, random: () => (++n).toString(16).padStart(32, '0') });
-  return { mem, sent, helper, make, dl: make() };
+  const timers = [];   // P4c: Nachprüfungen des Hintergrunds (von Hand ausgelöst)
+  const make = () => NS.createDownloads({ channel, storage, digest, setTimer: (f, ms) => timers.push({ f, ms }), random: () => (++n).toString(16).padStart(32, '0') });
+  return { mem, sent, helper, make, timers, dl: make() };
 }
+const err = (kind, notSent) => { const e = new Error(kind); e.kind = kind; if (notSent) e.notSent = true; return e; };
 const ops = (w, op) => w.sent.filter((s) => s.op === op);
 const rejectWith = async (p) => { try { await p; return null; } catch (e) { return e; } };
 
 (async () => {
+  {
+    // P4c: Player sofort nach dem Tipp geschlossen, hlsstart-Antwort verloren: Nachprüfung ohne Player mit DERSELBEN
+    // Kennung und demselben Plan; hatte der Helfer gestartet, kein zweiter hlsstart.
+    for (const arrived of [false, true]) {
+      let drop = true;
+      const w = world({ hlsstart: (m, h) => {
+        if (!drop) return undefined;
+        drop = false;
+        if (arrived) { h.plans.delete(m.planId); h.jobs.set(m.id, { kind: 'hls', state: 'running', bytes: 0, total: -1, done: 0, of: 11, phase: 'fetch' }); }
+        return err('timeout');
+      } });
+      const p = await w.dl.hlsPlan(URL1, BIND);
+      const r = await w.dl.hlsStart(p.planId, p.options[0].id, 'x');
+      check('P4c HLS (' + (arrived ? 'angekommen' : 'nicht angekommen') + '): unbestätigt, Nachprüfung geplant', r.job.state === 'unconfirmed' && w.timers.length === 1, JSON.stringify(r));
+      w.timers.shift().f(); await new Promise((res) => setTimeout(res, 20));
+      const j = w.mem.jobs.find((x) => x.id === r.job.id);
+      const ids = ops(w, 'hlsstart').map((x) => x.a.id);
+      check('P4c HLS (' + (arrived ? 'angekommen' : 'nicht angekommen') + '): läuft, ' + (arrived ? 'kein zweiter hlsstart' : 'genau ein erneuter hlsstart mit derselben Kennung und demselben Plan'),
+        j.state === 'running' && ids.length === (arrived ? 1 : 2) && ids.every((x) => x === r.job.id)
+        && (arrived || ops(w, 'hlsstart')[1].a.planId === p.planId), JSON.stringify({ j, ids }));
+      check('P4c HLS: Speicher weiterhin ohne Plan, URL oder Token', w.mem.writes.every((x) => !x.includes('media.example') && !x.includes('SECRET123') && !x.includes(p.planId)));
+    }
+  }
   {
     const w = world();
     const caps = await w.dl.capabilities();
