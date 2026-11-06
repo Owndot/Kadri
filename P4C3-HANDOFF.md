@@ -291,6 +291,7 @@ Abschnitt „Fortschritt“ einzutragen.
 | 2026-11-06 | P2 MP4 verschlüsselte Quelle | DONE (getestet lokal), CI läuft | Helfer `13b0893` | Nur mit starkem ETag; Bindung ETag + exakte Länge + Name (verschlüsselt). Nach Prozessende derselbe Auftrag **ab Byte 0**, nur bei gleichem ETag und gleicher Länge (sonst `failed:changed`). Byte-genaues Fortsetzen über ein Prozessende (MediaStore-Pending weiterschreiben) bleibt späterer Schritt. Tests: TestDirectDownloads.vault, 3 Mutationsproben, MP4-JVM 44/44 | Instrumentierung MP4-Tresor ergänzen |
 | 2026-11-06 | P2 Kadri | DONE (getestet lokal) | Kadri (dieser Commit) | „interrupted“ wird weiter abgefragt (`FINAL` = done/failed/cancelled), damit ein vom Helfer fortgesetzter Auftrag wieder „läuft“ zeigt; kein zweiter Start, solange er läuft; Journal nur bei echter Änderung gespeichert (Browser-Test „Schließen verändert weder Downloadjournal …“ deckte das Neuschreiben auf). Texte für „Unterbrochen“ nennen das Öffnen der Helfer-App. Tests: download_unit 116/116, hls_unit 69/69, Integration 38/38 + 25/25 + 74/74, Mutation 53, Browser 29/29, 134/134, 24/24, 18/18 (gegen Desktop-Helfer `13b0893`) | Kadri-CI; nach grüner Helfer-CI Pin `helper_commit` anheben |
 | 2026-11-06 | CI-Befund P1 | DONE | Helfer `8b906c5` | Mutant „Größe schon bei Journal-DONE“ überlebte in der CI (zeitabhängig). Neuer Test-Haken `done-journaled` hält den Lauf genau im Fenster – jetzt deterministisch | – |
+| 2026-11-06 | P3 Pakete | DONE (CI grün) | Helfer `862c1d1` (Workflow) / Quelle `8b906c5`; Kadri `492d234` (Workflow) / Quelle `ef9a5ed` | **P4 TEST Helfer** `de.evp.helfer.p4test` versionCode 6: Lauf https://github.com/Owndot/video-assistent-helper/actions/runs/42282630066, Artefakt https://github.com/Owndot/video-assistent-helper/actions/runs/42282630066/artifacts/13536097368 (bis 2026-11-08), APK-SHA-256 `12b76b24d169e1448162c42a5aec020cb068069d8804a6215ce23098504e7776`, neues Wegwerf-Zertifikat `35207debedfca6204f57ecbe747c933a7011af87bca31c6d26d9bc06e91ad5e3` (alte P4-App deinstallieren, neu koppeln). **Kadri P4 TEST** (ID `pcccpjllneffccpenbepmfbkjedllkkf`): Lauf https://github.com/Owndot/Kadri/actions/runs/42281402671, Artefakt https://github.com/Owndot/Kadri/actions/runs/42281402671/artifacts/13535432298 (bis 2026-11-08), ZIP-SHA-256 `54dbe2d143252acd9f0bb2c3fdfaa1810f558d0d21af3a5fa78ef772f1bc8067`. Hinweis: das Feld „changes“ in `p4test-evidence.json` nennt noch den P4c-2-Text (fester Text im Workflow) – Inhalt der APK ist `8b906c5`. P4B-A10-SIZE bleibt rot | Samsung-Nachtest: F1 (Beenden/Stopp erzwingen/Neu öffnen, dann neue MP4- und HLS-Downloads), F2 (Anzeige nie > 100 %, „x/y Teile · n MB geladen“, Endgröße), P2 (während HLS/MP4-Download Helfer beenden → App öffnen → setzt ohne Webseite fort; nach Abbruch nie) |
 
 ---
 
@@ -303,8 +304,7 @@ Abschnitt „Fortschritt“ einzutragen.
 - **P2** verschlüsselte Quelle: HLS (`60a831f`) und MP4 (`13b0893`, Neustart ab Byte 0 bei gleichem ETag/Länge),
   Kadri fragt „interrupted“ weiter ab (`a02c6a6`). Offen: Instrumentierung des MP4-Tresors auf dem Gerät;
   byte-genaues MP4-Fortsetzen über ein Prozessende.
-- **P3** Pakete: nach grüner CI von Helfer `8b906c5` und Kadri `ef9a5ed` die SHAs in `p4-test-package.yml` (Helfer)
-  bzw. `p4-test-extension.yml` (Kadri) setzen und pushen; Prüfsummen und Artefakt-Links in „Fortschritt“ eintragen.
+- **P3** Pakete: gebaut (siehe „Fortschritt“, Zeile P3). Offen: Samsung-Nachtest durch den Eigentümer.
 
 ## CODEX – START HERE
 
