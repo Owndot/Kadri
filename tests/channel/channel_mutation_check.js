@@ -35,7 +35,7 @@ const NODE_MUTANTS = [
   ['Download: URL-Zeichen ungeprüft (Zeilenumbruch, Leerzeichen)', 'channel-session.js', "!DL_URL.test(a.url)", "!/^https?:/.test(a.url)"],
   ['Download: Name ungeprüft', 'channel-session.js', "a.name.length > 120 || DL_NAME_BAD.test(a.name)", "a.name.length > 120"],
   ['Download: dlstatus/dlcancel mit Zusatzfeldern', 'channel-session.js', "return keys.every((k) => k === 'id') ? { op, id: a.id } : null;", "return { op, id: a.id };"],
-  ['Verwaltung: doppelter Start nicht erkannt', 'channel-downloads.js', "const same = jobs.find((x) => x.key === key && !TERMINAL.has(x.state));", "const same = null;"],
+  ['Verwaltung: doppelter Start nicht erkannt', 'channel-downloads.js', "const same = jobs.find((x) => x.key === key && !FINAL.has(x.state));", "const same = null;"],
   ['Verwaltung: Kennung erst nach dem Senden gespeichert', 'channel-downloads.js', "        await save(jobs);                // erst gespeichert, dann gesendet: die Kennung überlebt jeden Abbruch\n", ""],
   ['Verwaltung: URL im Speicher', 'channel-downloads.js', "const j = { id: random(), key, name:", "const j = { id: random(), key, url, name:"],
   ['Verwaltung: Wiederholung mit neuer Kennung', 'channel-downloads.js', "try { await send(j, url); }   // dieselbe Kennung", "try { j.id = random(); await send(j, url); }"],

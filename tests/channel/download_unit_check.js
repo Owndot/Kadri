@@ -380,6 +380,26 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
   check('Text: private Adresse', NS.downloadReasonText('blocked_address').includes('privates Netz'));
   check('Text: Speicherberechtigung (Android 8–9)', NS.downloadReasonText('storage_permission').includes('Speicherzugriff'));
   check('Text: unbekannter Grund → allgemein', NS.downloadReasonText('xyz') === 'Download fehlgeschlagen');
+  // P4c-3 (P2): der Helfer setzt einen unterbrochenen Auftrag selbst aus der verschlüsselten Quelle fort → Kadri fragt
+  // „interrupted“ weiter ab und zeigt den neuen Stand; kein zweiter Start derselben Datei, solange er wieder läuft.
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.jobs.get(r.job.id).state = 'interrupted';
+    const a = await w.dl.status(r.job.id);
+    check('P4c-3: unterbrochen übernommen', a.job.state === 'interrupted', JSON.stringify(a.job));
+    w.helper.jobs.get(r.job.id).state = 'running';
+    const b = await w.dl.status(r.job.id);
+    check('P4c-3: vom Helfer fortgesetzt → wieder „läuft“ (unterbrochen ist nicht endgültig)', b.job.state === 'running', JSON.stringify(b.job));
+    w.helper.jobs.get(r.job.id).state = 'interrupted';
+    await w.dl.status(r.job.id);
+    w.helper.jobs.get(r.job.id).state = 'running';
+    const again = await w.dl.start(URL1);
+    check('P4c-3: erneuter Tipp, während der Helfer fortsetzt → derselbe Auftrag, kein zweiter dlstart', again.existing && again.job.id === r.job.id && starts(w).length === 1);
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const listed = await w.dl.list();
+    check('P4c-3: Menüliste fragt auch unterbrochene ab', listed.find((j) => j.id === r.job.id).state === 'done', JSON.stringify(listed));
+  }
   // P4c-3 (P1): Zahlen nur aus verlässlichem Zähler/Nenner; Samsung zeigte „über 300 %“ und „5 MB von 2 MB“
   {
     const MB = 1048576, d = NS.describeDownload;

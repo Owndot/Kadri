@@ -20,6 +20,9 @@
   const KEY = 'kadri-dl-jobs';
   const MAX_JOBS = 20;
   const TERMINAL = new Set(['done', 'failed', 'cancelled', 'interrupted']);
+  // P4c-3 (P2): endgültig. „interrupted“ ist es nicht mehr ganz – der Helfer kann einen unterbrochenen Auftrag aus der
+  // verschlüsselten Quelle (≤ 6 h) selbst fortsetzen; deshalb wird er weiter abgefragt (keine neuen Starts von hier).
+  const FINAL = new Set(['done', 'failed', 'cancelled']);
   const STATES = new Set(['running', 'done', 'failed', 'cancelled', 'interrupted']);
   const PROBE_ID = '0'.repeat(32);
   // P4c-3: Gründe einer gescheiterten Abfrage, die beim Auftrag vermerkt werden (feste Codes aus channel-session.js)
@@ -107,7 +110,7 @@
         j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
       }
       j.seen = now();
-      j.check = '';   // P4c-3: der Helfer hat geantwortet
+      if (j.check) j.check = '';   // P4c-3: der Helfer hat geantwortet
       if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); }
       return r.state;
     }
@@ -134,7 +137,7 @@
         if (!url) { const e = new Error('input'); e.kind = 'input'; throw e; }
         const key = await digest(url);
         const jobs = await load();
-        const same = jobs.find((x) => x.key === key && !TERMINAL.has(x.state));
+        const same = jobs.find((x) => x.key === key && !FINAL.has(x.state));
         if (same && await stillActive(jobs, same)) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key, name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '', at: now(), seen: 0 };
@@ -160,21 +163,25 @@
         const jobs = await load();
         const j = jobs.find((x) => x.id === id);
         if (!j) return null;
-        if (TERMINAL.has(j.state)) return { job: view(j), reachable: true };
+        if (FINAL.has(j.state)) return { job: view(j), reachable: true };
         return refresh(jobs, j);
       });
     }
     // P4c: gespeicherter Stand kann veraltet sein (niemand hat nachgefragt, z. B. Player zu): vor der Doppelstart-Prüfung
     // beim Helfer nachfragen. Nicht erreichbar → als laufend behandeln (lieber kein zweiter Start).
     async function stillActive(jobs, j) {
-      if (TERMINAL.has(j.state)) return false;
+      if (FINAL.has(j.state)) return false;
       // Nicht erreichbar → als laufend behandeln (lieber kein zweiter Start; eine Abbruchabsicht wird nie überholt).
       // P4c-3: refresh() vermerkt dann den Grund (check) – die Anzeige zeigt ihn statt eines endlosen „Lädt …“.
       try { await refresh(jobs, j); } catch (e) { return true; }
       return !TERMINAL.has(j.state);
     }
+    // P4c-3: nur bei echter Änderung speichern (eine Abfrage ohne neuen Stand – etwa eines unterbrochenen Auftrags –
+    // schreibt das Journal nicht neu; „seen“ ist nur ein Zeitstempel).
+    const fingerprint = (j) => JSON.stringify(Object.assign({}, j, { seen: 0 }));
     async function refresh(jobs, j) {
       const id = j.id;
+      const before = fingerprint(j);
       {
         let s;
         try { s = apply(j, await channel.download('dlstatus', { id })); }
@@ -207,7 +214,7 @@
             catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : 'not_started'; pending.delete(id); } }
           } else { j.state = 'failed'; j.reason = 'not_started'; }
         }
-        await save(jobs);
+        if (fingerprint(j) !== before) await save(jobs);
         return { job: view(j), reachable: true };
       }
     }
@@ -252,7 +259,7 @@
     // P4c: Liste für Menü/Popup mit aktuellem Stand: laufende Aufträge einmal beim Helfer nachfragen (höchstens
     // MAX_JOBS Abfragen; nicht erreichbar → gespeicherter Stand). Der Player muss dafür nicht offen sein.
     async function list() {
-      const ids = (await serial(async () => (await load()).filter((j) => !TERMINAL.has(j.state)).map((j) => j.id)));
+      const ids = (await serial(async () => (await load()).filter((j) => !FINAL.has(j.state)).map((j) => j.id)));
       for (const id of ids) { try { await status(id); } catch (e) { break; } }
       return serial(async () => (await load()).map(view));
     }
@@ -440,8 +447,8 @@
       case 'cancelling': return { label: lost ? 'Abbruch angefordert – ' + lost : 'Wird abgebrochen …', progress };
       case 'done': return { label: 'Gespeichert in Download/Video-Assistent', progress };
       case 'cancelled': return { label: 'Abgebrochen', progress };
-      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – in der Benachrichtigung der Helfer-App oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
-        : 'Unterbrochen (Helfer neu gestartet) – erneut starten', progress };
+      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – Helfer-App öffnen, in ihrer Benachrichtigung oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
+        : 'Unterbrochen – öffne die Helfer-App (setzt bis zu 6 h automatisch fort) oder starte erneut', progress };
       default: return { label: reasonText(j.reason), progress };
     }
   }
