@@ -91,7 +91,7 @@ Ergebnis: **nötig.** Die C3-Testerweiterung (`fhjmppadldgkhdgkdplpalmoooocoinn`
   gespeicherte Zustände werden vor Doppelstart-Prüfung, `find` und Liste beim Helfer aufgefrischt (ein veraltetes
   „läuft“ blockierte sonst einen erneuten Download derselben Datei).
 - **Wiederaufnahme:** der Helfer wartet selbst auf Netz bzw. den nächsten Versuch; Kadri zeigt „Wartet auf Internet –
-  setzt automatisch fort“ bzw. „Verbindung gestört – neuer Versuch in Kürze“. Gekoppelt mit Helfer `469e07b`.
+  setzt automatisch fort“ bzw. „Verbindung gestört – neuer Versuch in Kürze“. Gekoppelt mit Helfer `ad3c597`.
 - **T4:** Die Fixture `fmp4_muxed` verwies auf `init_%v.mp4` (ffmpeg ersetzt `%v` bei genau einer Variante nicht; „%v“ ist
   keine gültige Prozent-Kodierung). Jetzt `init_0.mp4`; Generator korrigiert; `tests/p4_device_page_check.py` lehnt jede
   ungültig kodierte URI ab.
