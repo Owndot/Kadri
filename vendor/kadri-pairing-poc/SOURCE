@@ -1,5 +1,5 @@
 # Read by CI (job helper-channel: WASM rebuild + desktop helper) and by tests/channel/*.  One key per line.
 repository=Owndot/video-assistent-helper
-helper_commit=ad69aa2876c24d8ea67debce3e4323558ad74639
+helper_commit=9da44342b26516d6b4ef4448e01ae4691508ad1d
 sha256_js=bda8018d18c08ae01b4a935e5761f1ce7d13e67928636ce3e3f7261451bde874
 sha256_wasm=d84e09bbfd365f69f50de99491705ba80a8ee85174dad220c6f5ed94c8fb79a4
