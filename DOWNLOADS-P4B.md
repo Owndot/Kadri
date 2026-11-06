@@ -64,3 +64,15 @@ Ergebnis: **nötig.** Die C3-Testerweiterung (`fhjmppadldgkhdgkdplpalmoooocoinn`
 - Samsung-Testmatrix und Mac-Signieranleitung: im Helfer-Repository `P4C-VORBEREITUNG.md`.
 - Android 10: der MediaStore-Befund des Helfers (P4B-A10-SIZE) betrifft Kadri nicht; vom Eigentümer nur für den
   P4c-Test auf Android 17 hingenommen.
+
+## P4c-Durchführung (Freigabe des Eigentümers, kontrollierter Samsung-Test)
+
+- `63e5cd7`: Kadri koppelt mit Helfer `9da4434`, der Quelle der Test-App `de.evp.helfer.p4test`. Kern und WASM sind
+  unverändert (CI baut und vergleicht sie); der Desktop-Helfer der CI läuft damit genau mit dem Helfer-Code der APK.
+- `.github/workflows/p4-test-extension.yml`: baut exakt `63e5cd7` (nur die Workflow-Datei bzw. Doku verschieden),
+  packt „Kadri P4 TEST“ aus zwei Wegen bytegleich und prüft das **ausgelieferte** Paket gegen den echten ChannelServer
+  von `9da4434` (Kanalsicherheit, fail-closed) sowie ID und getrennte Daten im Wegwerf-Chromium. Hochgeladen erst nach
+  grüner normaler CI auf `63e5cd7`: entpackter Ordner `kadri-p4-test`, dasselbe als `kadri-p4-test-extension.zip`,
+  `SHA256SUMS`, Nachweis (Commits, ID, Testseiten-Link, Ablauf). Öffentliches Actions-Artefakt, **2 Tage**.
+- Gegenstück im Helfer: `.github/workflows/p4-test-package.yml` (Wegwerf-signierte Test-APK, Anleitung und Portregel in
+  `P4C-VORBEREITUNG.md` §6). Produktion bleibt UNAPPROVED.
