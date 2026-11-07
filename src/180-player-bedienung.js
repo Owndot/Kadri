@@ -242,19 +242,7 @@
         err: me ? me.code : 0, paused: !!el.paused };
     }
     function hdlDiagInfo(o, u) {
-      let e = null;
-      try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
-      const first = e && e.provenance && e.provenance[0];
-      const play = o.ctx === st.media.own ? hdlPlaySample(u) : null;
-      return {
-        identity: o.identity || '?', qstate: e && e.quality ? e.quality.status : '?', play: play,
-        origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
-        binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
-        kind: e ? e.kind : '?', role: e ? e.role : '?',
-        height: e && e.quality && e.quality.status !== 'unknown' && e.quality.value ? e.quality.value.height || 0 : 0,
-        ageSec: first && first.observedAt ? Math.round((Date.now() - first.observedAt) / 1000) : -1,
-        loaded: !!(e && e.browser === 'loaded'),
-      };
+      return hdlSourceInfo(o, o.ctx === st.media.own ? hdlPlaySample(u) : null);
     }
     st.hdlDiagText = () => hdlDiagText(hdlDiags[0]);
     hdlDiagChanged = () => { if (vp === st) { try { bDl.dataset.hdlDiag = st.hdlDiagText(); } catch (e) {} } };
@@ -337,13 +325,14 @@
       if (hdlActive(st.hdl.job) && st.hdl.url === u) { toast(hdlText(st.hdl.job)); return; }
       st.hdl.busy = true;
       toast('Helfer-App startet den Download …');
-      const info = hdlDiagInfo(o, u);
+      const info = Object.assign(hdlDiagInfo(o, u), { stage: 'start' });
       // Nur für die eigene Wiedergabe: nach einem Fehler einmal nachsehen, ob der Browser dieselbe Adresse weiter lädt
       const local = info.play ? () => hdlPlaySample(u) : null;
       helperDl('start', { url: u, name: (pageTitle() || 'Video').slice(0, 100) }).then((r) => {
         st.hdl.busy = false;
         // Diagnose unabhängig vom Player: auch wenn er inzwischen zu oder ersetzt ist (Gerätetest R3)
         if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, local);
+        else hdlDiagFailure(info, r);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
@@ -362,8 +351,10 @@
       if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut auswählen'); return; }
       st.hdl.busy = true;
       toast('Helfer-App prüft den Stream …');
+      const info = Object.assign(hdlDiagInfo(o, sel.url), { stream: true, stage: 'hlsplan' });
       helperDl('hlsplan', { url: sel.url, bind: sel.bind }).then((r) => {
         st.hdl.busy = false;
+        if (!r || !r.ok || !r.value || !Array.isArray(r.value.options)) hdlDiagFailure(info, r);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
@@ -383,12 +374,13 @@
       if (st.hdl.busy) return;
       st.hdl.busy = true;
       toast(resume ? 'Helfer-App setzt den Download fort …' : 'Helfer-App startet den Download …');
-      const info = Object.assign(hdlDiagInfo(o, u), { stream: true });
+      const info = Object.assign(hdlDiagInfo(o, u), { stream: true, planned: true, stage: resume ? 'hlsresume' : 'hlsstart' });
       const op = resume ? 'hlsresume' : 'hlsstart';
       const args = resume ? { id: resume.id, planId, option: x.id } : { planId, option: x.id, name: (pageTitle() || 'Video').slice(0, 100) };
       helperDl(op, args).then((r) => {
         st.hdl.busy = false;
         if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), null, r.value.job, null);
+        else hdlDiagFailure(info, r);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }

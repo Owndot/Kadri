@@ -75,7 +75,7 @@
       // laufender Auftrag dieses Videos: Stand und Abbrechen statt eines zweiten Starts
       if (pageDl.job && pageDlActive(pageDl.job)) {
         const s = await helperDl('status', { id: pageDl.job.id });
-        if (s && s.ok && s.value && s.value.job) pageDl.job = s.value.job;
+        if (s && s.ok && s.value && s.value.job) { pageDl.job = s.value.job; hdlDiagUpdate(pageDl.job); }
         if (pageDlActive(pageDl.job)) { pageDlStatusMenu(v); return; }
       }
       const c = await helperDl('caps');
@@ -89,7 +89,11 @@
       for (const sel of known) {
         if (!sel.ok) continue;
         const f = await helperDl('find', { url: sel.url });
-        if (f && f.ok && f.value && pageDlActive(f.value)) { pageDl.job = f.value; pageDl.url = sel.url; pageDlStatusMenu(v); return; }
+        if (f && f.ok && f.value && pageDlActive(f.value)) {
+          if (!hdlDiagFor(f.value.id)) hdlDiagNew({ origin: '?', binding: '?', ageSec: -1, existing: true },
+            f.value.kind === 'hls' ? null : sel.url, f.value);
+          pageDl.job = f.value; pageDl.url = sel.url; pageDlStatusMenu(v); return;
+        }
       }
       const n = o.mp4.length + o.hls.length;
       if (!n) { pageDlMenu('Speichern', pageDlExternal(v, [{ label: pageDlReason(o, caps), info: true }])); return; }
@@ -106,7 +110,16 @@
     }
   }
   function pageDlName() { return (pageTitle() || 'Video').slice(0, 100); }
-  function pageDlStarted(r, u) {
+  function pageDlPlaySample(v, u) {
+    if (!v || !v.isConnected || v.srcObject) return null;
+    try { if (!u || v.currentSrc !== new URL(u).href) return null; } catch (e) { return null; }
+    const seconds = (r) => { let n = 0; try { for (let i = 0; i < r.length; i++) n += r.end(i) - r.start(i); } catch (e) {} return Math.round(n); };
+    return { rs: v.readyState, w: v.videoWidth || 0, h: v.videoHeight || 0, buf: seconds(v.buffered),
+      played: seconds(v.played), err: v.error ? v.error.code : 0, paused: !!v.paused };
+  }
+  function pageDlStarted(r, u, info, local) {
+    if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), info.stream ? null : u, r.value.job, local);
+    else hdlDiagFailure(info, r);
     if (!r) { toast('Helfer-App nicht erreichbar'); return; }
     if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
     pageDl.job = r.value.job; pageDl.url = u;
@@ -116,20 +129,24 @@
   async function pageDlStartMp4(x) {
     const sel = mediaRegistry.resolveSelection(x.ctx, x.sourceId, x.revision);
     if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
+    const v = active;
+    const info = Object.assign(hdlSourceInfo(x, pageDlPlaySample(v, sel.url)), { stage: 'start' });
     toast('Helfer-App startet den Download …');
-    pageDlStarted(await helperDl('start', { url: sel.url, name: pageDlName() }), sel.url);
+    pageDlStarted(await helperDl('start', { url: sel.url, name: pageDlName() }), sel.url, info,
+      info.play ? () => pageDlPlaySample(v, sel.url) : null);
   }
   async function pageDlPlan(x) {
     const sel = mediaRegistry.resolveStream(x.ctx, x.sourceId, x.revision);
     if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
+    const info = Object.assign(hdlSourceInfo(x), { stream: true, stage: 'hlsplan' });
     toast('Helfer-App prüft den Stream …');
     const r = await helperDl('hlsplan', { url: sel.url, bind: sel.bind });
-    if (!r) { toast('Helfer-App nicht erreichbar'); return; }
-    if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
+    if (!r) { hdlDiagFailure(info, r); toast('Helfer-App nicht erreichbar'); return; }
+    if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
     const p = r.value;
-    if (p.job && pageDlActive(p.job)) { pageDl.job = p.job; pageDl.url = sel.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
+    if (p.job && pageDlActive(p.job)) { hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = sel.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
     const resume = p.job && p.job.state === 'interrupted' ? p.job : null;
-    const go = (opt) => pageDlGo(sel.url, p.planId, opt, resume);
+    const go = (opt) => pageDlGo(sel.url, p.planId, opt, resume, x);
     if (p.options.length === 1) { await go(p.options[0]); return; }   // eine Qualität, ein Ton: direkt
     const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
     pageDlMenu(resume ? 'Stream fortsetzen' : 'Stream speichern', p.options.slice(0, 12).map((o) => ({
@@ -138,10 +155,11 @@
       sub: dur + (o.bandwidth ? Math.round(o.bandwidth / 1000) + ' kbit/s' : '') + (o.codecs === 'ok' ? '' : ' · ' + tr('Format wird beim Laden geprüft')),
       fn: () => go(o) })));
   }
-  async function pageDlGo(u, planId, o, resume) {
+  async function pageDlGo(u, planId, o, resume, x) {
+    const info = Object.assign(hdlSourceInfo(x), { stream: true, planned: true, stage: resume ? 'hlsresume' : 'hlsstart' });
     toast(resume ? 'Helfer-App setzt den Download fort …' : 'Helfer-App startet den Download …');
     const r = await helperDl(resume ? 'hlsresume' : 'hlsstart', resume ? { id: resume.id, planId: planId, option: o.id } : { planId: planId, option: o.id, name: pageDlName() });
-    pageDlStarted(r, u);
+    pageDlStarted(r, u, info);
   }
   function pageDlStatusMenu(v) {
     const j = pageDl.job;

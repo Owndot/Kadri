@@ -50,7 +50,37 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
 - **BLOCKED – unveränderte Releasegrenzen:** P4B-A10-SIZE bleibt rot; keine unabhängige
   Sicherheitsfreigabe, keine Merges/Tags/Releases/Produktionssignierung.
 
-Aktuelle Untersuchung: noch keine Codeänderung, kein neuer Testlauf oder neuer CI-Erfolg behauptet.
+### Diagnose-Teilpaket (2026-11-07)
+
+- **DONE – Dokumentationscheckpoint:** `6128193` auf den bestehenden Kadri-Branch gepusht.
+- **IN_PROGRESS – Kadri-Diagnosekorrektur:** gemeinsames `hdlSourceInfo` für Player und direkten Knopf;
+  `hdlDiagNew` auch am direkten Knopf; Ablehnungen vor Auftragsanlage (`hlsplan`/Start), Typ,
+  HTTP-Code, Aufruf, Zustand, Quellenbeobachtungsalter und Aktualität der Registry-Auswahl.
+  `interrupted` behält den Fehlergrund und wird weiter abgefragt (15-min-Grenze/Seitenlebenszeit).
+  MP4-GET und Range werden unterschieden. Vorhandener anonymer MP4-Vergleich bleibt begrenzt;
+  HLS macht **keinen** irreführenden Hauptlistenabruf als Ersatz für die unbekannte Fehlerressource.
+  Ressourcenanzahl des alten Helfers enthält Init-Dateien, deshalb ausdrücklich nicht als reine
+  Segmentzahl bezeichnet. Genaue HLS-Fehlerressource, Redirectkette und Token-Ablauf bleiben unbekannt.
+  Keine Änderung an Helper, Auswahl-/Downloadlogik, Retry, Vault, Netzwerkregeln oder Signierung.
+- **DONE – lokal geprüft:** Build; `download_diag_check.js` 15/15; derselbe Test gegen `bc36ba9`
+  scheitert an „direct MP4 creates a diagnostic without opening the player“ (Regression belegt).
+  Download-Unit 116/116, HLS-Unit 69/69, HLS-Integration 25/25 gegen den echten unveränderten
+  Helper; Quellen-/Probe-Mutationen 15/15, bestehender Download-Regressionscheck und Helper-Route grün.
+- **NEEDS_TEST – neue Browser-Protokollfälle:** MP4 GET/Redirect 404; HLS Medienliste beim Plan,
+  Haupt-/Medienliste erst beim Start, Init, erstes/späteres Segment, Redirect auf 404.
+  Server erfasst echte Status/Range/fehlende Credentials; Diagnose über „Anonymisiert kopieren“;
+  keine Veröffentlichung, Browserwiedergabe bleibt verfügbar. Das sind synthetische Diagnosefälle,
+  keine nachgewiesenen site-a-Ursachen.
+- **BLOCKED – lokale Browserausführung:** verwaltete Chromium-Policy
+  `ExtensionInstallBlocklist: ["*"]` verhindert das Laden der Test-Erweiterung;
+  `chrome://extensions` meldet `ERR_BLOCKED_BY_ADMINISTRATOR`. Mit vorinstalliertem Chromium 156
+  und projektkonformem Playwright 1.56/Chromium 141 geprüft. Policy wird nicht verändert.
+  Ein überlappender lokaler Testversuch traf zusätzlich auf den belegten Fixture-Port 8790;
+  diese Startfehler sind **keine** bestandenen oder fehlgeschlagenen Produktprüfungen.
+  Vollständige Browserprüfung über bestehende GitHub-CI steht aus.
+- **NEEDS_TEST – Samsung:** vorhandene anonymisierte Diagnose angefragt, noch nicht erhalten.
+  Danach entscheidet der tatsächliche Downloadtyp, ob die alte APK ausreicht oder zusätzliche
+  ressourcengenaue Helper-Diagnose notwendig ist. Eine site-a-Korrektur ist noch nicht behauptet.
 
 ---
 

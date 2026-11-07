@@ -23,7 +23,30 @@
   let hdlDiagChanged = null;   // (der offene Player zeigt den Stand am Download-Knopf, für Tests)
   const hdlDiagUrl = new WeakMap();
   const hdlDiagLocal = new WeakMap();   // Blick auf die eigene Wiedergabe derselben Adresse (nur Zahlen, einmal nach dem Fehler)
-  const HDL_TERMINAL = ['done', 'failed', 'cancelled', 'interrupted'];
+  const HDL_TERMINAL = ['done', 'failed', 'cancelled'];
+  // Gemeinsame Quellenangaben für Webseitenknopf und Player. Alter = erste Beobachtung, NICHT Token-Gültigkeit.
+  function hdlSourceInfo(o, play) {
+    let e = null;
+    try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
+    const first = e && e.provenance && e.provenance[0];
+    return { identity: o.identity || '?', qstate: e && e.quality ? e.quality.status : '?', play: play || null,
+      origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
+      binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
+      kind: e ? e.kind : '?', role: e ? e.role : '?',
+      height: e && e.quality && e.quality.status !== 'unknown' && e.quality.value ? e.quality.value.height || 0 : 0,
+      ageSec: first && first.observedAt ? Math.max(0, Math.round((Date.now() - first.observedAt) / 1000)) : -1,
+      loaded: !!(e && e.browser === 'loaded'), current: !!(e && e.revision === o.revision) };
+  }
+  const hdlDiagCode = (s) => typeof s === 'string' && /^[a-z0-9_]{1,40}$/.test(s) ? s : '';
+  // Fehler vor einer Auftragskennung (z. B. hlsplan): ebenfalls behalten, ohne künstlichen Downloadauftrag.
+  function hdlDiagFailure(info, r) {
+    const d = Object.assign({ at: Date.now(), state: 'rejected', failAfter: 0 }, info,
+      { reason: hdlDiagCode(r && r.error && (r.error.reason || r.error.kind)) || 'unreachable' });
+    hdlDiags.unshift(d);
+    while (hdlDiags.length > 4) hdlDiags.pop();
+    if (typeof hdlDiagChanged === 'function') hdlDiagChanged();
+    return d;
+  }
   function hdlDiagFor(id) { return hdlDiags.find((d) => d.id === id) || null; }
   function hdlDiagNew(info, url, job, local) {
     if (!job || !job.id) return null;
@@ -36,17 +59,25 @@
       if (typeof local === 'function') hdlDiagLocal.set(d, local);
       hdlDiagWatch(d);
     }
+    d.type = job.kind === 'hls' || info.stream ? 'hls' : 'mp4';
     hdlDiagUpdate(job);
     return d;
   }
   function hdlDiagUpdate(job) {
     const d = job && hdlDiagFor(job.id);
     if (!d || HDL_TERMINAL.indexOf(d.state) >= 0) return;
-    d.state = String(job.state || '');
-    if (d.state === 'failed') {
-      d.reason = String(job.reason || '');
+    const previous = d.state + ':' + d.reason;
+    d.state = ['starting', 'unconfirmed', 'running', 'cancelling', 'interrupted', 'done', 'failed', 'cancelled'].indexOf(job.state) >= 0 ? job.state : 'unknown';
+    d.reason = hdlDiagCode(job.reason);
+    d.check = hdlDiagCode(job.check);
+    d.phase = ['fetch', 'mux', 'verify', 'save'].indexOf(job.phase) >= 0 ? job.phase : '';
+    if (d.type === 'hls') {
+      d.done = Number.isSafeInteger(job.done) && job.done >= 0 ? job.done : 0;
+      d.of = Number.isSafeInteger(job.of) && job.of >= 0 ? job.of : 0;
+    }
+    if ((d.state === 'failed' || d.state === 'interrupted') && previous !== d.state + ':' + d.reason) {
       d.failAfter = Math.round((Date.now() - d.at) / 1000);
-      if (/^http_\d{3}$/.test(d.reason)) hdlDiagProbe(d);
+      if (/^(range_)?http_\d{3}$/.test(d.reason)) hdlDiagProbe(d);
       hdlDiagAfter(d);
     }
     if (HDL_TERMINAL.indexOf(d.state) >= 0 && d.probe !== 'läuft') hdlDiagUrl.delete(d);
@@ -55,6 +86,8 @@
   function hdlDiagProbe(d) {
     const u = hdlDiagUrl.get(d), x = gmXhr();
     if (d.probe) return;
+    // Der Helfer meldet keine fehlerhafte HLS-Adresse. Ein Abruf der Hauptliste wäre KEIN Segmentvergleich.
+    if (d.type === 'hls') { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
     if (!x || !u) { d.probe = 'nicht möglich'; return; }
     d.probe = 'läuft';
     let req = null, fin = false;
@@ -90,7 +123,7 @@
   }
   function hdlDiagWatch(d) {
     const tick = () => {
-      if (HDL_TERMINAL.indexOf(d.state) >= 0 || Date.now() - d.at > 15 * 60e3) { if (d.probe !== 'läuft') hdlDiagUrl.delete(d); return; }
+      if (hdlDiags.indexOf(d) < 0 || HDL_TERMINAL.indexOf(d.state) >= 0 || Date.now() - d.at > 15 * 60e3) { if (d.probe !== 'läuft') hdlDiagUrl.delete(d); return; }
       if (document.hidden) { setTimeout(tick, 3000); return; }
       helperDl('status', { id: d.id }).then((r) => {
         if (r && r.ok && r.value && r.value.job) hdlDiagUpdate(r.value.job);
@@ -101,7 +134,15 @@
   }
   function hdlDiagText(d) {
     if (!d) return '-';
-    return 'Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
+    const status = /^(?:range_)?http_(\d{3})$/.exec(d.reason || '');
+    const type = d.type || (d.stream ? 'hls' : d.kind === 'mp4' ? 'mp4' : '?');
+    const phase = d.stage === 'hlsplan' ? 'hlsplan' : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
+    return 'Typ ' + type + ' · Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
+      (status ? ' · HTTP ' + status[1] : '') + ' · Phase ' + phase + (d.stage ? ' · Aufruf ' + d.stage : '') +
+      (d.check ? ' · Statusabfrage ' + d.check : '') +
+      (type === 'hls' ? ' · Planung ' + (d.planned ? 'erfolgreich (erste Option)' : 'unbekannt') +
+        ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?') +
+        ' · genaue Fehlerressource/Segmentzahl unbekannt' : '') +
       ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
       ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
       ' · Identität ' + (d.identity === 'played' ? 'diese Wiedergabe' : d.identity === 'declared' ? 'laut Seite' : '?') +
@@ -109,6 +150,7 @@
       (d.play ? ' · Wiedergabe beim Start: Bild ' + d.play.w + 'x' + d.play.h + ' dekodiert, Bereitschaft ' + d.play.rs +
         ', gepuffert ' + d.play.buf + ' s, gespielt ' + d.play.played + ' s' + (d.play.err ? ', Medienfehler ' + d.play.err : '') : '') +
       ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') + (d.existing ? ' · Auftrag bestand schon' : '') +
+      ' · Auswahl noch aktuell ' + (d.current === true ? 'ja' : d.current === false ? 'nein' : '?') +
       (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '') + (d.after ? ' · nach dem Fehler: ' + d.after : '');
   }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.

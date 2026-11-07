@@ -32,6 +32,16 @@ class M(http.server.BaseHTTPRequestHandler):
         hit = {'path': u.path, 'browser': browser, 'cookie': self.headers.get('Cookie', ''), 'auth': self.headers.get('Authorization', ''),
                'ref': self.headers.get('Referer', ''), 'range': self.headers.get('Range', '')}
         HITS.append(hit)
+        # Synthetic HTTP failures only for the independent helper. Browser playback remains available.
+        # fail_after=1: planning can succeed, the same URL becomes unavailable at download start.
+        target = STATE.get('fail_path')
+        if not browser and target and (u.path == '/d/gone' or u.path == target and
+                sum(1 for x in HITS if not x['browser'] and x['path'] == target) > STATE.get('fail_after', 0)):
+            code = 302 if STATE.get('redirect') and u.path != '/d/gone' else 404
+            hit['status'] = code
+            self.send_response(code)
+            if code == 302: self.send_header('Location', '/d/gone')
+            self.send_header('Content-Length', '0'); self.end_headers(); return
         body, ctype = None, 'application/octet-stream'
         title = re.sub(r'[^A-Za-z0-9]', '', urllib.parse.parse_qs(u.query).get('n', [''])[0])[:20]
         if u.path == '/d/hls.html':
@@ -177,6 +187,58 @@ with sync_playwright() as p:
     mp4hits = [x for x in helper_hits()[n0:] if x['path'] == '/d/clip.mp4']
     check('MP4: genau ein Abruf der Datei durch den Helfer, ohne Cookie/Referer', len(mp4hits) == 1 and not mp4hits[0]['cookie'] and not mp4hits[0]['ref'], mp4hits)
     check('MP4: Video der Seite läuft weiter, Player zu', page_playing(pg) and not player_open(pg))
+
+    # ---------- Proven diagnostic gaps: real HTTP failures, never a claim about site-a's cause ----------
+    def anon_diag():
+        # Use the same menu and anonymized copy path as on Samsung.
+        pg.bring_to_front()
+        sw.evaluate("""async () => { const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
+          await chrome.tabs.sendMessage(t.id, { t: 'kadri-menu' }, { frameId: 0 }); }""")
+        pg.wait_for_function('() => !!%s.querySelector(".diag textarea")' % R, timeout=10000)
+        pg.evaluate('() => %s.querySelector(".diag .danon").click()' % R)
+        result = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)
+        pg.evaluate('() => %s.querySelector(".diag").remove()' % R)
+        return result
+
+    # Existing requests are cleared for each deterministic plan/start boundary.
+    for label, media, target, after, redirect in [
+            ('MP4 GET', 'mp4', '/d/clip.mp4', 0, False),
+            ('MP4 redirect', 'mp4', '/d/clip.mp4', 0, True),
+            ('HLS plan media', 'hls', '/d/s/index.m3u8', 0, False),
+            ('HLS start master', 'hls', '/d/s/master.m3u8', 1, False),
+            ('HLS start media', 'hls', '/d/s/index.m3u8', 1, False),
+            ('HLS init', 'hls', '/d/s/init.mp4', 0, False),
+            ('HLS first segment', 'hls', '/d/s/seg000.m4s', 0, False),
+            ('HLS later segment', 'hls', '/d/s/seg010.m4s', 0, False),
+            ('HLS redirect', 'hls', '/d/s/init.mp4', 0, True)]:
+        # An interrupted earlier HLS job would legitimately offer resume. Finish it via explicit cancellation
+        # before the next independent synthetic case; cancellation is also checked in the existing suite below.
+        for j in jobs_via_popup(ctx, ext_id):
+            if j['state'] == 'interrupted':
+                sw.evaluate('(id) => chrome.runtime.sendMessage({t:"kadri-download",op:"cancel",id})', j['id'])
+        goto_playing(pg, BASE + '/d/' + media + '.html?n=diag')
+        HITS.clear()
+        STATE.update(fail_path=target, fail_after=after, redirect=redirect)
+        before = len(files(helper))
+        tap_dl(pg)
+        end = time.time() + 20
+        anon = ''
+        while time.time() < end:
+            anon = anon_diag()
+            if 'Grund http_404' in anon: break
+            time.sleep(0.3)
+        check(label + ': anonymous diagnostic contains actual helper HTTP 404', 'Grund http_404' in anon and 'HTTP 404' in anon, anon)
+        check(label + ': source identity/age present, page keeps playing without Kadri player',
+              'Identität ' in anon and 'Alter beim Start ' in anon and not player_open(pg) and page_playing(pg))
+        check(label + ': no confidential URL, token, job id or title', not re.search(r'127\.0\.0\.1|8791|https?:|/d/|SECRET|sig=|token=|Direkt |[a-f0-9]{24,}', anon), anon)
+        check(label + ': no publication after HTTP 404', len(files(helper)) == before)
+        rejected = [x for x in helper_hits() if x.get('status') == 404]
+        check(label + ': protocol capture proves 404 and excludes credentials', bool(rejected) and all(not x['cookie'] and not x['auth'] and not x['ref'] for x in helper_hits()), rejected)
+        if media == 'hls':
+            check(label + ': error stage honest; no master used as failed-segment probe',
+                  ('Phase hlsplan' in anon if after == 0 and target.endswith('index.m3u8') else 'Phase unbekannt' in anon)
+                  and not any(x['browser'] and x['range'] == 'bytes=0-0' for x in HITS), anon)
+        STATE.update(fail_path=None, fail_after=0, redirect=False)
 
     # ---------- kein sicher zugeordnetes Format: klarer Grund, nichts beim Helfer ----------
     n0 = len(helper_hits())
