@@ -25,7 +25,7 @@ Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor 
   Auswahl erscheint, danach scheitert der Download mit HTTP 404 (Eigentümer-Bericht).
   Ressource, Downloadtyp und genaue Fehlerphase sind noch **nicht nachgewiesen**.
   Frühere Aussagen im PR-Text über Sitzungsdaten sind **kein Ursachenbeleg für diesen Befund**.
-- **DONE – gezielter Diagnosecheck (Codebeleg):** `105-download-knopf.js` registriert keine
+- **DONE – gezielter Diagnosecheck des Ausgangsstands (inzwischen korrigiert):** `105-download-knopf.js` registrierte keine
   `hdlDiagNew`-Diagnose. `080-helper-app.js` übernimmt `reason` nur für `failed`, während HLS
   HTTP 404 als `interrupted` meldet; die Diagnose beendet dort auch ihre Beobachtung.
   `HlsEngine.plan()` prüft neben der Hauptliste nur die **erste** Option (Video-/ggf. Audioliste),
@@ -40,10 +40,10 @@ Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor 
   Kadri-Erweiterungsmenü → „Diagnose anzeigen“ → **„Anonymisiert kopieren“**.
   Gewählte Qualitätsbezeichnung, Ort der Fehlermeldung und weiterlaufende Wiedergabe ergänzen.
   Keine normale Diagnose, URLs oder Sitzungsdaten weitergeben.
-- **Nächster Schritt:** vorhandene Samsung-Diagnose auswerten; nachgewiesene Diagnose-Lücken am
-  direkten Knopf und bei `interrupted` gezielt testen und schließen. Synthetische HTTP-Fälle
-  prüfen Informationsverlust, sie belegen allein keine site-a-Ursache. Keine Downloadkorrektur
-  ohne Ursachenbeleg. Keine neue APK für reine Kadri-Korrekturen.
+- **Nächster Schritt:** geprüfte P4-Test-Erweiterung aus dem Abschnitt „Aktueller Code-/Paketstand“
+  installieren und anonymisierte Samsung-Diagnose auswerten. Die Diagnose-Lücken am direkten Knopf
+  und bei `interrupted` sind geschlossen; finale CI ist grün. Synthetische HTTP-Fälle belegen
+  allein keine site-a-Ursache. Keine Downloadkorrektur ohne Ursachenbeleg. Keine neue APK.
 - **TODO – danach:** MP4-SourceVault instrumentiert prüfen (Samsung R2 ist bereits PASS),
   bytegenaues MP4-Fortsetzen über Prozessende evaluieren, Keystore-/Vault-Lebenszyklus prüfen.
   MP4 startet nach Prozessende weiterhin bei Byte 0 mit ETag-/Längenvergleich.
@@ -51,6 +51,9 @@ Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor 
   Sicherheitsfreigabe, keine Merges/Tags/Releases/Produktionssignierung.
 
 ### Diagnose-Teilpaket (2026-11-07)
+
+Die folgenden Teilpaket-/Protokoll-/CI-Nachlaufabschnitte protokollieren frühere Zwischenstände.
+Für Lieferung, abgeschlossene Tests und den nächsten Schritt gilt „Aktueller Code-/Paketstand“.
 
 - **DONE – Dokumentationscheckpoint:** `6128193` auf den bestehenden Kadri-Branch gepusht.
 - **IN_PROGRESS – Kadri-Diagnosekorrektur:** gemeinsames `hdlSourceInfo` für Player und direkten Knopf;
