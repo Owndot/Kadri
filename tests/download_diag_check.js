@@ -64,6 +64,11 @@ function setup(kind = 'mp4') {
   check('hlsplan rejection recorded before a job exists', c.api.diags.length === 1 && /Phase hlsplan/.test(text) && /HTTP 404/.test(text) && !c.api.diags[0].id);
   check('plan rejection creates no job, no retry and no browser media probe', c.requests.length === 1 && c.requests[0].op === 'hlsplan' && c.probes.length === 0);
   check('free-form helper error message excluded', !text.includes('PRIVATE'));
+  const precondition = setup('hls');
+  precondition.ctx.reply = () => ({ ok: false, error: { kind: 'plan', reason: 'http_412' } });
+  await precondition.api.pageDlPlan(precondition.opt);
+  check('HTTP 412 remains a planning rejection, with no HTTP 404 substitution or probe',
+    /HTTP 412.*Phase hlsplan/.test(precondition.api.hdlDiagText(precondition.api.diags[0])) && precondition.probes.length === 0 && precondition.requests.length === 1);
 
   const d = setup();
   await d.api.pageDlStartMp4(d.opt);

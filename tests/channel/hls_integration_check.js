@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // /s/<name>/master.m3u8 · v0.m3u8 (Video) · a.m3u8 (Ton) · v0_<n>.ts / a_<n>.ts. Jede Ressourcenzeile trägt ?t=<token>;
 // ein anderes Token → 403 (abgelaufene Adresse). Starker ETag je Segment, If-Range (bytes=0-0) → 206.
 function hlsServer() {
-  const st = { token: 'T1', delay: 0, hits: [], changed: false, fault: null };
+  const st = { token: 'T1', delay: 0, manifestDelay: 0, hits: [], changed: false, fault: null };
   const seg = (name) => crypto.createHash('sha256').update(name).digest();   // 32 B, deterministisch
   const body = (n) => Buffer.concat(new Array(64).fill(seg(n)));            // 2 KiB je Segment
   const N = 6;
@@ -44,11 +44,12 @@ function hlsServer() {
     const fault = st.fault;
     if (fault && (f === 'gone.ts' || f === fault.file && st.hits.filter(x => x.path === u.pathname).length > fault.after)) {
       const redirect = fault.redirect && f !== 'gone.ts';
-      st.hits[st.hits.length - 1].status = redirect ? 302 : 404;
-      res.writeHead(redirect ? 302 : 404, Object.assign({ 'Content-Length': '0' }, redirect ? { Location: 'gone.ts?t=' + st.token } : {}));
+      const status = redirect ? 302 : fault.status || 404;
+      st.hits[st.hits.length - 1].status = status;
+      res.writeHead(status, Object.assign({ 'Content-Length': '0' }, redirect ? { Location: 'gone.ts?t=' + st.token } : {}));
       res.end(); return;
     }
-    if (lists[f]) { const b = Buffer.from(lists[f]()); res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': String(b.length) }); res.end(b); return; }
+    if (lists[f]) { if (st.manifestDelay) await sleep(st.manifestDelay); const b = Buffer.from(lists[f]()); res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': String(b.length) }); res.end(b); return; }
     if (!/^(v0|v1|a)_\d+\.ts$/.test(f)) { res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
     if (st.delay) await sleep(st.delay);
     const b = body(u.pathname);
@@ -68,7 +69,7 @@ function hlsServer() {
 
 function setup() {
   const store = NS.createStore(NS.memoryBackend(), () => core.identity_generate());
-  const transport = NS.createTransport({ fetchImpl: (...a) => fetch(...a), port: 47899, timeoutMs: 8000 });
+  const transport = NS.createTransport({ fetchImpl: (...a) => fetch(...a), port: 47899 });
   const channel = NS.createChannel({ core, store, transport });
   const mem = { jobs: undefined, writes: [] };
   const dl = NS.createDownloads({
@@ -114,6 +115,21 @@ async function main() {
     await s2.channel.pair(await h.code());
     const caps = await s2.dl.capabilities();
     check('Helfer mit HLS meldet die Fähigkeit', caps.supported && caps.hls === true, JSON.stringify(caps));
+    // Production timeout, real encrypted channel, actual HTTP: three valid playlists need > 5 s in total.
+    // No retries, credentials or guessed media; planning alone must not create a download.
+    m.manifestDelay = 2100;
+    const slowAt = Date.now(), slowHits = m.hits.length, slowFiles = (await files(h)).length;
+    let slowPlan, slowError;
+    try { slowPlan = await s2.dl.hlsPlan(m.url('slowplan'), BIND); } catch (e) { slowError = e; }
+    check('valid HLS planning beyond 5 s succeeds with production transport', slowPlan && slowPlan.options.length === 2 && Date.now() - slowAt >= 6000,
+      slowError ? slowError.kind : 'elapsed=' + (Date.now() - slowAt));
+    m.manifestDelay = 0;
+    // Let an old timed-out helper finish before continuing (regression mode).
+    if (slowError) await sleep(2500);
+    const slowRequests = m.hits.slice(slowHits);
+    check('slow plan fetches each playlist exactly once, no segments or credentials', slowRequests.length === 3 &&
+      new Set(slowRequests.map(x => x.path)).size === 3 && slowRequests.every(x => x.path.endsWith('.m3u8') && x.method === 'GET' && !x.range && !x.cookie && !x.auth && !x.referer));
+    check('slow plan creates no job or publication', !slowPlan?.job && (await files(h)).length === slowFiles);
     const p = await s2.dl.hlsPlan(m.url('one'), BIND);
     check('Plan: zwei Qualitäten mit eigener Tonspur, Dauer 24 s, keine Adresse', p.options.length === 2 && p.options[0].height === 720 &&
       p.options[0].audio.lang === 'de' && Math.abs(p.duration - 24) < 0.01 && !JSON.stringify(p).includes('127.0.0.1'), JSON.stringify(p));
@@ -191,6 +207,18 @@ async function main() {
     check('Geänderte Liste: fehlgeschlagen mit plan_changed, kein stilles Weiterladen', d10.job.state === 'failed' && d10.job.reason === 'plan_changed', JSON.stringify(d10.job));
     m.changed = false;
 
+    // Device evidence now also contains http_412 during planning. Preserve that distinct origin response.
+    for (const file of ['master.m3u8', 'v0.m3u8']) {
+      const at = m.hits.length, before = (await files(h)).length;
+      m.fault = { file, after: 0, status: 412 };
+      let error;
+      try { await s2.dl.hlsPlan(m.url(file === 'master.m3u8' ? 'preconditionsource' : 'preconditionmedia'), BIND); } catch (e) { error = e; }
+      check('HTTP 412 at ' + file + ' preserves helper planning rejection', error?.kind === 'plan' && error.reason === 'http_412', error?.kind);
+      const hits = m.hits.slice(at);
+      check('HTTP 412: one failed anonymous GET, no retry, no segments, no publication', hits.filter(x => x.status === 412).length === 1 &&
+        hits.filter(x => x.path.endsWith('/' + file)).length === 1 && hits.every(x => x.path.endsWith('.m3u8') && x.method === 'GET' && !x.range && !x.cookie && !x.auth && !x.referer) && (await files(h)).length === before);
+      m.fault = null;
+    }
     // Synthetic protocol evidence: same outward http_404 can mean different resources. A menu is no guarantee.
     const failures = [
       ['plan source', 'master.m3u8', 0, 0, true, false],

@@ -9,6 +9,50 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Neuer Samsung-Befund – Planungs-Timeout und site-a HTTP 412/404 (maßgeblich)
+
+- **DONE – Gerätedaten ausgewertet, ausschließlich abstrahiert dokumentiert:** Der Eigentümer bestätigt
+  einen erfolgreichen **Download mit der unmittelbar vorher installierten P4-Version** bei media-regression-b;
+  genaue Commit-Zuordnung der Installation noch nicht belegt. Aktueller Versuch: HLS, `hlsplan`,
+  `timeout` nach 5 s, Quelle im eigenen Player geladen, Registry-Auswahl aktuell, Beobachtungsalter 4 s.
+  Das ist kein nachgewiesener HTTP 404. Private Namen, Domains, Pfade, IDs und Rohdiagnosen werden nicht übernommen.
+- **DONE – site-a eingegrenzt:** MP4 720p und 1080p aus dem Seitenadapter, im Player nicht geladen,
+  vom Adapter behauptete Qualität/Zuordnung; `failed/http_404`, Phase `mp4-get`, nach 2 s.
+  Einmaliger anonymer Browser-GET mit Range 0-0 liefert ebenfalls HTTP 404.
+  Die gleichzeitig abgespielte Quelle ist HLS. Alter 3 bzw. 8 s = Registry-Beobachtung, kein Nachweis der URL-Gültigkeit.
+- **DONE – ausdrücklicher HLS-Nachtest auf site-a:** anonymisierte Diagnose meldet
+  `hlsplan`, `rejected/http_412` nach 1 s, Quelle `hls/master`, `network/segments-loaded`,
+  `bound:segments-loaded`, Auswahl aktuell, Beobachtungsalter 10 s. Noch kein Downloadauftrag/Segmentabruf belegt.
+  **BLOCKED – Ursache/Fehlerressource:** Haupt- oder nachgelagerte Medienliste unbekannt;
+  HTTP 412 belegt eine abgelehnte Vorbedingung, nicht deren konkrete Bedeutung. Keine Behauptung über
+  Cookies, Referer, Tokens, DRM oder grundsätzliche Unmöglichkeit aller unabhängigen Abrufe.
+- **DONE – gezielter Versionsvergleich:** `ef9a5ed` und `bde39eb` sind für Transport, Adapter und
+  Quellenzuordnung/-Registry identisch. Die neue Diagnose hat die 5-s-Grenze nicht eingeführt.
+  Das widerlegt nicht den berichteten Erfolg der Vorversion, erklärt aber noch keine Versionsregression.
+- **DONE – Timeout reproduziert:** echter verschlüsselter Kanal + unveränderter Helper + drei synthetische
+  HTTP-Playlists, jeweils 2,1 s Verzögerung. Produktionstransport scheitert vor der Korrektur nach 5 s;
+  Regression 93/94 (nur neue Zeitgrenzenprüfung rot). Kein Zugriff auf reale Medienseiten erforderlich.
+- **DONE – enge Kadri-Korrektur, noch nicht ausgeliefert:** ausschließlich validiertes `hlsplan` bekommt
+  ein festes Transportprofil mit 25-s-Grenze; Handshake, Start, Status, Abbruch und andere Befehle bleiben bei 5 s.
+  Seiten können keine Frist übergeben. Keine neuen Retries, keine Änderungen der Kanalverschlüsselung,
+  Quellenprüfung, Request-Header oder Helper-App. Der ursprüngliche langsame Plan gelingt ohne Doppelabruf.
+- **DONE – lokale Prüfungen:** Build, Kanal-Unit 45/45 (inkl. Timeout vor Headern/im Antwortkörper und
+  Ablehnung fremder Fristfelder), Diagnose 19/19, Download-Unit 116/116, HLS-Unit 69/69,
+  Kanal-Integration 74/74, HLS-Integration 98/98. Letztere enthält zusätzlich HTTP 412 bei Haupt- und Medienliste:
+  derselbe Planfehler, genau ein fehlgeschlagener GET, keine Credentials, Segmente, Retries oder Veröffentlichung.
+- **TODO – bestehende Helper-Grenze:** `PLAN_DEADLINE_MS=20_000` wird vor Listenabrufen/Slot-Warten geprüft;
+  ein begonnener Abruf erhält jedoch weiterhin `HlsFetch.MANIFEST_TIMEOUT_MS=30_000`. Somit keine harte
+  20-s-Gesamtfrist. Die begrenzte Kadri-Korrektur verspricht keinen Erfolg für Pläne über 25 s und behebt
+  keinen Serverstatus 404/412. Keine pauschale Fristerhöhung oder neue APK ohne weiteren Nachweis.
+- **NEEDS_TEST – CI/Lieferung/Samsung:** vollständige CI des neuen Quellstands und bestehendes isoliertes
+  P4-Paket abwarten; danach nur Erweiterung aktualisieren und media-regression-b erneut herunterladen.
+  Keine Deinstallation, APK oder neue Kopplung. Anschließend anonymisierte Diagnose bei weiterem Fehler.
+- **Nächster Schritt:** CI abschließen und verifizierte P4-Erweiterung liefern; site-a bleibt für die
+  konkrete serverseitige Vorbedingung/fehlende MP4-Ressource **BLOCKED**, ohne Umgehungsversuche.
+  Die früheren Paketlinks unten gehören zum Diagnosebuild `bde39eb`, nicht zur neuen Timeoutkorrektur.
+  Helper unverändert `862c1d19ea80eefad7b9b341b93a70cde338fa7d` / App `8b906c5`.
+  Samsung F1/F2/R1/R2/C1 bleiben bestätigte PASS der Basis; Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
+
 ## Aktueller Einstieg – 2026-11-07 (maßgeblich vor den historischen Abschnitten)
 
 - **DONE – Übernahme:** GitHub-PRs und lokale Klone bestätigen Kadri

@@ -29,7 +29,7 @@ const NODE_MUTANTS = [
   ['Weiterleitungen werden verfolgt', 'channel-transport.js', "redirect: 'error'", "redirect: 'follow'"],
   ['Antwortgröße unbegrenzt', 'channel-transport.js', "declared > MAX_RESPONSE", "declared > Infinity"],
   ['beliebige Pfade', 'channel-transport.js', "if (!PATHS.has(path))", "if (false)"],
-  ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(timeoutMs),", ""],
+  ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(requestTimeoutMs),", ""],
   // Phase C3: direkte MP4-Downloads
   ['Download: fremde Felder (Cookie, Header, Referer) durchgelassen', 'channel-session.js', "if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name')) return null;", "if (op !== 'dlstart') return null;"],
   ['Download: URL-Zeichen ungeprüft (Zeilenumbruch, Leerzeichen)', 'channel-session.js', "!DL_URL.test(a.url)", "!/^https?:/.test(a.url)"],

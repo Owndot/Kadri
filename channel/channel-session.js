@@ -174,7 +174,7 @@
     async function exchange(obj) {
       const s = session;
       let reply;
-      try { reply = await transport.post('/p1/ch/rec', s.ch.seal_control(new TextEncoder().encode(JSON.stringify(obj)))); }
+      try { reply = await transport.post('/p1/ch/rec', s.ch.seal_control(new TextEncoder().encode(JSON.stringify(obj))), obj.op === 'hlsplan' ? 'hlsplan' : undefined); }
       catch (e) {
         if (session === s) drop();
         if (e instanceof ChannelError) throw e;
