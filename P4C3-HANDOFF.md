@@ -145,6 +145,26 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
 - **Nächster Schritt:** Testkorrektur pushen, vollständige CI abwarten; erst nach Erfolg P4-Test-Erweiterung
   über bestehenden Workflow aus exakt diesem Commit liefern. Helper bleibt `862c1d1`/App `8b906c5`.
 
+### Aktueller Code-/Paketstand
+
+- Kadri-Anwendungscode **`bde39ebbf6716d1714259d2428807382f81befd3`**, bestehender Branch/PR unverändert.
+  Die folgenden Paket-/Dokumentationscommits ändern diesen Anwendungscode nicht.
+- Helper-HEAD **`862c1d19ea80eefad7b9b341b93a70cde338fa7d`**, App/CI-Pin
+  **`8b906c504f0612ff4af69a397a2745b717f156b3`**, Arbeitsbaum unverändert.
+- **IN_PROGRESS – finale CI:** https://github.com/Owndot/Kadri/actions/runs/42414984129.
+- **IN_PROGRESS – isolierte P4-Test-Erweiterung:** bestehender `p4-test-extension.yml` auf
+  `bde39eb` gesetzt, Artefaktname `kadri-p4test-bde39eb-vivaldi-test`. Der bestehende Upload-Guard
+  verlangt erfolgreiche vollständige CI exakt dieses Quell-Commits; bei rot gibt es keine Lieferung.
+  Feste P4-ID unverändert, **keine APK, keine Deinstallation, keine erneute Kopplung**.
+- **NEEDS_TEST – Samsung nach Lieferung:** nur bestehende Kadri-P4-Test-Erweiterung aktualisieren
+  (gleiche ID, Daten/Kopplung behalten), site-a neu laden, Video kurz spielen, direkten ⬇-Download
+  mit derselben Qualitätsbezeichnung versuchen. Nach Fehlermeldung etwa 25 Sekunden auf derselben
+  Seite bleiben, dann Erweiterungsmenü → „Diagnose anzeigen“ → **„Anonymisiert kopieren“**.
+  Nur diesen Text plus Qualitätsbezeichnung/Ort der Fehlermeldung/weiterlaufende Wiedergabe senden.
+  Quellenalter bezeichnet die erste Registry-Beobachtung, nicht die Laufzeit eines Server-Tokens.
+  Bei HLS „genaue Fehlerressource unbekannt“ ehrlich stehen lassen; dann gezielte Helper-Diagnose
+  planen, keine Cookies/Referer/Authorization und keinen Browserproxy als Ausweichweg einführen.
+
 ---
 
 ## A. Projektstatus
