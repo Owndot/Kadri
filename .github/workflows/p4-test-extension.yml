@@ -1,0 +1,207 @@
+name: P4 isolated test extension (Kadri P4 TEST, owner-approved Samsung test only)
+
+# Vom Eigentümer freigegeben („Kadri P4c – Samsung-Test ohne Mac und ohne dauerhaften Signierschlüssel“): das
+# entpackte Testpaket „Kadri P4 TEST“ (ID pcccpjllneffccpenbepmfbkjedllkkf) für den kontrollierten Gerätetest mit der
+# Test-App de.evp.helfer.p4test. Keine Produktionsfreigabe, kein Store, kein Release; Produktion bleibt UNAPPROVED.
+# Gegenüber dist/chrome unterscheiden sich nur Name, Beschreibung und der feste ÖFFENTLICHE Schlüssel
+# (tools/p4test/identity.json) – kein privater Schlüssel existiert oder wird gebraucht.
+#
+# Gebaut wird exakt SOURCE_SHA (nur diese Datei bzw. Doku verschieden), gekoppelt mit dem Helfer-Commit HELPER_SHA,
+# aus dem auch die P4-Test-APK stammt; der Kanaltest läuft gegen GENAU das ausgelieferte Paket und den echten
+# ChannelServer dieses Helfer-Commits. Hochgeladen erst, wenn die normale CI auf SOURCE_SHA grün ist.
+# Öffentliches Actions-Artefakt mit 2 Tagen Aufbewahrung (Repository ist öffentlich).
+on:
+  push:
+    branches: [feature/c3-helper-mp4]
+    paths: [.github/workflows/p4-test-extension.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: p4-test-extension
+  cancel-in-progress: false
+env:
+  SOURCE_SHA: ef9a5ed22920e8bee0a204323388b9104e58892e
+  HELPER_SHA: 8b906c504f0612ff4af69a397a2745b717f156b3
+  P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
+  RETENTION_DAYS: 2
+jobs:
+  kadri-p4-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Exact paired sources (only this workflow differs from the source; helper pin = P4 test APK source)
+      run: |
+        set -euo pipefail
+        WORKFLOW_SHA="$(git rev-parse HEAD)"
+        git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"
+        changed="$(git diff --name-only "$SOURCE_SHA" "$WORKFLOW_SHA" | grep -vxE '\.github/workflows/p4-test-extension\.yml|[^/]+\.md' || true)"
+        [ -z "$changed" ] || { echo "code differs from the approved source: $changed" >&2; exit 1; }
+        git checkout -q --detach "$SOURCE_SHA"
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        grep -qx "helper_commit=$HELPER_SHA" vendor/kadri-pairing-poc/SOURCE
+        grep -q '"p4_test_extension_id": "'"$P4_ID"'"' tools/p4test/identity.json
+        grep -q '"production_status": "UNAPPROVED"' tools/p4test/identity.json
+        echo "WORKFLOW_SHA=$WORKFLOW_SHA" >> "$GITHUB_ENV"
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: Owndot/video-assistent-helper
+        ref: ${{ env.HELPER_SHA }}
+        path: helper
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Toolchains (Rust from the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+      run: |
+        set -euo pipefail
+        (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+        cargo install wasm-bindgen-cli --version 0.2.104 --locked
+    - name: Rebuild the vendored WASM core from the pinned helper commit and compare
+      run: |
+        set -euo pipefail
+        test "$(git -C helper rev-parse HEAD)" = "$HELPER_SHA"
+        grep -q '"status": "UNAPPROVED"' helper/release/production-policy.json
+        bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+        for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d' ' -f1)" = "$(sed -n 's/^sha256_wasm=//p' vendor/kadri-pairing-poc/SOURCE)"
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d' ' -f1)" = "$(sed -n 's/^sha256_js=//p' vendor/kadri-pairing-poc/SOURCE)"
+        echo 'PASS: vendored WASM core rebuilt bit-identically from the helper commit of the P4 test APK'
+    - name: Desktop helper (real ChannelServer and engines of the paired helper commit)
+      run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+    - name: Playwright (Chromium) and xvfb
+      run: |
+        set -euo pipefail
+        npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+        npx playwright install --with-deps chromium
+        sudo apt-get install -y xvfb
+    - name: Build; channel only in the Chrome build, nothing of the legacy helper anywhere
+      run: |
+        set -euo pipefail
+        node tools/build.js
+        test -f dist/chrome/channel/kadri_pairing_poc_bg.wasm
+        test ! -e dist/firefox/channel
+        test ! -e dist/test
+        if grep -rnE "'X-EVP-Key' *:|['\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome --include=*.js | grep -vE '^[^:]+:[0-9]+: *//'; then echo 'legacy helper client in the build'; exit 1; fi
+        echo 'PASS: channel in dist/chrome; no legacy helper client, key or port'
+    - name: Identity and P4 package from two build paths (byte-identical ZIP)
+      run: |
+        set -euo pipefail
+        node tests/channel/p4_identity_check.js
+        python3 tests/p4_device_page_check.py
+        mkdir -p "$RUNNER_TEMP/second-source"
+        git archive "$SOURCE_SHA" | tar -x -C "$RUNNER_TEMP/second-source"
+        (cd "$RUNNER_TEMP/second-source" && node tools/build.js)
+        python3 tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/p4-a.zip"
+        python3 tools/p4test/pack-extension.py "$RUNNER_TEMP/second-source/dist/chrome" "$RUNNER_TEMP/p4-b.zip"
+        cmp "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip"
+        python3 - "$RUNNER_TEMP/p4-a.zip" <<'PY'
+        import json, sys, zipfile
+        z = zipfile.ZipFile(sys.argv[1])
+        m = json.loads(z.read('manifest.json'))
+        assert m['name'] == 'Kadri P4 TEST' and 'UNAPPROVED' in m['description'], m['name']
+        assert m['permissions'] == ['storage', 'declarativeNetRequestWithHostAccess', 'scripting'], m['permissions']
+        assert not any(k in m for k in ['update_url', 'externally_connectable']), 'unexpected manifest key'
+        assert 'channel/kadri_pairing_poc_bg.wasm' in z.namelist()
+        bad = [n for n in z.namelist() if n.startswith('/') or '..' in n.split('/') or n.lower().endswith(('.pem', '.p12', '.key', '.crx'))]
+        assert not bad, bad
+        print('PASS: Kadri P4 TEST, permissions', m['permissions'], 'host permissions', m.get('host_permissions'), f'{len(z.namelist())} files')
+        PY
+        mkdir -p "$RUNNER_TEMP/packaged-extension"
+        unzip -q "$RUNNER_TEMP/p4-a.zip" -d "$RUNNER_TEMP/packaged-extension"
+        sha256sum "$RUNNER_TEMP/p4-a.zip" > "$RUNNER_TEMP/zip-before.sha256"
+        rm -rf "$RUNNER_TEMP/second-source" "$RUNNER_TEMP/p4-b.zip"
+    - name: Pairing with the paired helper - exact packaged extension against the real ChannelServer (channel security, fail-closed)
+      env:
+        HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+        CHANNEL_DIST_DIR: ${{ runner.temp }}/packaged-extension
+      run: |
+        set -euo pipefail
+        node tests/channel/channel_browser_check.js
+        node tests/channel/channel_netguard_failure_check.js
+    - name: Fixed ID and separate extension data in a disposable Chromium profile
+      run: |
+        set -euo pipefail
+        NODE_PATH="$PWD/node_modules" xvfb-run -a node tools/p4test/isolation.cjs "$RUNNER_TEMP/packaged-extension" "$PWD/dist/chrome"
+        sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
+    - name: Require complete normal CI on the exact source commit before upload
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        git diff --exit-code
+        for attempt in $(seq 1 160); do
+          gh api "repos/Owndot/Kadri/actions/runs?head_sha=$SOURCE_SHA" > "$RUNNER_TEMP/ci-state.json"
+          status=$(python3 -c 'import json,sys; a=[r for r in json.load(open(sys.argv[1]))["workflow_runs"] if r["path"]==".github/workflows/ci.yml"]; r=max(a,key=lambda r:r["id"]) if a else {}; print((r.get("conclusion") or "failure") if r.get("status")=="completed" else "pending")' "$RUNNER_TEMP/ci-state.json")
+          if [ "$status" = success ]; then break; fi
+          if [ "$status" != pending ]; then echo "Required source CI: $status"; exit 1; fi
+          sleep 15
+        done
+        test "$status" = success
+        echo "PASS: normal CI (ci.yml) succeeded on $SOURCE_SHA"
+    - name: Delivery - extension folder, separate ZIP, SHA256SUMS, evidence (commits, ID, expiry)
+      run: |
+        set -euo pipefail
+        sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
+        python3 - <<'PY'
+        import datetime, hashlib, json, os, zipfile
+        from pathlib import Path
+        root = Path(os.environ['RUNNER_TEMP'])
+        z = zipfile.ZipFile(root / 'p4-a.zip')
+        expected = {n: z.read(n) for n in z.namelist()}
+        used = {p.relative_to(root / 'packaged-extension').as_posix(): p.read_bytes() for p in (root / 'packaged-extension').rglob('*') if p.is_file()}
+        changed = [n for n, b in expected.items() if used.get(n) != b]
+        extra = sorted(set(used) - set(expected))
+        assert not changed, ('tested files changed', changed)
+        assert all(n.startswith('_metadata/') for n in extra), ('unexpected browser files', extra)
+        # Ausgeliefert werden die unveränderlichen, reproduzierbar gebauten ZIP-Inhalte, nie der Browser-Cache.
+        d = root / 'deliver'; folder = d / 'kadri-p4-test'
+        for n, b in expected.items():
+            p = Path(n); assert not p.is_absolute() and '..' not in p.parts
+            (folder / p).parent.mkdir(parents=True, exist_ok=True); (folder / p).write_bytes(b)
+        assert {p.relative_to(folder).as_posix(): p.read_bytes() for p in folder.rglob('*') if p.is_file()} == expected
+        (d / 'kadri-p4-test-extension.zip').write_bytes((root / 'p4-a.zip').read_bytes())
+        zsha = hashlib.sha256((d / 'kadri-p4-test-extension.zip').read_bytes()).hexdigest()
+        now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
+        m = json.loads(expected['manifest.json'])
+        ev = {
+          'purpose': 'Owner-approved controlled Samsung test (P4c). NOT a release. Production stays UNAPPROVED.',
+          'extension_name': m['name'], 'extension_version': m['version'], 'extension_id': os.environ['P4_ID'],
+          'zip': 'kadri-p4-test-extension.zip', 'zip_sha256': zsha, 'folder': 'kadri-p4-test',
+          'permissions': m['permissions'], 'host_permissions': m.get('host_permissions'),
+          'private_key': 'none (fixed public key only)',
+          'kadri_source_commit': os.environ['SOURCE_SHA'], 'kadri_workflow_commit': os.environ['WORKFLOW_SHA'],
+          'helper_pair_commit': os.environ['HELPER_SHA'], 'helper_package': 'de.evp.helfer.p4test',
+          'device_test_page': f"https://rawcdn.githack.com/Owndot/Kadri/{os.environ['SOURCE_SHA']}/tests/web/public/p4-hls.html",
+          'workflow_run': f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          'built_at': now.isoformat(), 'artifact_expires_at': (now + datetime.timedelta(days=int(os.environ['RETENTION_DAYS']))).isoformat(),
+          'production_status': 'UNAPPROVED',
+        }
+        (d / 'p4test-extension-evidence.json').write_text(json.dumps(ev, indent=2, ensure_ascii=False) + '\n')
+        lines = [f"{hashlib.sha256((d / n).read_bytes()).hexdigest()}  {n}" for n in ['kadri-p4-test-extension.zip', 'p4test-extension-evidence.json']]
+        lines += [f"{hashlib.sha256(b).hexdigest()}  kadri-p4-test/{n}" for n, b in sorted(expected.items())]
+        (d / 'SHA256SUMS').write_text('\n'.join(lines) + '\n')
+        print('\n'.join(lines[:2])); print(json.dumps(ev, indent=2, ensure_ascii=False))
+        PY
+        (cd "$RUNNER_TEMP/deliver" && sha256sum -c SHA256SUMS > /dev/null)
+        echo "PASS: delivery = exactly the tested package ($(find "$RUNNER_TEMP/deliver/kadri-p4-test" -type f | wc -l) files)"
+    - name: Short-lived isolated P4 TEST extension only (public Actions artifact, not a release)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: kadri-p4test-ef9a5ed-vivaldi-test
+        path: ${{ runner.temp }}/deliver/
+        retention-days: ${{ env.RETENTION_DAYS }}
+        if-no-files-found: error
+        include-hidden-files: true

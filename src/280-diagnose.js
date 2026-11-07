@@ -36,6 +36,53 @@
   }
   // Ende einer Adresse für die Diagnose: ERST bereinigen, dann kürzen (sonst bliebe vom „?token=…“ nur der Wert übrig)
   const urlTail = (u, n) => '…' + maskUrls(String(u || '').split('#')[0]).slice(-n);
+  // ---------- Anonymisierte Diagnose (zum Weitergeben) ----------
+  // Aus festen technischen Feldern neu zusammengesetzt – NICHT aus der Diagnose oben gefiltert. Keine Hostnamen,
+  // Seitenadressen, Pfade, Abfragen, Video-Kennungen, Seitentitel oder Dateinamen. Danach entfernt ein Sicherheitsfilter
+  // zusätzlich alles, was wie eine Adresse, Domain oder lange Kennung aussieht.
+  const anonKind = (u) => (/^blob:/i.test(u) ? 'blob' : /\.m3u8(\?|#|$)/i.test(u) ? 'hls' : /\.mpd(\?|#|$)/i.test(u) ? 'dash' : /\.(mp4|m4v)(\?|#|$)/i.test(u) ? 'mp4' :
+    /\.(m4s|ts|cmfv|cmfa|m4a|aac)(\?|#|$)/i.test(u) ? 'segment-datei' : /^https?:/i.test(u) ? 'sonstige' : '-');
+  function anonScrub(t) {
+    return String(t).replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '[entfernt]')
+      .replace(/\b(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]{1,}\b/gi, (m) => (/^\d+(\.\d+)+$/.test(m) ? m : '[entfernt]'))
+      .replace(/[A-Za-z0-9_~%+=-]{20,}/g, '[entfernt]');
+  }
+  function diagAnon() {
+    const L = [];
+    L.push('Kadri – anonymisierte Diagnose · ' + (typeof KADRI_VERSION !== 'undefined' ? 'Kadri ' + KADRI_VERSION + ' · ' : '') + 'Skript 19.30');
+    const ua = navigator.userAgent, bm = /(Chrome|Firefox)\/(\d+)/.exec(ua);
+    L.push('Browser: ' + (bm ? bm[1] + ' ' + bm[2] : '?') + (/Android/.test(ua) ? ' · Android' : '') + ' · Fenster: ' + (IN_FRAME ? 'eingebettet' : 'Hauptseite') +
+      ' · Videos auf der Seite: ' + allVideos().length);
+    const p = vp;
+    if (p) {
+      const v = p.vid;
+      L.push('Player: offen · Modus ' + p.mode + ' · Wiedergabe ' + (p.hls ? 'hls' : anonKind(p.cur || '')) +
+        (v ? ' · Bereitschaft ' + v.readyState + (v.error ? ' · Fehler ' + v.error.code : '') + ' · Auflösung ' + Math.min(v.videoWidth || 0, v.videoHeight || 0) + 'p' : '') +
+        ' · Helfer-Downloads ' + (p.hdl ? (p.hdl.ok ? 'unterstützt' : p.hdl.pending ? 'wird geprüft' : 'nicht bestätigt') : '-'));
+      [['Originalvideo', p.media && p.media.orig], ['eigener Player', p.media && p.media.own]].forEach((c) => {
+        if (!c[1]) return;
+        let snap = [];
+        try { snap = mediaRegistry.snapshot(c[1]); } catch (e) {}
+        L.push('Quellen ' + c[0] + ' (' + snap.length + '):');
+        snap.slice(0, 24).forEach((s, i) => {
+          const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
+          L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
+            ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join('+') +
+            ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
+        });
+      });
+    } else L.push('Player: geschlossen');
+    // Netzwerk: Art und Rolle der beobachteten Adressen (Rolle aus gelesenen Listen, sonst eindeutige Muster) – nur Zählungen
+    const roles = {};
+    let net = [];
+    try { net = recent(); } catch (e) {}
+    net.forEach((u) => { let r = 'unknown'; try { r = mediaRoleHint(u); } catch (e) {} const k = anonKind(u) + ':' + r; roles[k] = (roles[k] || 0) + 1; });
+    L.push('Netzwerk (zuletzt beobachtet, Art:Rolle): ' + (Object.keys(roles).sort().map((k) => k + ' ×' + roles[k]).join(', ') || '-') +
+      ' · Listen gelesen ' + plInfo.size + ' · Rollen aus Listen ' + plParts.size);
+    L.push('Helfer-Downloads (jüngste zuerst): ' + (hdlDiags.length ? '' : '-'));
+    hdlDiags.forEach((d, i) => L.push(' ' + (i + 1) + '. ' + hdlDiagText(d)));
+    return anonScrub(L.join('\n'));
+  }
   function showDiagBox(text) {
     ui();
     const box = h('div', { class: 'diag' });
@@ -43,9 +90,12 @@
     ta.value = text;
     const copy = h('button', null, 'Kopieren');
     const close = h('button', null, 'Schließen');
-    copy.addEventListener('click', () => { ta.select(); copyText(text, 'Diagnose kopiert'); });
+    copy.addEventListener('click', () => { ta.select(); copyText(ta.value, 'Diagnose kopiert'); });
+    // Anonymisiert: zeigt genau den Text, der kopiert wird (zum Weitergeben ohne Seitenbezug)
+    const anon = h('button', { class: 'danon' }, 'Anonymisiert kopieren');
+    anon.addEventListener('click', () => { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } ta.value = t; ta.select(); copyText(t, 'Anonymisierte Diagnose kopiert'); });
     close.addEventListener('click', () => box.remove());
-    box.append(h('div', { class: 'dh' }, 'Video-Assistent · Diagnose'), ta, h('div', { class: 'db' }, copy, close));
+    box.append(h('div', { class: 'dh' }, 'Video-Assistent · Diagnose'), ta, h('div', { class: 'db' }, copy, anon, close));
     root.append(box);
     attachHost();
     // Prüfen, ob das Fenster wirklich sichtbar ist – sonst Notlösung im Aufrufer
@@ -86,7 +136,7 @@
       'Link zum Video: ' + (function () { try { const u = postUrlFor(v); return (u || '-') + ' (' + (postUrlFor.via || '-') + ') | Video-ID im Kasten: ' + (fbVideoId(v) || '-'); } catch (e) { return '-'; } })(),
       'Spiegeln: ' + (vp && vp.mode === 'capture' ? 'aktiv, ' + (vp.mirrorFix || 0) + '× neu verbunden' + (vp.mirrorWhy ? ' (zuletzt: ' + vp.mirrorWhy + ')' : '') : (FB_MIRROR ? 'bereit' : 'aus')),
       'Puffer-Spur: ' + (function () { if (!v) return '-'; const m = creditsFor(v, 0); const l = (bufCredit.get(v) || []).length; return l + ' Zuwächse | ' + (Array.from(m.entries()).map((e) => e[0].slice(-6) + ':' + e[1].toFixed(1)).join(', ') || '-'); })(),
-      'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Pornhub-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
+      'HD nachladen: ' + hdLog + ' | Weiterleitung: ' + lastResolve + (PH ? ' | Seite-A-MP4: ' + phLog : '') + (IG ? ' | Instagram-MP4: ' + igLog : '') + (TT ? ' | TikTok: ' + ttLog + ' · ' + (ttPostUrl(v) || 'kein Link') : ''),
       'Öffnen (zuletzt): ' + (function () {
         const o = openTimes;
         if (!o) return '-';
@@ -98,7 +148,8 @@
       'Nächstes-Reel-Countdown abgebrochen: ' + nextCancels + '×',
       'Bild-in-Bild: Browser ' + (document.pictureInPictureEnabled ? 'kann es' : 'kann es für Webseiten nicht (nur Wischen zum Startbildschirm)') +
         ' | im Player: ' + (vp ? (vp.pipOk ? 'erlaubt' : 'aus') + ' (' + (vp.mode === 'capture' ? 'gespiegelt' + (kadriPage() ? ', Schild' : '') : 'eigener Player') + ')' : 'zu') +
-        ' | Vorschau: ' + (vp ? (vp.prevWhy || (vp.mode === 'own' ? 'noch nicht gespult' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)')) : '-') +
+        ' | Helfer-Download: ' + (hdlDiags.length ? hdlDiags.map(hdlDiagText).join(' || ') : '-') +
+        ' | Vorschau (' + (CONFIG.seekPreview === 'thumb' ? 'kleines Bild' : 'im Bild') + '): ' + (vp ? (vp.prevWhy || (vp.mode === 'own' ? 'noch nicht gespult' : vp.fbPrev && (vp.fbBad || []).indexOf(vp.fbPrev) < 0 ? 'Bilder aus der MP4 (gespiegelt)' : 'nur Zeit (gespiegelt)')) : '-') +
         (vp && vp.prevFirst ? ' · erstes Bild nach ' + (vp.prevFirst / 1000).toFixed(1) + ' s' : '') + (vp && vp.prevMiss ? ' · ' + vp.prevMiss + '× ohne Bild' : '') +
         ' | Lupe: ' + (vp ? vp.lupeWhy || 'noch nicht gespult' : '-') + (vp && vp.scrubSizes ? ' | Bildgrößen beim Spulen: ' + vp.scrubSizes : '') + (vp && vp.subsWhy ? ' | Untertitel der Seite: ' + vp.subsWhy : ''),
       'Stream-Nachweis: ' + (r.proof || '-') + ' | Listen gelesen: ' + plInfo.size + ' | Stück-Ordner: ' + segHits.size +

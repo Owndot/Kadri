@@ -1,0 +1,425 @@
+// Unit-Tests der direkten MP4-Downloads (Phase C3) OHNE Helfer: strenge Form der Download-Befehle
+// (channel-session.js: downloadMessage) und die Download-Verwaltung im Hintergrund (channel-downloads.js) mit einem
+// Schein-Kanal, der Verbindungsabbrüche, verlorene Antworten, Helfer-Neustarts und falsche Antworten spielt.
+//   node tests/channel/download_unit_check.js
+'use strict';
+const crypto = require('crypto');
+const { loadChannel, check, summary } = require('./lib');
+
+const { NS } = loadChannel();
+const ID = 'a'.repeat(32);
+const URL1 = 'https://media.example/videos/clip.mp4?sig=SECRET123';
+
+// ---------- downloadMessage: genau die Form, die der Helfer annimmt ----------
+const dm = NS.downloadMessage;
+check('dlstart mit id, url, name', JSON.stringify(dm('dlstart', { id: ID, url: URL1, name: 'Clip' })) === JSON.stringify({ op: 'dlstart', id: ID, url: URL1, name: 'Clip' }));
+check('dlstart ohne Name', JSON.stringify(dm('dlstart', { id: ID, url: URL1 })) === JSON.stringify({ op: 'dlstart', id: ID, url: URL1 }));
+check('dlstatus/dlcancel nur mit id', dm('dlstatus', { id: ID }).op === 'dlstatus' && dm('dlcancel', { id: ID }).op === 'dlcancel');
+for (const [what, op, a] of [
+  ['Cookie-Feld', 'dlstart', { id: ID, url: URL1, cookie: 'a=b' }],
+  ['Header-Feld', 'dlstart', { id: ID, url: URL1, headers: { Authorization: 'x' } }],
+  ['Referer-Feld', 'dlstart', { id: ID, url: URL1, referer: 'https://site.example/' }],
+  ['User-Agent-Feld', 'dlstart', { id: ID, url: URL1, ua: 'x' }],
+  ['dlstatus mit URL', 'dlstatus', { id: ID, url: URL1 }],
+  ['dlcancel mit Name', 'dlcancel', { id: ID, name: 'x' }],
+  ['Kennung groß geschrieben', 'dlstart', { id: 'A'.repeat(32), url: URL1 }],
+  ['Kennung zu kurz', 'dlstatus', { id: 'a'.repeat(31) }],
+  ['Leerzeichen in der URL', 'dlstart', { id: ID, url: 'https://media.example/a b.mp4' }],
+  ['Zeilenumbruch in der URL', 'dlstart', { id: ID, url: 'https://media.example/a\r\nCookie: x' }],
+  ['Anführungszeichen in der URL', 'dlstart', { id: ID, url: 'https://media.example/a"b' }],
+  ['javascript:', 'dlstart', { id: ID, url: 'javascript:alert(1)' }],
+  ['file:', 'dlstart', { id: ID, url: 'file:///etc/passwd' }],
+  ['ftp:', 'dlstart', { id: ID, url: 'ftp://media.example/a.mp4' }],
+  ['URL > 2048', 'dlstart', { id: ID, url: 'https://media.example/' + 'a'.repeat(2030) }],
+  ['Name mit Anführungszeichen', 'dlstart', { id: ID, url: URL1, name: 'a"b' }],
+  ['Name mit Backslash', 'dlstart', { id: ID, url: URL1, name: 'a\\b' }],
+  ['Name mit Steuerzeichen', 'dlstart', { id: ID, url: URL1, name: 'a\u0007b' }],
+  ['Name mit U+2028', 'dlstart', { id: ID, url: URL1, name: 'a b' }],
+  ['Name mit einzelnem Surrogat', 'dlstart', { id: ID, url: URL1, name: 'a\ud800b' }],
+  ['Name > 120', 'dlstart', { id: ID, url: URL1, name: 'n'.repeat(121) }],
+  ['unbekannter Befehl', 'download', { id: ID, url: URL1 }],
+]) check('abgelehnt: ' + what, dm(op, a) === null);
+
+// ---------- URL-Normalisierung und Name ----------
+const nu = NS.normalizeDownloadUrl;
+check('URL: Fragment entfernt', nu('https://media.example/a.mp4#t=10') === 'https://media.example/a.mp4');
+check('URL: Zugangsdaten abgelehnt', nu('https://user:pw@media.example/a.mp4') === null);
+check('URL: Nicht-ASCII kodiert', nu('https://media.example/vídeo.mp4') === 'https://media.example/v%C3%ADdeo.mp4');
+check('URL: Anführungszeichen kodiert', nu('https://media.example/a.mp4?q="x"') === 'https://media.example/a.mp4?q=%22x%22');
+check('URL: blob:/data: abgelehnt', nu('blob:https://media.example/x') === null && nu('data:video/mp4;base64,AAAA') === null);
+check('Name: Steuerzeichen und Anführungszeichen ersetzt', NS.downloadName('a"b\\c\u0001d') === 'a b c d');
+check('Name: leer → Video', NS.downloadName('  ') === 'Video');
+check('Name: höchstens 120, Surrogat-Paar nicht zerschnitten', NS.downloadName('x'.repeat(119) + '😀').length === 119);
+
+// ---------- Verwaltung mit Schein-Kanal ----------
+function world(script, now) {
+  const mem = { jobs: undefined, writes: [] };
+  const sent = [];
+  let n = 0;
+  const helper = { jobs: new Map(), mode: script || {} };
+  const channel = {
+    async download(op, a) {
+      sent.push({ op, a: JSON.parse(JSON.stringify(a)), stored: JSON.stringify(mem.jobs) });
+      const m = NS.downloadMessage(op, a);
+      if (!m) { const e = new Error('input'); e.kind = 'input'; throw e; }
+      const hook = helper.mode[op];
+      if (hook) { const r = hook(m, helper); if (r !== undefined) { if (r instanceof Error) throw r; return r; } }
+      if (op === 'dlstart') {
+        if (!helper.jobs.has(m.id)) helper.jobs.set(m.id, { state: 'running', bytes: 0, total: 1000 });
+      }
+      if (op === 'dlcancel' && helper.jobs.has(m.id)) helper.jobs.get(m.id).state = 'cancelled';
+      const j = helper.jobs.get(m.id);
+      return j ? Object.assign({ ok: true, id: m.id, reason: '' }, j) : { ok: true, id: m.id, state: 'unknown' };
+    },
+  };
+  const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); mem.writes.push(JSON.stringify(v)); } };
+  const digest = async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex');
+  const timers = [];   // P4c: Nachprüfungen des Hintergrunds (von Hand ausgelöst)
+  const make = () => NS.createDownloads({ channel, storage, digest, setTimer: (f, ms) => timers.push({ f, ms }), random: () => (++n).toString(16).padStart(32, '0'), now: now || (() => Date.now()) });
+  return { mem, sent, helper, make, timers, dl: make() };
+}
+const err = (kind, notSent) => { const e = new Error(kind); e.kind = kind; if (notSent) e.notSent = true; return e; };
+const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
+
+(async () => {
+  {
+    const w = world();
+    const r = await w.dl.start(URL1, 'Mein "Clip"');
+    check('Start: läuft beim Helfer', r.job.state === 'running' && !r.existing, JSON.stringify(r));
+    const s = starts(w)[0];
+    check('Start: nur id, url, name gesendet', JSON.stringify(Object.keys(s.a)) === '["id","url","name"]' && s.a.url === URL1 && s.a.name === 'Mein Clip', JSON.stringify(s.a));
+    check('Start: Kennung VOR dem Senden gespeichert', s.stored && JSON.parse(s.stored).some((j) => j.id === s.a.id && j.state === 'starting'), s.stored);
+    check('Speicher: keine URL, kein Host, keine Abfrage', w.mem.writes.every((x) => !x.includes('media.example') && !x.includes('SECRET123') && !x.includes('clip.mp4')), w.mem.writes.join('\n'));
+    const again = await w.dl.start(URL1 + '#t=5', 'anders');
+    check('Doppelter Start (gleiche Datei, läuft): derselbe Auftrag, kein zweiter dlstart', again.existing && again.job.id === r.job.id && starts(w).length === 1);
+    const f = await w.dl.find(URL1);
+    check('find: Auftrag zur Datei (z. B. nach Neustart des Players)', f && f.id === r.job.id);
+    check('find: andere Datei → nichts', (await w.dl.find('https://media.example/other.mp4')) === null);
+    w.helper.jobs.get(r.job.id).bytes = 500;
+    const st = await w.dl.status(r.job.id);
+    check('Fortschritt aus dlstatus', st.job.bytes === 500 && st.job.total === 1000 && NS.describeDownload(st.job).progress.startsWith('50 %'), JSON.stringify(st));
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const fin = await w.dl.status(r.job.id);
+    check('Fertig: Zustand done, Text ohne URL', fin.job.state === 'done' && !JSON.stringify(NS.describeDownload(fin.job)).includes('media'), JSON.stringify(fin));
+    const before = w.sent.length;
+    await w.dl.status(r.job.id);
+    check('Beendeter Auftrag: keine weitere Abfrage beim Helfer', w.sent.length === before);
+    const third = await w.dl.start(URL1);
+    check('Nach Abschluss: bewusster neuer Start = neuer Auftrag (neue Kennung)', !third.existing && third.job.id !== r.job.id && starts(w).length === 2);
+  }
+  {
+    const w = world();
+    const [a, b] = await Promise.all([w.dl.start(URL1), w.dl.start(URL1)]);
+    check('Gleichzeitiger Doppeltipp: ein dlstart, ein Auftrag', starts(w).length === 1 && a.job.id === b.job.id && b.existing && w.mem.jobs.length === 1);
+  }
+  {
+    // P4c: gespeicherter Stand veraltet (fertig, aber niemand hat nachgefragt – Player zu): erneuter Start derselben
+    // Datei fragt zuerst den Helfer und startet dann bewusst neu; läuft er wirklich noch → derselbe Auftrag
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const again = await w.dl.start(URL1);
+    check('P4c: veraltetes „läuft“ blockiert keinen neuen Download (Helfer meldet fertig)', !again.existing && again.job.id !== r.job.id && starts(w).length === 2,
+      JSON.stringify(again));
+    const third = await w.dl.start(URL1);
+    check('P4c: läuft wirklich noch → derselbe Auftrag, kein dritter dlstart', third.existing && third.job.id === again.job.id && starts(w).length === 2);
+    const w2 = world({ dlstatus: () => err('unreachable') });
+    const a = await w2.dl.start(URL1);
+    const b = await w2.dl.start(URL1);
+    check('P4c: Helfer nicht erreichbar → lieber kein zweiter Start', b.existing && b.job.id === a.job.id && starts(w2).length === 1);
+    const shown = NS.describeDownload(b.job);
+    check('P4c-3: unerreichbar → Auftrag mit Grund statt eines endlosen „Lädt …“', b.job.check === 'unreachable' && w2.mem.jobs[0].check === 'unreachable'
+      && shown.label === 'Helfer-App nicht erreichbar – letzter bekannter Stand', JSON.stringify([b.job, shown]));
+    const fa = await w2.dl.find(URL1);
+    check('P4c-3: find bei unerreichbarem Helfer: gespeicherter Stand mit Grund (kein Fehler)', fa && fa.id === a.job.id && fa.check === 'unreachable', JSON.stringify(fa));
+    w.helper.jobs.get(again.job.id).state = 'done';
+    const f = await w.dl.find(URL1);
+    check('P4c: find liefert den aktuellen Stand (fertig), nicht den veralteten', f && f.id === again.job.id && f.state === 'done', JSON.stringify(f));
+  }
+  {
+    // P4c: Player/Tab sofort nach dem Tipp geschlossen, Antwort verloren: der Hintergrund klärt selbst nach (ohne
+    // Player), mit DERSELBEN Kennung – kein verlorener und kein doppelter Auftrag.
+    let drop = true;
+    const w = world({ dlstart: (m, h) => { if (drop) { drop = false; h.jobs.set(m.id, { state: 'running', bytes: 0, total: 1000 }); return err('unreachable'); } } });
+    const r = await w.dl.start(URL1);
+    check('P4c: unbestätigt → Nachprüfung geplant (2 s, ohne Player)', r.job.state === 'unconfirmed' && w.timers.length === 1 && w.timers[0].ms === 2000, JSON.stringify(w.timers));
+    { const t = w.timers.shift(); if (t) t.f(); } await new Promise((res) => setTimeout(res, 20));
+    const j = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c: Nachprüfung: Helfer hatte gestartet → läuft, kein zweiter dlstart, keine weitere Nachprüfung', j.state === 'running' && starts(w).length === 1 && w.timers.length === 0, JSON.stringify(j));
+  }
+  {
+    let drop = true;
+    const w = world({ dlstart: () => { if (drop) { drop = false; return err('timeout'); } } });
+    const r = await w.dl.start(URL1);
+    { const t = w.timers.shift(); if (t) t.f(); } await new Promise((res) => setTimeout(res, 20));
+    const ids = starts(w).map((x) => x.a.id);
+    const j = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c: Nachprüfung: nicht angekommen → genau ein erneuter dlstart mit derselben Kennung', j.state === 'running' && ids.length === 2 && ids[0] === ids[1], JSON.stringify(ids));
+  }
+  {
+    // Helfer dauerhaft nicht erreichbar: höchstens drei Nachprüfungen (2 s, 6 s, 20 s), danach Ruhe
+    const w = world({ dlstart: () => err('unreachable'), dlstatus: () => err('unreachable') });
+    const r = await w.dl.start(URL1);
+    const seen = [];
+    for (let i = 0; i < 5 && w.timers.length; i++) { const t = w.timers.shift(); seen.push(t.ms); t.f(); await new Promise((res) => setTimeout(res, 20)); }
+    check('P4c: Nachprüfungen begrenzt (2 s, 6 s, 20 s), Auftrag bleibt unbestätigt', JSON.stringify(seen) === '[2000,6000,20000]' && w.timers.length === 0
+      && w.mem.jobs.find((x) => x.id === r.job.id).state === 'unconfirmed', JSON.stringify(seen));
+    const uj = w.mem.jobs.find((x) => x.id === r.job.id);
+    check('P4c-3: nach den Nachprüfungen kein endloses „Stand wird geprüft“, sondern der Grund', NS.describeDownload(uj).label
+      === 'Start nicht bestätigt – Helfer-App nicht erreichbar (wird beim nächsten Öffnen geprüft)', NS.describeDownload(uj).label);
+  }
+  {
+    // P4c: Helfer wartet selbst auf Netz bzw. den nächsten Versuch → sichtbar, ohne Nutzeraktion
+    const w = world();
+    const r = await w.dl.start(URL1);
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'offline', bytes: 300 });
+    let st = await w.dl.status(r.job.id);
+    check('P4c: wartet auf Internet: läuft weiter, Text „setzt automatisch fort“', st.job.state === 'running' && st.job.wait === 'offline'
+      && NS.describeDownload(st.job).label === 'Wartet auf Internet – setzt automatisch fort', JSON.stringify(st));
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'retry' });
+    st = await w.dl.status(r.job.id);
+    check('P4c: neuer Versuch in Kürze', NS.describeDownload(st.job).label === 'Verbindung gestört – neuer Versuch in Kürze', JSON.stringify(st));
+    Object.assign(w.helper.jobs.get(r.job.id), { wait: 'bogus' });
+    st = await w.dl.status(r.job.id);
+    check('P4c: unbekannter Wartegrund ignoriert', !st.job.wait && NS.describeDownload(st.job).label === 'Lädt …', JSON.stringify(st));
+    delete w.helper.jobs.get(r.job.id).wait;
+    w.helper.jobs.get(r.job.id).state = 'done';
+    // Liste (Menü/Popup) fragt laufende Aufträge selbst nach – der Player ist dafür nicht nötig
+    const l = await w.dl.list();
+    check('P4c: Liste zeigt den aktuellen Stand (done) ohne Abfrage durch den Player', l.length === 1 && l[0].state === 'done' && !l[0].wait, JSON.stringify(l));
+    const before = w.sent.length;
+    await w.dl.list();
+    check('P4c: beendete Aufträge werden in der Liste nicht erneut abgefragt', w.sent.length === before);
+  }
+  {
+    // Antwort verloren (Record kann angekommen sein): unbestätigt → dlstatus → unbekannt → dlstart mit DERSELBEN Kennung
+    let drop = true;
+    const w = world({ dlstart: (m, h) => { if (drop) { drop = false; h.jobs.set(m.id, { state: 'running', bytes: 0, total: 1000 }); return err('unreachable'); } } });
+    const r = await w.dl.start(URL1);
+    check('Antwort verloren: Auftrag „unbestätigt“, nicht verworfen', r.job.state === 'unconfirmed', JSON.stringify(r));
+    const s = await w.dl.status(r.job.id);
+    check('… dlstatus klärt: Helfer hatte gestartet → läuft, kein zweiter dlstart', s.job.state === 'running' && starts(w).length === 1, JSON.stringify(s));
+  }
+  {
+    let drop = true;
+    const w = world({ dlstart: () => { if (drop) { drop = false; return err('timeout'); } } });
+    const r = await w.dl.start(URL1);
+    const s = await w.dl.status(r.job.id);
+    const ids = starts(w).map((x) => x.a.id);
+    check('Nicht angekommen (Helfer kennt Kennung nicht): erneut mit derselben Kennung', s.job.state === 'running' && ids.length === 2 && ids[0] === ids[1], JSON.stringify(ids));
+  }
+  {
+    const w = world({ dlstart: () => err('timeout') });
+    const r = await w.dl.start(URL1);
+    const fresh = w.make();   // Service Worker neu gestartet: URL nicht mehr im Speicher
+    w.helper.mode = {};
+    const s = await fresh.status(r.job.id);
+    check('Nach Neustart des Hintergrunds, Start unbekannt: „nicht bestätigt“, KEIN neuer dlstart', s.job.state === 'failed' && s.job.reason === 'not_started' && starts(w).length === 1, JSON.stringify(s));
+  }
+  {
+    const w = world({ dlstart: (m, h) => { h.jobs.set(m.id, { state: 'running', bytes: 1, total: 9 }); return err('unreachable'); } });
+    const r = await w.dl.start(URL1);
+    w.helper.mode = {};
+    const s = await w.make().status(r.job.id);
+    check('Nach Neustart des Hintergrunds, Helfer lädt: Stand übernommen', s.job.state === 'running' && starts(w).length === 1);
+  }
+  {
+    const w = world({ dlstart: () => err('unreachable', true) });
+    let e = null;
+    try { await w.dl.start(URL1); } catch (x) { e = x; }
+    check('Helfer nicht erreichbar (kein Handshake): Fehler, kein Auftrag gespeichert', e && e.kind === 'unreachable' && w.mem.jobs.length === 0);
+  }
+  {
+    const w = world({ dlstart: () => err('unpaired', true) });
+    let e = null;
+    try { await w.dl.start(URL1); } catch (x) { e = x; }
+    check('Nicht gekoppelt: Fehler „unpaired“, kein Auftrag, nur dieser eine Versuch (kein anderer Weg)', e && e.kind === 'unpaired' && w.mem.jobs.length === 0 && w.sent.length === 1);
+    check('… fester Hinweistext', NS.downloadErrorText('unpaired').includes('nicht gekoppelt'));
+  }
+  {
+    let stale = true;
+    const w = world({ dlstart: () => { if (stale) { stale = false; return err('stale-session', true); } } });
+    const r = await w.dl.start(URL1);
+    const ids = starts(w).map((x) => x.a.id);
+    check('Sitzung beim Helfer abgelaufen (Neustart der App): genau einmal neu, dieselbe Kennung', r.job.state === 'running' && ids.length === 2 && ids[0] === ids[1]);
+  }
+  {
+    const w = world({ dlstart: () => ({ ok: false, state: 'busy' }) });
+    let e = null;
+    try { await w.dl.start(URL1); } catch (x) { e = x; }
+    check('Helfer ausgelastet: Fehler „helper-busy“, kein Auftrag', e && e.kind === 'helper-busy' && w.mem.jobs.length === 0);
+  }
+  {
+    const w = world({ dlstart: () => ({ ok: false }) });
+    let e = null;
+    try { await w.dl.start(URL1); } catch (x) { e = x; }
+    check('Alter Helfer ohne Downloads: „unsupported“', e && e.kind === 'unsupported');
+  }
+  {
+    const w = world();
+    let e = null;
+    try { await w.dl.start('http://user:pw@media.example/a.mp4'); } catch (x) { e = x; }
+    check('URL mit Zugangsdaten: nichts gesendet', e && e.kind === 'input' && w.sent.length === 0);
+  }
+  {
+    const w = world({ dlstart: (m) => ({ ok: true, id: 'b'.repeat(32), state: 'running', bytes: 0, total: 1 }) });
+    const r = await w.dl.start(URL1);
+    check('Antwort für fremde Kennung: nicht übernommen (unbestätigt)', r.job.state === 'unconfirmed');
+  }
+  {
+    const w = world({ dlstatus: (m) => ({ ok: true, id: m.id, state: 'failed', bytes: 0, total: -1, reason: 'http_403 <img src=x>' }) });
+    const r = await w.dl.start(URL1);
+    const s = await w.dl.status(r.job.id);
+    check('Fremder Grund-Text wird nicht übernommen', s.job.state === 'failed' && s.job.reason === '');
+  }
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    const c = await w.dl.cancel(r.job.id);
+    check('Abbruch: dlcancel gesendet, Zustand abgebrochen', w.sent.some((x) => x.op === 'dlcancel' && x.a.id === r.job.id) && ['cancelled', 'cancelling'].includes(c.job.state), JSON.stringify(c));
+    const s = await w.dl.status(r.job.id);
+    check('… dlstatus bestätigt „cancelled“', s.job.state === 'cancelled');
+  }
+  {
+    // Abbruch während Verbindungsabbruch: wird nachgeholt
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: () => err('unreachable') };
+    const c = await w.dl.cancel(r.job.id);
+    check('Abbruch, Helfer nicht erreichbar: Absicht dauerhaft gespeichert', !c.reachable && c.job.state === 'cancelling' && w.mem.jobs[0].state === 'cancelling');
+    check('Abbruchabsicht VOR dem Netzwerkaufruf gespeichert', JSON.parse(w.sent.find((x) => x.op === 'dlcancel').stored)[0].state === 'cancelling');
+    // Neuer Manager = Worker-/Browser-Neustart: nur persistierter Speicher, keine pending-URL.
+    const restarted = w.make();
+    const again = await restarted.start(URL1);
+    check('Erneuter Tipp überholt ausstehenden Abbruch nicht', again.existing && again.job.state === 'cancelling' && starts(w).length === 1);
+    w.helper.mode = {};
+    const before = w.sent.length;
+    const recovered = await restarted.status(r.job.id);
+    check('Nach Neustart zuerst Status, dann erforderlichen Abbruch zustellen', w.sent.slice(before).map((x) => x.op).join(',') === 'dlstatus,dlcancel' && recovered.job.state === 'cancelled');
+    // Unbestätigter Start abgebrochen und Helfer hatte doch gestartet
+    const w2 = world({ dlstart: (m, h) => { h.jobs.set(m.id, { state: 'running', bytes: 0, total: 9 }); return err('unreachable'); } });
+    const r2 = await w2.dl.start(URL1);
+    w2.helper.mode = { dlcancel: () => err('unreachable') };
+    const c2 = await w2.dl.cancel(r2.job.id);
+    check('Abbruch eines unbestätigten Starts ohne Verbindung: „wird abgebrochen“', c2.job.state === 'cancelling');
+    w2.helper.mode = {};
+    const s2 = await w2.dl.status(r2.job.id);
+    check('… Verbindung wieder da, Helfer lädt: dlcancel nachgeholt, abgebrochen', w2.sent.filter((x) => x.op === 'dlcancel').length === 2 && s2.job.state === 'cancelled' && w2.helper.jobs.get(r2.job.id).state === 'cancelled', JSON.stringify(s2));
+    check('… und kein erneuter dlstart', starts(w2).length === 1);
+  }
+  {
+    // Eine verlorene Startantwort kann einem noch nicht ausgeführten Start vorausgehen.
+    // unknown bestätigt keinen Abbruch: Absicht behalten, auch nach erneutem Tipp und Neustart.
+    const w = world({ dlstart: () => err('timeout') });
+    const r = await w.dl.start(URL1);
+    const c = await w.dl.cancel(r.job.id);
+    check('Unbekannte Kennung ist keine Abbruchbestätigung', c.job.state === 'cancelling');
+    const fresh = w.make();
+    await fresh.start(URL1);
+    const s = await fresh.status(r.job.id);
+    check('unknown nach Neustart: Abbruch bleibt, kein dlstart trotz erneuter URL', s.job.state === 'cancelling' && starts(w).length === 1);
+    w.helper.jobs.set(r.job.id, { state: 'running', bytes: 0, total: 9 });
+    w.helper.mode = {};
+    const late = await fresh.status(r.job.id);
+    check('Verspäteter Start wird beim nächsten Abgleich abgebrochen', late.job.state === 'cancelled' && starts(w).length === 1);
+  }
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: (m, h) => { h.jobs.get(m.id).state = 'cancelled'; return err('timeout'); } };
+    await w.dl.cancel(r.job.id);
+    const before = w.sent.length;
+    w.helper.mode = {};
+    const s = await w.make().status(r.job.id);
+    check('Abbruchantwort verloren: terminalen Helperstatus übernehmen, kein zweiter Abbruch nötig', s.job.state === 'cancelled' && w.sent.length === before + 1);
+  }
+  for (const terminal of ['done', 'failed', 'interrupted']) {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: () => err('unreachable') };
+    await w.dl.cancel(r.job.id);
+    w.helper.mode = {};
+    w.helper.jobs.get(r.job.id).state = terminal;
+    const before = w.sent.length;
+    const s = await w.make().status(r.job.id);
+    check('Ausstehender Abbruch: eindeutiger Terminalzustand ' + terminal + ' gewinnt', s.job.state === terminal && w.sent.length === before + 1);
+  }
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.mode = { dlcancel: (m) => ({ ok: true, id: m.id, state: 'running', bytes: 10, total: 1000 }) };
+    await w.dl.cancel(r.job.id);
+    await w.make().status(r.job.id);
+    check('Noch running nach dlcancel bestätigt keinen Abbruch', w.mem.jobs[0].state === 'cancelling');
+    w.helper.mode = { dlstatus: () => err('timeout') };
+    await w.make().status(r.job.id);
+    check('Wiederholter Statusfehler löscht Abbruchabsicht nicht', w.mem.jobs[0].state === 'cancelling');
+  }
+  {
+    const w = world(null, () => 1000);   // alle zur selben Zeit: die Reihenfolge muss trotzdem stimmen
+    const ids = [];
+    for (let i = 0; i < 25; i++) {
+      const r = await w.dl.start('https://media.example/v' + i + '.mp4');
+      ids.push(r.job.id);
+      w.helper.jobs.get(r.job.id).state = 'done';
+      await w.dl.status(r.job.id);
+    }
+    check('Höchstens 20 Aufträge gespeichert (älteste beendete fallen heraus)', w.mem.jobs.length === 20 && !w.mem.jobs.some((j) => j.id === ids[0]));
+  }
+  {
+    const w = world({ dlstatus: (m) => (m.id === '0'.repeat(32) ? { ok: true, id: m.id, state: 'unknown' } : undefined) });
+    check('Fähigkeit: Helfer mit Downloads', (await w.dl.capabilities()).supported === true);
+    const w2 = world({ dlstatus: () => ({ ok: false }) });
+    check('Fähigkeit: alter Helfer → nicht unterstützt', (await w2.dl.capabilities()).supported === false);
+    const w3 = world({ dlstatus: () => err('unpaired', true) });
+    const c3 = await w3.dl.capabilities();
+    check('Fähigkeit: nicht gekoppelt → nicht erreichbar, nicht unterstützt', c3.supported === false && c3.reachable === false && c3.error === 'unpaired');
+  }
+  // Texte: fest, ohne URL; Anmeldung verlangt
+  check('Text: 401/403 → Anmeldung verlangt, kein anderer Weg', NS.downloadReasonText('http_403').includes('Anmeldung') && NS.downloadReasonText('http_401').includes('Anmeldung'));
+  check('Text: private Adresse', NS.downloadReasonText('blocked_address').includes('privates Netz'));
+  check('Text: Speicherberechtigung (Android 8–9)', NS.downloadReasonText('storage_permission').includes('Speicherzugriff'));
+  check('Text: unbekannter Grund → allgemein', NS.downloadReasonText('xyz') === 'Download fehlgeschlagen');
+  // P4c-3 (P2): der Helfer setzt einen unterbrochenen Auftrag selbst aus der verschlüsselten Quelle fort → Kadri fragt
+  // „interrupted“ weiter ab und zeigt den neuen Stand; kein zweiter Start derselben Datei, solange er wieder läuft.
+  {
+    const w = world();
+    const r = await w.dl.start(URL1);
+    w.helper.jobs.get(r.job.id).state = 'interrupted';
+    const a = await w.dl.status(r.job.id);
+    check('P4c-3: unterbrochen übernommen', a.job.state === 'interrupted', JSON.stringify(a.job));
+    w.helper.jobs.get(r.job.id).state = 'running';
+    const b = await w.dl.status(r.job.id);
+    check('P4c-3: vom Helfer fortgesetzt → wieder „läuft“ (unterbrochen ist nicht endgültig)', b.job.state === 'running', JSON.stringify(b.job));
+    w.helper.jobs.get(r.job.id).state = 'interrupted';
+    await w.dl.status(r.job.id);
+    w.helper.jobs.get(r.job.id).state = 'running';
+    const again = await w.dl.start(URL1);
+    check('P4c-3: erneuter Tipp, während der Helfer fortsetzt → derselbe Auftrag, kein zweiter dlstart', again.existing && again.job.id === r.job.id && starts(w).length === 1);
+    w.helper.jobs.get(r.job.id).state = 'done';
+    const listed = await w.dl.list();
+    check('P4c-3: Menüliste fragt auch unterbrochene ab', listed.find((j) => j.id === r.job.id).state === 'done', JSON.stringify(listed));
+  }
+  // P4c-3 (P1): Zahlen nur aus verlässlichem Zähler/Nenner; Samsung zeigte „über 300 %“ und „5 MB von 2 MB“
+  {
+    const MB = 1048576, d = NS.describeDownload;
+    check('P4c-3: MP4 Prozent aus exakter Länge', d({ state: 'running', bytes: 12 * MB, total: 32 * MB }).progress === '37 % · 12,0 / 32,0 MB');
+    const over = d({ state: 'running', bytes: 5 * MB, total: 2 * MB }).progress;
+    check('P4c-3: MP4 Zähler über Nenner → kein Prozent, kein „von“, nicht auf 100 % abgeschnitten', over === '5,0 MB geladen', over);
+    check('P4c-3: MP4 ohne Größe → nur geladene MB', d({ state: 'running', bytes: 3 * MB, total: -1 }).progress === '3,0 MB geladen');
+    const h = d({ state: 'running', kind: 'hls', bytes: 5.5 * MB, total: -1, done: 12, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS „12/25 Teile · 5,5 MB geladen“', h === '12/25 Teile · 5,5 MB geladen', h);
+    const hs = d({ state: 'running', kind: 'hls', bytes: 5 * MB, total: 2 * MB, done: 3, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS nie Prozent oder Gesamtgröße (auch wenn ein alter Helfer eine Schätzung schickt)', hs === '3/25 Teile · 5,0 MB geladen', hs);
+    const hb = d({ state: 'running', kind: 'hls', bytes: MB, total: -1, done: 30, of: 25, phase: 'fetch' }).progress;
+    check('P4c-3: HLS mehr fertige als alle Teile → keine Teilangabe (Fehler nicht verdeckt)', hb === '1,0 MB geladen', hb);
+    check('P4c-3: HLS Phasen', d({ state: 'running', kind: 'hls', phase: 'verify', bytes: 9, done: 1, of: 1 }).progress === 'Wird geprüft …'
+      && d({ state: 'running', kind: 'hls', phase: 'save', bytes: 9, done: 1, of: 1 }).progress === 'Wird gespeichert …');
+    const dn = d({ state: 'done', kind: 'hls', bytes: 472404, total: 472404, done: 0, of: 11 });
+    check('P4c-3: fertig mit exakter Größe der gespeicherten Datei', dn.label === 'Gespeichert in Download/Video-Assistent' && dn.progress === '0,4 MB', JSON.stringify(dn));
+    check('P4c-3: abgerundet (nie mehr als vorhanden)', d({ state: 'done', total: 99.99 * MB }).progress === '99,9 MB' && d({ state: 'done', total: 250 * MB + 1 }).progress === '250 MB');
+    check('P4c-3: Startet mit gescheiterter Abfrage → Grund statt „Startet …“', d({ state: 'starting', check: 'timeout' }).label === 'Start nicht bestätigt – Helfer-App antwortet nicht');
+    check('P4c-3: ohne Grund bleibt „Startet …“ (Antwort steht noch aus)', d({ state: 'starting' }).label === 'Startet …');
+  }
+  summary('download_unit');
+})().catch((e) => { console.log('FAIL crash — ' + (e && e.stack)); process.exitCode = 1; });

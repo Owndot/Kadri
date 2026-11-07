@@ -30,6 +30,33 @@ const NODE_MUTANTS = [
   ['Antwortgröße unbegrenzt', 'channel-transport.js', "declared > MAX_RESPONSE", "declared > Infinity"],
   ['beliebige Pfade', 'channel-transport.js', "if (!PATHS.has(path))", "if (false)"],
   ['keine Zeitgrenze', 'channel-transport.js', "signal: AbortSignal.timeout(timeoutMs),", ""],
+  // Phase C3: direkte MP4-Downloads
+  ['Download: fremde Felder (Cookie, Header, Referer) durchgelassen', 'channel-session.js', "if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name')) return null;", "if (op !== 'dlstart') return null;"],
+  ['Download: URL-Zeichen ungeprüft (Zeilenumbruch, Leerzeichen)', 'channel-session.js', "!DL_URL.test(a.url)", "!/^https?:/.test(a.url)"],
+  ['Download: Name ungeprüft', 'channel-session.js', "a.name.length > 120 || DL_NAME_BAD.test(a.name)", "a.name.length > 120"],
+  ['Download: dlstatus/dlcancel mit Zusatzfeldern', 'channel-session.js', "return keys.every((k) => k === 'id') ? { op, id: a.id } : null;", "return { op, id: a.id };"],
+  ['Verwaltung: doppelter Start nicht erkannt', 'channel-downloads.js', "const same = jobs.find((x) => x.key === key && !FINAL.has(x.state));", "const same = null;"],
+  ['Verwaltung: Kennung erst nach dem Senden gespeichert', 'channel-downloads.js', "        await save(jobs);                // erst gespeichert, dann gesendet: die Kennung überlebt jeden Abbruch\n", ""],
+  ['Verwaltung: URL im Speicher', 'channel-downloads.js', "const j = { id: random(), key, name:", "const j = { id: random(), key, url, name:"],
+  ['Verwaltung: Wiederholung mit neuer Kennung', 'channel-downloads.js', "try { await send(j, url); }   // dieselbe Kennung", "try { j.id = random(); await send(j, url); }"],
+  ['Verwaltung: „sicher nicht angekommen“ ignoriert', 'channel-downloads.js', "!!e && !e.notSent && ", "!!e && "],
+  ['Verwaltung: Abbruch nach Verbindungsabbruch nicht nachgeholt', 'channel-downloads.js', "if (s === 'running' && j.state === 'cancelling') {", "if (false) {"],
+  ['Verwaltung: Abbruchabsicht vor Netzwerk nicht gespeichert', 'channel-downloads.js', "        await save(jobs);                // Abbruchabsicht dauerhaft, bevor dlcancel den Browser verlässt\n", ""],
+  ['Verwaltung: laufender Auftrag verliert Abbruchabsicht', 'channel-downloads.js', "        j.state = 'cancelling';", "        if (j.state !== 'running') j.state = 'cancelling';"],
+  ['Verwaltung: unknown fälschlich als Abbruch bestätigt', 'channel-downloads.js', "if (j.state === 'cancelling') { pending.delete(id); }", "if (j.state === 'cancelling') { j.state = 'cancelled'; pending.delete(id); }"],
+  ['Verwaltung: Grund ungefiltert übernommen', 'channel-downloads.js', "typeof r.reason === 'string' && /^[a-z0-9_]{0,40}$/.test(r.reason)", "typeof r.reason === 'string'"],
+  ['Verwaltung: Antwort für fremde Kennung angenommen', 'channel-downloads.js', "if (r.id !== j.id) {", "if (false) {"],
+  ['Verwaltung: ohne URL nach Neustart erneut gestartet (alte URL geraten)', 'channel-downloads.js', "} else { j.state = 'failed'; j.reason = 'not_started'; }", "} else { try { await send(j, 'https://media.example/videos/clip.mp4'); } catch (e) {} }"],
+  ['Verwaltung: Zugangsdaten in der URL erlaubt', 'channel-downloads.js', "|| url.username || url.password) return null;", ") return null;"],
+  // P4b: HLS (Stream speichern)
+  ['HLS: Bindung mit Zusatzfeld angenommen', 'channel-session.js', "if (k.length !== 3 || !k.every((x) => x === 'player' || x === 'gen' || x === 'rev')) return null;", "if (!k.length) return null;"],
+  ['HLS: hlsplan mit fremden Feldern (Cookie, Referer) angenommen', 'channel-session.js', "if (!keys.every((k) => k === 'url' || k === 'bind')) return null;", ''],
+  ['HLS: hlsstart nach Sitzungswechsel automatisch wiederholt', 'channel-session.js', "'dlstatus', 'dlcancel', 'hlsplan']);", "'dlstatus', 'dlcancel', 'hlsplan', 'hlsstart']);"],
+  ['HLS: Fortsetzen mit dem Plan einer fremden Quelle', 'channel-downloads.js', "(plan.key !== j.key && plan.skey !== j.skey)", 'false'],
+  ['HLS: Fortsetzen eines abgebrochenen Auftrags', 'channel-downloads.js', "if (!j || j.kind !== 'hls' || j.state !== 'interrupted')", "if (!j || j.kind !== 'hls')"],
+  ['HLS: Artwechsel in der Antwort übernommen', 'channel-downloads.js', "if (r.kind !== 'hls') { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }", ''],
+  ['HLS: neuer Plan mit anderer Qualität', 'channel-downloads.js', 'fresh.options.find((o) => sameOption(o, want))', 'fresh.options[0]'],
+  ['HLS: mehr als 64 Optionen angenommen', 'channel-downloads.js', '!r.options.length || r.options.length > 64', '!r.options.length'],
 ];
 const BROWSER_MUTANTS = [   // [Name, Datei in dist/test, alt, neu]
   ['Verwaltung: Absenderprüfung entfernt (Content-Scripts dürfen koppeln)', 'channel/channel-service.js', "if (!a || !a.pages.some((p) => isPage(sender, p)))", "if (!a)"],
@@ -57,6 +84,10 @@ function run(script, env, timeoutMs, verbose) {
 
 let survived = 0;
 if (!run('channel_unit_check.js', {}, 120000, true)) { console.log('baseline unit FAILED'); process.exit(1); }
+if (!run('download_unit_check.js', {}, 120000, true)) { console.log('baseline download unit FAILED'); process.exit(1); }
+if (!run('hls_unit_check.js', {}, 120000, true)) { console.log('baseline hls unit FAILED'); process.exit(1); }
+if (!run('hls_integration_check.js', {}, 300000, true)) { console.log('baseline hls integration FAILED'); process.exit(1); }
+if (!run('download_integration_check.js', {}, 300000, true)) { console.log('baseline download integration FAILED'); process.exit(1); }
 if (!run('channel_integration_check.js', {}, 600000, true)) { console.log('baseline integration FAILED'); process.exit(1); }
 if (!run('channel_browser_check.js', {}, 600000, true)) { console.log('baseline browser FAILED'); process.exit(1); }
 if (!run('channel_netguard_failure_check.js', {}, 300000, true)) { console.log('baseline netguard failure FAILED'); process.exit(1); }
@@ -66,7 +97,9 @@ for (const [name, file, from, to] of NODE_MUTANTS) {
   fs.cpSync(path.join(ROOT, 'channel'), dir, { recursive: true });
   mutate(path.join(dir, file), from, to);
   // erst die schnellen Unit-Tests, dann die Integration; hängt ein Mutant, gilt die Zeitgrenze als erkannt
-  const passed = run('channel_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) && run('channel_integration_check.js', { CHANNEL_SRC_DIR: dir }, 240000);
+  const passed = run('channel_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) && run('download_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) &&
+    run('hls_unit_check.js', { CHANNEL_SRC_DIR: dir }, 120000) &&
+    run('channel_integration_check.js', { CHANNEL_SRC_DIR: dir }, 240000) && run('download_integration_check.js', { CHANNEL_SRC_DIR: dir }, 300000);
   fs.rmSync(dir, { recursive: true, force: true });
   if (passed) survived++;
   console.log((passed ? 'SURVIVED ' : 'killed   ') + name);
