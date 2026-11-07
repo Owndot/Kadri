@@ -44,8 +44,11 @@ Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor 
   ein begonnener Abruf erhält jedoch weiterhin `HlsFetch.MANIFEST_TIMEOUT_MS=30_000`. Somit keine harte
   20-s-Gesamtfrist. Die begrenzte Kadri-Korrektur verspricht keinen Erfolg für Pläne über 25 s und behebt
   keinen Serverstatus 404/412. Keine pauschale Fristerhöhung oder neue APK ohne weiteren Nachweis.
-- **NEEDS_TEST – CI/Lieferung/Samsung:** vollständige CI des neuen Quellstands und bestehendes isoliertes
-  P4-Paket abwarten; danach nur Erweiterung aktualisieren und media-regression-b erneut herunterladen.
+- **IN_PROGRESS – CI/Lieferung:** Quellcommit **`8372957b30186987839e6d6fcbe1dd8da818ae2b`** gepusht;
+  vollständige CI https://github.com/Owndot/Kadri/actions/runs/42421893939.
+  Bestehender isolierter P4-Workflow auf exakt diesen Quellcommit gesetzt (unveränderter Helper-Pin);
+  Upload erst nach vollständiger grüner Quell-CI, bestehender Guard unverändert.
+- **NEEDS_TEST – Samsung:** geprüftes P4-Paket abwarten; danach nur Erweiterung aktualisieren und media-regression-b erneut herunterladen.
   Keine Deinstallation, APK oder neue Kopplung. Anschließend anonymisierte Diagnose bei weiterem Fehler.
 - **Nächster Schritt:** CI abschließen und verifizierte P4-Erweiterung liefern; site-a bleibt für die
   konkrete serverseitige Vorbedingung/fehlende MP4-Ressource **BLOCKED**, ohne Umgehungsversuche.

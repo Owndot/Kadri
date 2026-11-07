@@ -21,7 +21,7 @@ concurrency:
   group: p4-test-extension
   cancel-in-progress: false
 env:
-  SOURCE_SHA: bde39ebbf6716d1714259d2428807382f81befd3
+  SOURCE_SHA: 8372957b30186987839e6d6fcbe1dd8da818ae2b
   HELPER_SHA: 8b906c504f0612ff4af69a397a2745b717f156b3
   P4_ID: pcccpjllneffccpenbepmfbkjedllkkf
   RETENTION_DAYS: 2
@@ -178,7 +178,7 @@ jobs:
         m = json.loads(expected['manifest.json'])
         ev = {
           'purpose': 'Owner-approved controlled Samsung test (P4c). NOT a release. Production stays UNAPPROVED.',
-          'changes': 'Anonymous diagnostics for page download button, HLS interrupted HTTP errors and planning failures. site-a HTTP 404 cause still open.',
+          'changes': 'Bounded 25-second response deadline for synchronous HLS planning only; other channel calls retain 5 seconds. Reproduced slow-plan regression. site-a HTTP 404/412 remains open.',
           'helper_update_required': False, 'pairing_reset_required': False,
           'extension_name': m['name'], 'extension_version': m['version'], 'extension_id': os.environ['P4_ID'],
           'zip': 'kadri-p4-test-extension.zip', 'zip_sha256': zsha, 'folder': 'kadri-p4-test',
@@ -202,7 +202,7 @@ jobs:
     - name: Short-lived isolated P4 TEST extension only (public Actions artifact, not a release)
       uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
       with:
-        name: kadri-p4test-bde39eb-vivaldi-test
+        name: kadri-p4test-8372957-vivaldi-test
         path: ${{ runner.temp }}/deliver/
         retention-days: ${{ env.RETENTION_DAYS }}
         if-no-files-found: error
