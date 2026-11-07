@@ -9,6 +9,49 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „Fortschritt“ unten.
 
+## Aktueller Einstieg – 2026-11-07 (maßgeblich vor den historischen Abschnitten)
+
+- **DONE – Übernahme:** GitHub-PRs und lokale Klone bestätigen Kadri
+  `bc36ba9e5be4e772d4c8da2609a79a6b32beb135` auf `feature/c3-helper-mp4` und Helfer
+  `862c1d19ea80eefad7b9b341b93a70cde338fa7d` auf `feature/c3-browser-downloads`.
+  Anwendungscode des Helfers: `8b906c5`. PR #11/#27 bleiben Draft; Produktion **UNAPPROVED**.
+- **DONE – Samsung-Nachtest (Eigentümer bestätigt):** Android 17 / One UI 9, Vivaldi;
+  Helfer `8b906c5`, P4 versionCode 6, Kadri P4 TEST `ef9a5ed`.
+  **F1 PASS, F2 PASS, R1 HLS-Prozessneustart PASS, R2 MP4-Prozessneustart PASS,
+  C1 dauerhafter Nutzerabbruch PASS.** Die älteren offenen F1/F2-/Samsung-Vermerke unten sind historisch.
+  TS/fMP4, getrennte/integrale Tonspuren, Qualitätsauswahl, direkter Webseitenknopf,
+  Unabhängigkeit vom Player, Netzunterbrechung, Bildschirm aus, Parallelität und Ablehnungen bestätigt.
+- **IN_PROGRESS – site-a HTTP 404 (OFFEN):** Wiedergabe im Browser funktioniert, Quelle wird erkannt,
+  Auswahl erscheint, danach scheitert der Download mit HTTP 404 (Eigentümer-Bericht).
+  Ressource, Downloadtyp und genaue Fehlerphase sind noch **nicht nachgewiesen**.
+  Frühere Aussagen im PR-Text über Sitzungsdaten sind **kein Ursachenbeleg für diesen Befund**.
+- **DONE – gezielter Diagnosecheck (Codebeleg):** `105-download-knopf.js` registriert keine
+  `hdlDiagNew`-Diagnose. `080-helper-app.js` übernimmt `reason` nur für `failed`, während HLS
+  HTTP 404 als `interrupted` meldet; die Diagnose beendet dort auch ihre Beobachtung.
+  `HlsEngine.plan()` prüft neben der Hauptliste nur die **erste** Option (Video-/ggf. Audioliste),
+  keine Segmente. `attempt()` lädt Hauptliste und gewählte Medienlisten erneut.
+  Qualitätsauswahl belegt daher weder Erreichbarkeit aller Optionen noch der Segmente.
+- **TODO – Ursachenprüfung:** Quellwechsel/Alter, Ablauf zwischen Plan und Start, einzelne fehlende
+  Medien-/Init-/Segmentressourcen, Redirectziel und MP4-GET/Range sind Hypothesen, keine Diagnose.
+  `HlsFetch` nutzt GET ohne Range für neue HLS-Ressourcen; Wiederverwendung prüft Range 0-0 mit
+  starkem If-Range. Relative HLS-Adressen werden gegen die finale Antwortadresse aufgelöst;
+  Querywerte werden nicht pauschal vererbt. Sicherheitsgrenzen bleiben unverändert.
+- **NEEDS_TEST – Samsung-Daten:** vorhandenen Fehler einmal reproduzieren, auf derselben Seite
+  Kadri-Erweiterungsmenü → „Diagnose anzeigen“ → **„Anonymisiert kopieren“**.
+  Gewählte Qualitätsbezeichnung, Ort der Fehlermeldung und weiterlaufende Wiedergabe ergänzen.
+  Keine normale Diagnose, URLs oder Sitzungsdaten weitergeben.
+- **Nächster Schritt:** vorhandene Samsung-Diagnose auswerten; nachgewiesene Diagnose-Lücken am
+  direkten Knopf und bei `interrupted` gezielt testen und schließen. Synthetische HTTP-Fälle
+  prüfen Informationsverlust, sie belegen allein keine site-a-Ursache. Keine Downloadkorrektur
+  ohne Ursachenbeleg. Keine neue APK für reine Kadri-Korrekturen.
+- **TODO – danach:** MP4-SourceVault instrumentiert prüfen (Samsung R2 ist bereits PASS),
+  bytegenaues MP4-Fortsetzen über Prozessende evaluieren, Keystore-/Vault-Lebenszyklus prüfen.
+  MP4 startet nach Prozessende weiterhin bei Byte 0 mit ETag-/Längenvergleich.
+- **BLOCKED – unveränderte Releasegrenzen:** P4B-A10-SIZE bleibt rot; keine unabhängige
+  Sicherheitsfreigabe, keine Merges/Tags/Releases/Produktionssignierung.
+
+Aktuelle Untersuchung: noch keine Codeänderung, kein neuer Testlauf oder neuer CI-Erfolg behauptet.
+
 ---
 
 ## A. Projektstatus
