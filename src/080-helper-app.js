@@ -137,7 +137,7 @@
     if (!d) return '-';
     const status = /^(?:range_)?http_(\d{3})$/.exec(d.reason || '');
     const type = d.type || (d.stream ? 'hls' : d.kind === 'mp4' ? 'mp4' : '?');
-    const phase = d.stage === 'hlsplan' ? 'hlsplan' : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
+    const phase = d.state === 'rejected' && d.stage === 'hlsplan' ? 'hlsplan' : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
     return 'Typ ' + type + ' · Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
       (status ? ' · HTTP ' + status[1] : '') + ' · Phase ' + phase + (d.stage ? ' · Aufruf ' + d.stage : '') +
       (d.check ? ' · Statusabfrage ' + d.check : '') +

@@ -75,5 +75,10 @@ function setup(kind = 'mp4') {
   e.ctx.reply = () => { now += 8000; return { ok: false, error: { reason: 'http_404' } }; };
   await e.api.pageDlPlan(e.opt);
   check('time to plan failure includes the actual request duration', e.api.diags[0].failAfter === 8);
+  const f = setup('hls');
+  f.ctx.reply = () => ({ ok: true, value: { planId: 'plan-private-id', options: [], job: { id: 'existing-private-id', kind: 'hls', state: 'running' } } });
+  await f.api.pageDlPlan(f.opt);
+  f.api.hdlDiagUpdate({ id: 'existing-private-id', kind: 'hls', state: 'interrupted', reason: 'http_404' });
+  check('existing job discovered while planning is not mislabelled as a plan failure', /Phase unbekannt/.test(f.api.hdlDiagText(f.api.diags[0])) && f.requests.length === 1);
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

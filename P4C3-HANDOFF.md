@@ -95,6 +95,10 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
   `interrupted/http_404`, `phase` leer: Die fehlende Ressourcenzuordnung ist jetzt auch am Protokoll belegt.
 - **DONE – Diagnose-Zeitmessung:** Beginn vor dem Aufruf festhalten, sodass ein langsamer
   Planfehler nicht pauschal als „nach 0 s“ erscheint; Regressionstest mit 8-s-Antwortzeit. Diagnose-Unit 16/16.
+- **DONE – weitere Diagnoseprüfung:** ein während `hlsplan` wiedergefundener laufender Auftrag
+  darf später nicht als Planfehler beschriftet werden; Test ergänzt, Diagnose-Unit jetzt 17/17.
+  Bestehende MP4-Integration lokal 38/38. Protokolltests/Zeitmessung in `4ed2b1b` gepusht,
+  CI https://github.com/Owndot/Kadri/actions/runs/42390704798 läuft.
 - **BLOCKED – reale 404-Ursache:** ohne Samsung-Diagnose weder tatsächlicher Downloadtyp noch
   betroffene Quelle/Fehlerphase belegbar. Nächster Schritt bleibt die angefragte anonymisierte Diagnose,
   parallel CI-Abschluss und isoliertes Kadri-P4-Testpaket (unveränderte APK, keine neue Kopplung).
