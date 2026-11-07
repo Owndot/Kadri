@@ -213,9 +213,18 @@ with sync_playwright() as p:
             ('HLS redirect', 'hls', '/d/s/init.mp4', 0, True)]:
         # An interrupted earlier HLS job would legitimately offer resume. Finish it via explicit cancellation
         # before the next independent synthetic case; cancellation is also checked in the existing suite below.
-        for j in jobs_via_popup(ctx, ext_id):
-            if j['state'] == 'interrupted':
-                sw.evaluate('(id) => chrome.runtime.sendMessage({t:"kadri-download",op:"cancel",id})', j['id'])
+        # runtime.sendMessage in the service worker cannot target that same worker. Use the authorized popup
+        # sender, as the real download list does; never bypass the sender checks to clean up a fixture job.
+        cleanup = ctx.new_page(); cleanup.goto('chrome-extension://%s/popup.html' % ext_id)
+        cleanup.evaluate('''async () => {
+          const r = await chrome.runtime.sendMessage({t:"kadri-download",op:"list"});
+          if (!r || !r.ok) throw new Error('fixture list failed');
+          for (const j of r.value) if (j.state === 'interrupted') {
+            const c = await chrome.runtime.sendMessage({t:"kadri-download",op:"cancel",id:j.id});
+            if (!c || !c.ok) throw new Error('fixture cancel failed');
+          }
+        }''')
+        cleanup.close()
         goto_playing(pg, BASE + '/d/' + media + '.html?n=diag')
         HITS.clear()
         STATE.update(fail_path=target, fail_after=after, redirect=redirect)

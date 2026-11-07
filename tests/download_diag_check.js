@@ -80,5 +80,9 @@ function setup(kind = 'mp4') {
   await f.api.pageDlPlan(f.opt);
   f.api.hdlDiagUpdate({ id: 'existing-private-id', kind: 'hls', state: 'interrupted', reason: 'http_404' });
   check('existing job discovered while planning is not mislabelled as a plan failure', /Phase unbekannt/.test(f.api.hdlDiagText(f.api.diags[0])) && f.requests.length === 1);
+  const g = setup();
+  g.ctx.reply = () => ({ ok: false, error: { kind: 'helper-busy' } });
+  await g.api.pageDlStartMp4(g.opt);
+  check('fixed channel codes with hyphens are preserved', /Grund helper-busy/.test(g.api.hdlDiagText(g.api.diags[0])));
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

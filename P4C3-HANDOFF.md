@@ -103,6 +103,48 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
   betroffene Quelle/Fehlerphase belegbar. Nächster Schritt bleibt die angefragte anonymisierte Diagnose,
   parallel CI-Abschluss und isoliertes Kadri-P4-Testpaket (unveränderte APK, keine neue Kopplung).
 
+### Nachgelagerte Vault-Prüfung (nur lesend, während Gerätedaten fehlen)
+
+- **IN_PROGRESS – Lebenszyklus/Sicherheit:** Code `SourceVault`, `KeystoreSealer`, Einbindung in beide
+  Engines gelesen; keine Helper-Änderung, keine Sicherheitsfreigabe. Separate app-private
+  `noBackupFilesDir/source-vault/{hls,mp4}`, AAD bindet Kennung/Art/Zeitfenster, Keystore ohne
+  Software-Fallback; bestehende Abbruch-/Identitätsprüfungen bleiben unverändert.
+- **TODO – Lebensdauer nach Ablauf:** mit dem unveränderten `SourceVault` und synthetischem Sealer/
+  kontrollierter Uhr lokal belegt: `put(id, kind, gleicheUrl, binding)` bewahrt vor Ablauf die Frist;
+  derselbe Aufruf bei `now = ursprüngliches expiresMs + 1` löscht intern den abgelaufenen Eintrag
+  und erzeugt ein **neues 6-h-Fenster für dieselbe Kennung/URL**. Ablauf wird nicht über Joblebenszeit
+  verankert. Noch kein Engine-/Samsung-Nachweis einer solchen Verlängerung; gezielt HLS-Retry mit
+  bereits lange im Speicher gehaltener Quelle prüfen, bevor eine Korrektur geplant wird.
+  Reproduktion: ID `00112233445566778899aabbccddeeff`, URL nur `https://example.invalid/synthetic.m3u8`,
+  Uhr zunächst `1000000`, Sealer gibt für diese reine Lebensdauerprobe Eingabebytes zurück;
+  `put → get.expiresMs → Uhr expiresMs+1 → put → get.expiresMs == now+MAX_AGE_MS` ist wahr.
+- **NEEDS_TEST – konkurrierende Keystore-Erstanlage:** HLS und MP4 besitzen getrennte Sealer-Instanzen,
+  aber denselben Alias. `key()` führt Lesen/Generieren ohne gemeinsamen Lock aus. Möglicher
+  Schlüsselwechsel bei gleichzeitigem ersten Download ist eine **Hypothese**, noch kein Android-Befund;
+  mit echter Keystore-Instrumentierung und Startbarriere prüfen.
+- **TODO – Haltbarkeit/Aufräumen:** Vault schreibt atomar, aber ohne Datei-/Verzeichnis-fsync;
+  Verlust beim harten Systemabbruch wäre fail-closed, kann Wiederaufnahme verhindern. Ablauf wird
+  bei Zugriff/Sweep geprüft, kein zeitgesteuertes Löschen bei beendetem Prozess. Das ist von der
+  Nutzbarkeit nach Ablauf zu unterscheiden. Keine Aufweichung des 6-h-Ziels ableiten.
+- **TODO – MP4 bytegenau über Prozessende:** weiterhin Byte 0 mit ETag/Längenvergleich;
+  geeignete Instrumentierung muss insbesondere genau einen MediaStore-Eintrag, unveränderte
+  Quelle und dauerhaften Abbruch vor einer Implementierung absichern. Samsung R2 bleibt PASS.
+
+### CI-Nachlauf (2026-11-07)
+
+- **DONE – erster CI-Befund eingegrenzt:** Lauf `42390438197` auf `b8eed88`: allgemeine Browser-Suite,
+  DNR/Firefox, Helper-Route, Datenschutz, Speicherprüfungen grün; Kanal-Mutationen 53/53;
+  `test_helper.py` 18/18, Menü 7/7, MP4 134/134, HLS 24/24.
+  Der erweiterte `test_direct_dl.py` besteht MP4-GET/Redirect, HLS-Plan-Medienliste und
+  HLS-Start-Hauptliste einschließlich anonymer Diagnose. Danach bricht **der neue Testaufbau** ab:
+  `runtime.sendMessage(cancel)` aus dem Service Worker erreicht nicht seinen eigenen Empfänger.
+  Kein Produktfehler, kein ignorierter Testfehler: Bereinigung jetzt vom erlaubten Popup-Absender,
+  wie die echte Downloadliste, mit geprüfter Antwort. Senderprüfungen unverändert.
+- **DONE – Diagnose-Unit 18/18:** feste Kanalcodes mit Bindestrich (z. B. `helper-busy`) bleiben erhalten;
+  keine Freitext-Fehlermeldungen oder Adressen. Noch keine vollständige grüne CI des finalen Stands.
+- **Nächster Schritt:** Testkorrektur pushen, vollständige CI abwarten; erst nach Erfolg P4-Test-Erweiterung
+  über bestehenden Workflow aus exakt diesem Commit liefern. Helper bleibt `862c1d1`/App `8b906c5`.
+
 ---
 
 ## A. Projektstatus

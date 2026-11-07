@@ -37,7 +37,7 @@
       ageSec: first && first.observedAt ? Math.max(0, Math.round((Date.now() - first.observedAt) / 1000)) : -1,
       loaded: !!(e && e.browser === 'loaded'), current: !!(e && e.revision === o.revision) };
   }
-  const hdlDiagCode = (s) => typeof s === 'string' && /^[a-z0-9_]{1,40}$/.test(s) ? s : '';
+  const hdlDiagCode = (s) => typeof s === 'string' && /^[a-z0-9_-]{1,40}$/.test(s) ? s : '';
   // Fehler vor einer Auftragskennung (z. B. hlsplan): ebenfalls behalten, ohne künstlichen Downloadauftrag.
   function hdlDiagFailure(info, r) {
     const d = Object.assign({ at: Date.now(), state: 'rejected', failAfter: 0 }, info,
