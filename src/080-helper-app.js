@@ -29,7 +29,7 @@
     let e = null;
     try { e = mediaRegistry.snapshot(o.ctx).find((x) => x.sourceId === o.sourceId) || null; } catch (x) {}
     const first = e && e.provenance && e.provenance[0];
-    return { identity: o.identity || '?', qstate: e && e.quality ? e.quality.status : '?', play: play || null,
+    return { at: Date.now(), identity: o.identity || '?', qstate: e && e.quality ? e.quality.status : '?', play: play || null,
       origin: e ? e.provenance.map((p) => p.kind + '/' + p.origin).join('+') : '?',
       binding: e && e.association ? e.association.state + ':' + e.association.evidence.join(',') : '?',
       kind: e ? e.kind : '?', role: e ? e.role : '?',
@@ -42,9 +42,10 @@
   function hdlDiagFailure(info, r) {
     const d = Object.assign({ at: Date.now(), state: 'rejected', failAfter: 0 }, info,
       { reason: hdlDiagCode(r && r.error && (r.error.reason || r.error.kind)) || 'unreachable' });
+    d.failAfter = Math.max(0, Math.round((Date.now() - d.at) / 1000));
     hdlDiags.unshift(d);
     while (hdlDiags.length > 4) hdlDiags.pop();
-    if (typeof hdlDiagChanged === 'function') hdlDiagChanged();
+    if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
     return d;
   }
   function hdlDiagFor(id) { return hdlDiags.find((d) => d.id === id) || null; }

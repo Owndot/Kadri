@@ -69,5 +69,11 @@ function setup(kind = 'mp4') {
   await d.api.pageDlStartMp4(d.opt);
   d.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'range_http_404' });
   check('MP4 Range failure distinct from initial GET', /Phase mp4-range/.test(d.api.hdlDiagText(d.api.diags[0])));
+  const e = setup('hls');
+  let now = Date.now();
+  e.ctx.Date = { now: () => now };
+  e.ctx.reply = () => { now += 8000; return { ok: false, error: { reason: 'http_404' } }; };
+  await e.api.pageDlPlan(e.opt);
+  check('time to plan failure includes the actual request duration', e.api.diags[0].failAfter === 8);
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

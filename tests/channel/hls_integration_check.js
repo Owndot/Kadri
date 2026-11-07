@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // /s/<name>/master.m3u8 · v0.m3u8 (Video) · a.m3u8 (Ton) · v0_<n>.ts / a_<n>.ts. Jede Ressourcenzeile trägt ?t=<token>;
 // ein anderes Token → 403 (abgelaufene Adresse). Starker ETag je Segment, If-Range (bytes=0-0) → 206.
 function hlsServer() {
-  const st = { token: 'T1', delay: 0, hits: [], changed: false };
+  const st = { token: 'T1', delay: 0, hits: [], changed: false, fault: null };
   const seg = (name) => crypto.createHash('sha256').update(name).digest();   // 32 B, deterministisch
   const body = (n) => Buffer.concat(new Array(64).fill(seg(n)));            // 2 KiB je Segment
   const N = 6;
@@ -35,11 +35,19 @@ function hlsServer() {
   const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
     const m = /^\/s\/[a-z0-9]+\/([a-z0-9_.]+)$/.exec(u.pathname);
-    st.hits.push({ path: u.pathname, cookie: req.headers.cookie || '', auth: req.headers.authorization || '', referer: req.headers.referer || '',
+    st.hits.push({ path: u.pathname, method: req.method, cookie: req.headers.cookie || '', auth: req.headers.authorization || '', referer: req.headers.referer || '',
       range: req.headers.range || '', ifRange: req.headers['if-range'] || '' });
     if (!m) { res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
     if (u.searchParams.get('t') !== st.token) { res.writeHead(403, { 'Content-Length': '0' }); res.end(); return; }
     const f = m[1];
+    // Deliberate, per-resource HTTP responses; no real site data involved.
+    const fault = st.fault;
+    if (fault && (f === 'gone.ts' || f === fault.file && st.hits.filter(x => x.path === u.pathname).length > fault.after)) {
+      const redirect = fault.redirect && f !== 'gone.ts';
+      st.hits[st.hits.length - 1].status = redirect ? 302 : 404;
+      res.writeHead(redirect ? 302 : 404, Object.assign({ 'Content-Length': '0' }, redirect ? { Location: 'gone.ts?t=' + st.token } : {}));
+      res.end(); return;
+    }
     if (lists[f]) { const b = Buffer.from(lists[f]()); res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl', 'Content-Length': String(b.length) }); res.end(b); return; }
     if (!/^(v0|v1|a)_\d+\.ts$/.test(f)) { res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
     if (st.delay) await sleep(st.delay);
@@ -182,6 +190,44 @@ async function main() {
     const d10 = await until(s2.dl, r10.job.id, (j) => j.state !== 'running' && j.state !== 'starting');
     check('Geänderte Liste: fehlgeschlagen mit plan_changed, kein stilles Weiterladen', d10.job.state === 'failed' && d10.job.reason === 'plan_changed', JSON.stringify(d10.job));
     m.changed = false;
+
+    // Synthetic protocol evidence: same outward http_404 can mean different resources. A menu is no guarantee.
+    const failures = [
+      ['plan source', 'master.m3u8', 0, 0, true, false],
+      ['plan video', 'v0.m3u8', 0, 0, true, false],
+      ['plan audio', 'a.m3u8', 0, 0, true, false],
+      ['source expires after plan', 'master.m3u8', 1, 0, false, false],
+      ['video unavailable after plan', 'v0.m3u8', 1, 0, false, false],
+      ['audio unavailable after plan', 'a.m3u8', 1, 0, false, false],
+      ['only second quality unavailable', 'v1.m3u8', 0, 1, false, false],
+      ['first video segment', 'v0_0.ts', 0, 0, false, false],
+      ['later video segment', 'v0_4.ts', 0, 0, false, false],
+      ['first audio segment', 'a_0.ts', 0, 0, false, false],
+      ['segment redirect to missing resource', 'v0_0.ts', 0, 0, false, true],
+    ];
+    for (const [i, [label, file, after, option, planFailure, redirect]] of failures.entries()) {
+      const name = 'httpcase' + i, start = m.hits.length, before = (await files(h)).length;
+      m.fault = { file, after, redirect };
+      let plan, err;
+      try { plan = await s2.dl.hlsPlan(m.url(name), BIND); } catch (e) { err = e; }
+      if (planFailure) check(label + ': rejected at hlsplan with http_404', err && err.reason === 'http_404' && !plan);
+      else {
+        check(label + ': planning succeeds before the failing fetch', plan && plan.options.length === 2 && !err);
+        if (option === 1) check('planning does not fetch the second media playlist', !m.hits.slice(start).some(x => x.path.endsWith('/v1.m3u8')));
+        const r = await s2.dl.hlsStart(plan.planId, plan.options[option].id, 'Synthetic HTTP');
+        const status = await until(s2.dl, r.job.id, j => !['running', 'starting', 'unconfirmed'].includes(j.state));
+        check(label + ': old helper reports interrupted/http_404 without exact resource', status.job.state === 'interrupted' && status.job.reason === 'http_404' && !status.job.phase, JSON.stringify(status.job));
+        if (file === 'v0_4.ts') check('late failure preserves already fetched resources', status.job.done > 0);
+        await s2.dl.cancel(r.job.id);
+      }
+      const hits = m.hits.slice(start);
+      check(label + ': actual server response proves HTTP 404', hits.some(x => x.status === 404));
+      check(label + ': no credentials and fresh HLS requests use GET without Range', hits.every(x => x.method === 'GET' && !x.cookie && !x.auth && !x.referer && !x.range));
+      check(label + ': no automatic retry of the missing resource', hits.filter(x => x.path.endsWith('/' + file)).length === after + 1);
+      check(label + ': no publication', (await files(h)).length === before);
+      if (redirect) check('redirect chain captured as 302 then 404', hits.some(x => x.status === 302) && hits.some(x => x.path.endsWith('/gone.ts') && x.status === 404));
+      m.fault = null;
+    }
   } finally {
     await h.stop();
     m.close();

@@ -82,6 +82,23 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
   Danach entscheidet der tatsächliche Downloadtyp, ob die alte APK ausreicht oder zusätzliche
   ressourcengenaue Helper-Diagnose notwendig ist. Eine site-a-Korrektur ist noch nicht behauptet.
 
+### Protokollnachweis ohne Änderung der APK
+
+- **DONE – Kadri `b8eed88`:** Diagnosekorrektur und Browser-Regressionsfälle gepusht;
+  CI https://github.com/Owndot/Kadri/actions/runs/42390438197 gestartet, noch kein Endergebnis.
+- **DONE – lokale HLS-Integration erweitert, 91/91:** elf gezielte 404-Fälle durch echten
+  `ChannelServer`/`SafeHttpClient`/`HlsEngine`: Haupt-/Video-/Audioliste beim Plan; Haupt-/Video-/Audioliste
+  erst beim Start; nur zweite Qualität nicht erreichbar; erstes/späteres Video- sowie erstes Audiosegment;
+  Segment-Redirect 302 → 404. Tatsächliche GET-Anfragen ohne Range oder Credentials, keine automatischen
+  404-Retries, keine Veröffentlichung; nach spätem Fehler bleiben bestätigte Ressourcen gezählt.
+  Plan prüft zweite Qualität tatsächlich noch nicht. Fehlerantwort beim Start ist jeweils
+  `interrupted/http_404`, `phase` leer: Die fehlende Ressourcenzuordnung ist jetzt auch am Protokoll belegt.
+- **DONE – Diagnose-Zeitmessung:** Beginn vor dem Aufruf festhalten, sodass ein langsamer
+  Planfehler nicht pauschal als „nach 0 s“ erscheint; Regressionstest mit 8-s-Antwortzeit. Diagnose-Unit 16/16.
+- **BLOCKED – reale 404-Ursache:** ohne Samsung-Diagnose weder tatsächlicher Downloadtyp noch
+  betroffene Quelle/Fehlerphase belegbar. Nächster Schritt bleibt die angefragte anonymisierte Diagnose,
+  parallel CI-Abschluss und isoliertes Kadri-P4-Testpaket (unveränderte APK, keine neue Kopplung).
+
 ---
 
 ## A. Projektstatus
