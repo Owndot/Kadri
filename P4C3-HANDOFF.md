@@ -7,7 +7,7 @@ nicht belegt), *geplant*, *implementiert* (im Code, ggf. ungetestet), *getestet*
 
 Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
-Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „Fortschritt“ unten.
+Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
 ## Aktueller Einstieg – 2026-11-07 (maßgeblich vor den historischen Abschnitten)
 
@@ -151,11 +151,19 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
   Die folgenden Paket-/Dokumentationscommits ändern diesen Anwendungscode nicht.
 - Helper-HEAD **`862c1d19ea80eefad7b9b341b93a70cde338fa7d`**, App/CI-Pin
   **`8b906c504f0612ff4af69a397a2745b717f156b3`**, Arbeitsbaum unverändert.
-- **IN_PROGRESS – finale CI:** https://github.com/Owndot/Kadri/actions/runs/42414984129.
-- **IN_PROGRESS – isolierte P4-Test-Erweiterung:** bestehender `p4-test-extension.yml` auf
+- **DONE – finale CI (alle fünf Jobs grün):** https://github.com/Owndot/Kadri/actions/runs/42414984129.
+- **DONE – isolierte P4-Test-Erweiterung:** bestehender `p4-test-extension.yml` auf
   `bde39eb` gesetzt, Artefaktname `kadri-p4test-bde39eb-vivaldi-test`. Der bestehende Upload-Guard
   verlangt erfolgreiche vollständige CI exakt dieses Quell-Commits; bei rot gibt es keine Lieferung.
   Feste P4-ID unverändert, **keine APK, keine Deinstallation, keine erneute Kopplung**.
+  Paketlauf **grün**: https://github.com/Owndot/Kadri/actions/runs/42415088410 (Workflow-Commit `b64710e`).
+  Lieferung: https://github.com/Owndot/Kadri/actions/runs/42415088410/artifacts/13590654579
+  (verfügbar bis **2026-11-09 21:29 UTC**). Enthält Ordner `kadri-p4-test`,
+  `kadri-p4-test-extension.zip`, `SHA256SUMS`, `p4test-extension-evidence.json`.
+  P4-ZIP-SHA-256 **`4da18f26264cac4250327a08f92b11236aa0e4c6cb74b1587bc096fe9f52ad67`**.
+  Tatsächliches CI-Artefakt heruntergeladen: Archiv-Digest und **alle** SHA256SUMS geprüft,
+  enthaltenes Erweiterungs-ZIP bytegleich zum unabhängigen lokalen Build;
+  Quellcommit/Helper-Pin/P4-ID/UNAPPROVED in Evidence geprüft.
 - **NEEDS_TEST – Samsung nach Lieferung:** nur bestehende Kadri-P4-Test-Erweiterung aktualisieren
   (gleiche ID, Daten/Kopplung behalten), site-a neu laden, Video kurz spielen, direkten ⬇-Download
   mit derselben Qualitätsbezeichnung versuchen. Nach Fehlermeldung etwa 25 Sekunden auf derselben
@@ -164,6 +172,35 @@ Stand dieses Dokuments: 2026-11-06, letzte Aktualisierung siehe Abschnitt „For
   Quellenalter bezeichnet die erste Registry-Beobachtung, nicht die Laufzeit eines Server-Tokens.
   Bei HLS „genaue Fehlerressource unbekannt“ ehrlich stehen lassen; dann gezielte Helper-Diagnose
   planen, keine Cookies/Referer/Authorization und keinen Browserproxy als Ausweichweg einführen.
+  Weiterer Codebeleg für diesen Folgeschritt: `HlsEngine.resumeFrom()` fasst `HlsException` beim
+  ersten Quellenabruf aus dem Vault als `interrupted/network` zusammen. Dort kann auch ein
+  HTTP-Code verloren gehen. Das ist kein Nachweis, dass site-a nach einem Neustart scheitert.
+
+### Abschluss dieses Diagnose-Teilpakets – 2026-11-07
+
+- **DONE – Code, Tests, Lieferung:** Kadri-Code `bde39eb`, Paketworkflow `b64710e`, abschließender
+  Dokumentationscommit = dieser Commit (Branch-HEAD mit `git log -1` prüfen).
+  Helper unverändert auf `862c1d19ea80eefad7b9b341b93a70cde338fa7d`; App-Code `8b906c5`.
+- **DONE – finale CI-Ergebnisse auf `bde39eb`:** Diagnose-Unit **18/18**, Kanal-Unit **36/36**,
+  Download-Unit **116/116**, HLS-Unit **69/69**, Kanal-Integration **74/74**, MP4-Integration **38/38**,
+  HLS-Integration einschließlich elf HTTP-Fällen **91/91**, Kanal-Browser **34/34**, fail-closed **4/4**,
+  Kanal-Mutationen **53/53**. Browser: Helper **18/18**, Menü **7/7**, MP4 **134/134**,
+  HLS **24/24**, direkter Downloadknopf einschließlich neun HTTP-Fällen **81/81**.
+  Auch die volle allgemeine Browsersuite, DNR/Firefox, Datenschutz- und Speicherjobs sind grün.
+- **DONE – Sicherheits-/Releasegrenzen erhalten:** keine Helper-Codeänderung, keine neue APK,
+  keine Produktionssignierung, kein neuer PR/Merge/Tag/Release, keine Änderung von Noise KK,
+  SafeHttpClient, Validatoren, Retry oder persistentem Abbruch. Produktion **UNAPPROVED**,
+  **P4B-A10-SIZE bleibt rot**, grüne Kadri-CI ist keine unabhängige Sicherheitsfreigabe.
+- **BLOCKED / OFFEN – site-a-Ursache:** noch keine anonymisierte Samsung-Diagnose erhalten.
+  Die behobenen Diagnose-Lücken sind nicht mit einer Behebung des realen HTTP 404 gleichzusetzen.
+  **Exakt nächster Arbeitsschritt:** geliefertes P4-Update wie oben auf dem Samsung nachtesten,
+  anonymisierten Text und gewählte Qualitätsbezeichnung auswerten; zuerst MP4/HLS und Aufrufphase
+  festlegen, danach gezielt die fehlende Evidenz beschaffen. Keine Ursache aus Menü oder Browser-
+  Wiedergabe ableiten, keine Zugangskontrollen umgehen. Bei HLS kann dafür eine separate,
+  ressourcengenaue Helper-Diagnose erforderlich sein; noch keine APK dafür erzeugt.
+- **TODO / NEEDS_TEST – nachgelagert:** Vault-Befunde aus dem lesenden Review absichern,
+  MP4-Keystore-Instrumentierung und bytegenaues Fortsetzen evaluieren. Samsung F1/F2/R1/R2/C1
+  bleiben bestätigte PASS; sie werden nicht durch diese offenen Aufgaben wieder auf TODO gesetzt.
 
 ---
 
