@@ -48,7 +48,18 @@ Kein Produktpatch, Remux-/Integritätsnachweis für beliebige Medien, Helper-Upl
 Ein später `FRAG_LOADED`-Beobachter war im Versuch unzuverlässig, weil hls.js den ArrayBuffer bereits
 an seinen Worker übertragen hatte. Kopieren direkt vor dem unveränderten ursprünglichen
 Loader-Callback funktionierte. Nicht als Ursache der realen Downloadfehler interpretieren.
-**IN_PROGRESS – CI der zusätzlichen vier Capture-Prüfungen**, lokales Ergebnis 25/25.
+**DONE – CI einschließlich der vier zusätzlichen Capture-Prüfungen: 31/31 Nachweise, alle fünf Jobs grün.**
+Lokales Ergebnis ohne Erweiterung 25/25. Bestehende Kanal-/MP4-/HLS-/Browserregressionen ebenfalls grün;
+keine Sicherheitsfreigabe und kein Samsung-Nachtest daraus ableiten.
+Testcommit `1c494aa48894b63becfc263ea8c30375e8a47c38`,
+[Lauf 42480391885](https://github.com/Owndot/Kadri/actions/runs/42480391885).
+
+**DONE – konkrete Integrationsgrenze aus dem Code:** `src/170-player-laden.js:140` startet hls.js
+an `st.startTime` und deaktiviert dessen Worker. Der im Test beobachtete Worker-Puffertransfer ist daher
+kein nachgewiesener Fehler dieses Produktpfads. Eine passive Aufnahme ab aktuellem Wiedergabezeitpunkt
+enthält nicht automatisch den Videoanfang. `tryNext()` zerstört außerdem die alte Playerinstanz bei
+Quellwechseln. Eine spätere Implementierung muss diese Lücken/Wechsel erkennen; nichts stillschweigend
+nachladen, Aufnahmen unterschiedlicher Quellen nicht vermischen und keine Vollständigkeit behaupten.
 
 Reproduktion ohne Erweiterung: `python3 tests/browser_download_feasibility.py` (Playwright 1.56,
 Chromium, openssl, ffprobe). Mit bestehendem Test-Build: `node tools/build.js --test`, dann

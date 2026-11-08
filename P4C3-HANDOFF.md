@@ -12,8 +12,8 @@ Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor 
 ## Aktuell – erster Browserversuch abgeschlossen; kein neuer Downloadmodus freigegeben
 
 - **DONE – beauftragter isolierter Versuch:** nur Tests, bestehende CI und Dokumentation geändert.
-  Letzter verifizierter gepushter Teststand `2025bb244d7fafed5f378e5a873f0972763210e5`;
-  zusätzliche passive Capture-Probe im vorliegenden Commit. Anwendung weiterhin `7811d5a`.
+  Letzter gepushter Teststand `1c494aa48894b63becfc263ea8c30375e8a47c38` mit passiver Capture-Probe;
+  nachfolgende Commits aktualisieren nur die Dokumentation. Anwendung weiterhin `7811d5a`.
 - **DONE – CI des bisherigen Versuchs:** https://github.com/Owndot/Kadri/actions/runs/42471919334,
   alle fünf Jobs grün, 27/27 Machbarkeitsnachweise. Kanal-/Download-/HLS-/Browser-/Datenschutzregressionen
   ebenfalls grün (u. a. Diagnose 39, HLS-Integration 98, MP4-Browser 134, direkter Knopf 81).
@@ -28,11 +28,19 @@ Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor 
   zusätzlichen Medienabrufe; lokale Fragmentdatei enthält erwartete Tracks/Dauer. Expliziter 120-s-Testpuffer,
   maximal 4 MiB Kopien. Kein Beleg für lange Videos, andere Player, Android oder Helper-kompatible Codecs.
   Test-Chromium unterstützt die H.264/AAC-Wiedergabe nicht; deshalb getrennte VP9/Opus-Capture-Fixture.
-- **IN_PROGRESS – CI der vier zusätzlichen Capture-Prüfungen:** lokaler Lauf grün; Ergebnis nachtragen.
+- **DONE – vollständige CI des aktuellen Teststands:**
+  https://github.com/Owndot/Kadri/actions/runs/42480391885, **alle fünf Jobs grün**.
+  Machbarkeitsprüfung **31/31**, lokal ohne Erweiterung **25/25**. Diagnose 39/39,
+  Kanal-Unit 45/45, Download-Unit 116/116, Kanal-Integration 74/74, MP4-Integration 38/38,
+  HLS-Unit 69/69, HLS-Integration 98/98, Kanal-Browser 34/34, Netzschutz-Ausfall 4/4,
+  53 Mutationen erkannt; Player-/Downloadknopf-Tests mit echtem Helper und Datenschutzjobs grün.
+  Keine Produktdateien geändert; kein neuer Samsung-PASS und keine Sicherheitsfreigabe.
 - **BLOCKED – reale HTTP 404/412 weiterhin OFFEN:** Sitzungstest ist kein Ursachenbeweis für site-a.
   media-regression-c braucht weiterhin den anonymisierten tatsächlichen Helper-Code statt `[entfernt]`.
 - **Nächster Schritt – TODO:** passive Übernahme im bestehenden eigenen Player mit H.264/AAC und geeignetem
-  Decoder isoliert prüfen; fehlende/duplizierte Segmente, Quellwechsel und Abbruch müssen eine vollständige
+  Decoder isoliert prüfen. `170-player-laden.js:140` startet oft mitten im Video und hat `enableWorker:false`;
+  Aufnahmebeginn fehlt dann, der Worker-Testbefund ist kein Produktfehler dieses Pfads.
+  Fehlende/duplizierte Segmente, Quellwechsel und Abbruch müssen eine vollständige
   Veröffentlichung verhindern. Keine zusätzlichen Abrufe aus dem Beobachter, noch kein Helper-Medientransfer.
   Nativen MP4-Link auf Vivaldi Android prüfen (**NEEDS_TEST**).
 - Details: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md),
