@@ -44,6 +44,12 @@ jobs:
           EXT_DIR="$PWD/dist/test" xvfb-run -a python3 -u tests/privacy_browser.py --kadri
       - name: Declared MP4 alternatives show the complete HLS clip (duration, streams, picture; ffmpeg)
         run: python3 tests/media_fixture_match.py
+      - name: Isolated browser-session feasibility evidence (no helper upload; safety gate remains blocked)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests/out
+          python3 -u tests/browser_download_feasibility.py --extension dist/test --output tests/out/browser-feasibility.json | tee tests/out/browser-feasibility.log
       - name: Prove recovery regression against the broken predecessor
         env:
           GH_TOKEN: ${{ github.token }}

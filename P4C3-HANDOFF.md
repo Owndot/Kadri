@@ -9,6 +9,25 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – isolierte Browser-Machbarkeitsprüfung ausdrücklich beauftragt
+
+- **IN_PROGRESS:** Eigentümer hat den beschriebenen isolierten Versuch beauftragt. Nur Testcode,
+  bestehende CI und Dokumentation geändert; keine Freigabe eines Browserproxies daraus ableiten.
+- **DONE – lokale Evidenz 21/21:** gleicher MP4/HLS-Abruf anonym 412, mit Browser-Sitzung byteidentisch;
+  HttpOnly-Cookie nicht ausgelesen/weitergegeben; nativer MP4-Link speichert richtige Datei. Nach Logout 412.
+  Fremde/private Redirectziele mit `redirect:error` vor dem Zielabruf blockiert.
+- **BLOCKED – Netzwerkgleichwertigkeit:** CORS verhindert nicht die Zielanfrage. Ein Testhostname,
+  statisch auf Loopback aufgelöst, erreicht den lokalen Server. Das ist keine dynamische DNS-Rebinding-Probe,
+  aber ein konkreter Gegenbeleg zur Gleichsetzung von Hostnamenprüfung/CORS und SafeHttpClient-IP-/Peer-Prüfung.
+- **IN_PROGRESS – CI:** dieselbe Probe gegen den unveränderten Kadri-Test-Build ergänzt. Vorhandene
+  Schutzregeln werden weder entfernt noch gelockert. Positive Befunde sind Experimentergebnisse,
+  keine Freigabe; Gesamtentscheidung bleibt **SAFETY_GATE BLOCKED**.
+- Details und Reproduktion: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md),
+  `tests/browser_download_feasibility.py`. **Nächster Schritt:** CI-Nachweis des echten Browserpfads auswerten;
+  bei fehlender Grenze keinen Medientransfer implementieren. Engere Alternativen anhand der Befunde bewerten.
+- Anwendung weiterhin `7811d5a`; Helper `862c1d1` / App `8b906c5` unverändert. Kein neues Lieferpaket,
+  Produktion **UNAPPROVED**, P4B-A10-SIZE rot; Samsung-PASS der unabhängigen Basis nicht auf Browsermodus übertragen.
+
 ## Aktuell – weiterhin Fehler; sicheren Weg mit Browser-Sitzung untersuchen
 
 - **IN_PROGRESS – Eigentümerbericht:** auch nach den bisherigen Korrekturen weiterhin kein Erfolg gemeldet;

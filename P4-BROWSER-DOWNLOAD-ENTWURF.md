@@ -1,7 +1,39 @@
 # Browsergestütztes Speichern – geprüfter Ausgangspunkt, noch kein freigegebener Modus
 
-Stand: 2026-11-08. **TODO / NEEDS_TEST**, keine Implementierung und keine Sicherheitsfreigabe.
+Stand: 2026-11-08. **IN_PROGRESS – isolierte Machbarkeitsprüfung**, keine Produktimplementierung und keine Sicherheitsfreigabe.
 Produktion bleibt **UNAPPROVED**. Bestehende Direktdownloads, Noise KK, SafeHttpClient und Abbruchvorrang bleiben erhalten.
+
+## Erste experimentelle Ergebnisse
+
+**DONE – lokale Browserprüfung, 21 Nachweise:** `tests/browser_download_feasibility.py`,
+Desktop Chromium 141 / Playwright 1.56, frisches Profil, ausschließlich temporärer lokaler HTTPS-Server,
+synthetisches HttpOnly-Cookie und vorhandene H.264/AAC-Testmedien. Keine echte Sitzung, kein Helper-Upload.
+
+- Dieselbe MP4: anonymer Fetch HTTP 412; normaler Same-Origin-Fetch HTTP 200, bytegenaues SHA-256-Match.
+  HttpOnly-Cookie ist für Seiten-JavaScript unsichtbar, kein Auslesen/Export erforderlich.
+- HLS: anonyme Hauptliste HTTP 412; mit Browser-Sitzung Haupt-/Medienliste, Init und sämtliche fünf
+  Segmente byteidentisch. Noch kein HLS-Remux oder Beweis zum Verhalten auf realen Seiten.
+- Nativer MP4-Download über einen normalen Download-Link: byteidentische Datei ohne Helper oder neue
+  Erweiterungsberechtigung. Das ist **kein** Nachweis der Chrome-Downloads-API auf Vivaldi Android.
+- `redirect:error` verhindert die Zielanfrage bei fremdem Host und privater IP. Normales Folgen einer
+  fremden Weiterleitung erreicht dagegen das Ziel trotz anschließender CORS-Verweigerung. Keine
+  Weitergabe des Cookies der Ursprungsseite an den anderen Host beobachtet.
+- Öffentlich aussehender Testhostname, kontrolliert auf Loopback aufgelöst: Anfrage erreicht den
+  Server vor CORS-Verweigerung. **BLOCKED – CORS/Hostname-Allowlist reicht nicht als IP-/Peer-Grenze.**
+  Statische DNS-Zuordnung, **kein** dynamischer Rebinding-Test und keine öffentliche Ausgangs-IP.
+- Logout verhindert den folgenden Medienabruf. Gleicher MIME-Typ macht Init nicht zur vollständigen
+  MP4: ffprobe zählt dort keine Medienpakete, in der MP4 dagegen schon.
+
+**IN_PROGRESS – bestehender Kadri-Pfad:** derselbe Versuch läuft in der vorhandenen CI zusätzlich
+über den unveränderten Test-Build und dessen echte Hintergrund-/DNR-Prüfungen. Lokal verhindert die
+bekannte verwaltete Erweiterungsrichtlinie das Laden; sie wird nicht verändert.
+Grüne Experimenttests bedeuten nur belastbare Beobachtungen, ausdrücklich **SAFETY_GATE BLOCKED**.
+Frame-/Quellautorisierung, dynamisches Rebinding, Medienupload und Android-Lebenszyklus bleiben ungeprüft.
+
+Reproduktion ohne Erweiterung: `python3 tests/browser_download_feasibility.py` (Playwright 1.56,
+Chromium, openssl, ffprobe). Mit bestehendem Test-Build: `node tools/build.js --test`, dann
+`python3 tests/browser_download_feasibility.py --extension dist/test`.
+Temporäres Fixture-Zertifikat und DNS-Mapping gelten nur für den Testbrowser, nie für ein Lieferpaket.
 
 ## Nachweis aus der alten Version
 
@@ -80,5 +112,5 @@ Das ist ein **Entwurf**, kein bereits sicherer oder funktionierender Ersatz. Bes
 - [Chrome: Downloads-API, Berechtigung und Verwendung der Cookies des Zielhosts](https://developer.chrome.com/docs/extensions/reference/api/downloads#method-download)
 - [Chrome: Storage/Cookies, Partitionierung und SameSite-Unterschiede](https://developer.chrome.com/docs/extensions/develop/concepts/storage-and-cookies)
 
-Reine Code-/Dokumentationsprüfung. Keine neue reale Seitenanalyse, kein neuer Gerätetest, kein APK-/Erweiterungsbuild
-für diesen Entwurf. Die letzte gelieferte Erweiterung bleibt Quellstand `7811d5a`; Helper bleibt unverändert.
+Keine neue reale Seitenanalyse, kein neuer Gerätetest, kein APK-/Erweiterungslieferpaket für diesen Entwurf.
+Die letzte gelieferte Erweiterung bleibt Quellstand `7811d5a`; Helper bleibt unverändert.
