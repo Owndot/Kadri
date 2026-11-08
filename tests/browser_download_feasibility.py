@@ -98,14 +98,32 @@ def fetch_info(page, url, credentials='same-origin', redirect='error'):
     }''', {'url': url, 'credentials': credentials, 'redirect': redirect})
 
 
-def broker(page, url, anonymous=False):
-    # Existing build.js test hook, not shipped in dist/chrome. Never request custom headers.
-    return page.evaluate('''({url,anonymous})=>new Promise((resolve,reject)=>{
-      const id=crypto.randomUUID(),timer=setTimeout(()=>{window.removeEventListener('message',f);reject(Error('probe timeout'));},10000);
-      const f=e=>{if(e.source===window&&e.data?.kadriTestRes?.id===id){clearTimeout(timer);window.removeEventListener('message',f);resolve(e.data.kadriTestRes);}};
-      window.addEventListener('message',f);
-      window.postMessage({kadriTestXhr:{id,url,anonymous,timeout:5000}},'*');
-    })''', {'url': url, 'anonymous': anonymous})
+def broker(worker, page, url, anonymous=False):
+    # Test-only isolated content script -> real kadri-xhr port, with a real tab/frame sender.
+    # No production hooks/permissions change and no reliance on the player's lazy UI being present.
+    return worker.evaluate('''async ({pageUrl,url,anonymous})=>{
+      const tab=(await chrome.tabs.query({})).find(t=>t.url===pageUrl);
+      if(!tab) throw Error('fixture tab missing');
+      const results=await chrome.scripting.executeScript({target:{tabId:tab.id},args:[url,anonymous],
+        func:(url,anonymous)=>new Promise(resolve=>{
+          const port=chrome.runtime.connect({name:'kadri-xhr'});
+          let done=false, size=0; const chunks=[];
+          const finish=r=>{if(done)return;done=true;clearTimeout(timer);port.disconnect();resolve(r);};
+          const timer=setTimeout(()=>finish({error:'probe timeout'}),10000);
+          port.onDisconnect.addListener(()=>finish({error:'disconnected'}));
+          port.onMessage.addListener(async m=>{
+            if(m.t==='error') finish({error:m.timeout?'timeout':'request rejected'});
+            if(m.t==='chunk'){const b=Uint8Array.from(atob(m.b),c=>c.charCodeAt(0));size+=b.length;chunks.push(b);}
+            if(m.t==='done'){
+              const bytes=new Uint8Array(size);let at=0;for(const b of chunks){bytes.set(b,at);at+=b.length;}
+              const sha=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
+              finish({status:m.status,size,sha});
+            }
+          });
+          port.postMessage({t:'req',url,method:'GET',headers:{},anonymous,timeout:5000,responseType:'arraybuffer'});
+        })});
+      return results[0].result;
+    }''', {'pageUrl': page.url, 'url': url, 'anonymous': anonymous})
 
 
 def main():
@@ -184,17 +202,17 @@ def main():
                             worker = context.wait_for_event('serviceworker', predicate=lambda w: w.url.endswith('/background.js'))
                         check('Actual Kadri network rules installed', worker.evaluate('netGuard()') is True)
                         page.goto(origin+'/login')
-                        page.wait_for_function("document.querySelector('[data-kadri-test]')")
-                        r = broker(page, origin+'/file.mp4')
-                        check('Existing Kadri broker uses same-site browser session', r.get('status') == 200 and HITS[-1]['session'])
-                        r = broker(page, origin+'/file.mp4', True)
+                        r = broker(worker, page, origin+'/file.mp4')
+                        check('Existing Kadri broker uses same-site browser session with byte-identical media', r.get('status') == 200 and
+                              r['sha'] == hashlib.sha256(MP4.read_bytes()).hexdigest() and HITS[-1]['session'])
+                        r = broker(worker, page, origin+'/file.mp4', True)
                         check('Existing anonymous broker still omits session', r.get('status') == 412 and not HITS[-1]['session'])
                         for url in (f'https://127.0.0.1:{server.server_port}/target-broker-private', origin+'/redirect-private'):
                             at = len(HITS)
-                            broker(page, url)
+                            broker(worker, page, url)
                             check('Existing guard blocks literal private target before request', not any(x['path'] in ('/target-private','/target-broker-private') for x in HITS[at:]))
                         at = len(HITS)
-                        r = broker(page, alias+'/target-broker-alias', True)
+                        r = broker(worker, page, alias+'/target-broker-alias', True)
                         reached = any(x['path']=='/target-broker-alias' for x in HITS[at:])
                         report['kadri_alias_reached'] = reached
                         check('DNS-alias experiment has an unambiguous server/response observation',

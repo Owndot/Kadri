@@ -22,6 +22,10 @@ Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor 
 - **IN_PROGRESS – CI:** dieselbe Probe gegen den unveränderten Kadri-Test-Build ergänzt. Vorhandene
   Schutzregeln werden weder entfernt noch gelockert. Positive Befunde sind Experimentergebnisse,
   keine Freigabe; Gesamtentscheidung bleibt **SAFETY_GATE BLOCKED**.
+  Erster Lauf https://github.com/Owndot/Kadri/actions/runs/42471719909:
+  reguläre Seitenproben grün, Testaufbau wartet danach fälschlich auf die noch nicht benötigte Player-UI.
+  **DONE – Testkorrektur:** Probe als isoliertes Content-Script über vorhandenes `scripting` und echten
+  `kadri-xhr`-Port senden; Absender-/Netzwerkregeln unverändert. Kein Produktfehler/keine Lockerung.
 - Details und Reproduktion: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md),
   `tests/browser_download_feasibility.py`. **Nächster Schritt:** CI-Nachweis des echten Browserpfads auswerten;
   bei fehlender Grenze keinen Medientransfer implementieren. Engere Alternativen anhand der Befunde bewerten.
