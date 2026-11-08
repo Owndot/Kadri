@@ -6,6 +6,7 @@ No helper, new permissions, real sites, user profiles or credential export.
 Optional --extension tests the unchanged Kadri test-build request path in CI.
 """
 import argparse
+import base64
 import hashlib
 import http.server
 import json
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MEDIA = ROOT / 'tests/web'
 MP4 = MEDIA / 'public/clip-360-h264.mp4'
 HLS = MEDIA / 'public/p4/fmp4_muxed'
+CAPTURE_HLS = MEDIA / 'hls'  # VP9/Opus playback fixture supported by desktop Chromium; not Helper HLS input.
 COOKIE = 'fixture_session=SYNTHETIC_HTTPONLY_SESSION'
 HITS = []
 CHECKS = []
@@ -59,13 +61,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             headers['Location'] = f'https://127.0.0.1:{self.server.server_port}/target-private'
         elif path.startswith('/target-'):
             kind, data = 'application/octet-stream', b'SYNTHETIC-NON-MEDIA'
-        elif path == '/file.mp4' or path.startswith('/hls/'):
+        elif path == '/hls.js':
+            kind, data = 'application/javascript', (ROOT/'vendor/hls.min.js').read_bytes()
+        elif path == '/file.mp4' or path.startswith(('/hls/', '/capture/')):
             if not session:
                 status, kind, data = 412, 'text/plain', b'fixture requires its normal browser session'
             else:
-                p = MP4 if path == '/file.mp4' else HLS / path.removeprefix('/hls/')
+                p = MP4 if path == '/file.mp4' else CAPTURE_HLS / path.removeprefix('/capture/') if path.startswith('/capture/') else HLS / path.removeprefix('/hls/')
                 # Only existing top-level fixture media, no arbitrary filesystem access.
-                if p.parent not in (MP4.parent, HLS) or not p.is_file():
+                if p.parent not in (MP4.parent, HLS, CAPTURE_HLS) or not p.is_file():
                     status, kind, data = 404, 'text/plain', b'not found'
                 else:
                     data = p.read_bytes()
@@ -126,6 +130,53 @@ def broker(worker, page, url, anonymous=False):
     }''', {'pageUrl': page.url, 'url': url, 'anonymous': anonymous})
 
 
+def capture_playback(page, origin):
+    """Test-only passive observer of hls.js' actual responses; no fetching by the observer.
+
+    Deliberately a short complete fixture. This does not promise full long-video capture,
+    source authorization, background operation or a production transfer protocol.
+    """
+    page.add_script_tag(url=origin+'/hls.js')
+    return page.evaluate('''({origin})=>new Promise((resolve,reject)=>{
+      const video=document.querySelector('video');video.muted=true;video.preload='auto';video.removeAttribute('src');video.load();
+      const parts=new Map();let total=0,finished=false,loaded=0;const types=[];
+      const finish=(error)=>{
+        if(finished)return;finished=true;clearTimeout(timer);h.stopLoad();h.destroy();
+        if(error){reject(Error(error));return;}
+        // Fixture-specific order/completeness only. Missing parts must never become a claimed full file.
+        const keys=['initSegment',...Array.from({length:12},(_,i)=>i)];
+        if(keys.some(k=>!parts.has(k))||parts.size!==keys.length){reject(Error('incomplete fixture'));return;}
+        const encode=b=>{let s='';for(let i=0;i<b.length;i+=8192)s+=String.fromCharCode(...b.subarray(i,i+8192));return btoa(s);};
+        resolve(keys.map(k=>({index:k,data:encode(parts.get(k))})));
+      };
+      // Observe the original loader response before hls.js transfers the buffer to its worker.
+      // Delegation is unchanged: one original loader call, same URL/options/callback arguments.
+      class CaptureLoader extends Hls.DefaultConfig.loader {
+        load(context,config,callbacks){
+          super.load(context,config,{...callbacks,onSuccess:(response,stats,ctx,details)=>{
+            const frag=ctx.frag;
+            if(frag&&ctx.responseType==='arraybuffer'){
+              loaded++;if(!types.includes(String(frag.type)))types.push(String(frag.type));
+              if(frag.type==='main'){
+                const b=new Uint8Array(response.data);total+=b.length;
+                if(total>4*1024*1024||b.length>1024*1024){finish('fixture capture exceeds bound');return;}
+                if(parts.has(frag.sn)){finish('duplicate fixture part');return;}
+                parts.set(frag.sn,b.slice());
+              }
+            }
+            callbacks.onSuccess(response,stats,ctx,details);
+            if(parts.size===13)setTimeout(()=>finish(),0);
+          }});
+        }
+      }
+      const h=new Hls({loader:CaptureLoader,autoStartLoad:false,maxBufferLength:120,maxMaxBufferLength:120});
+      const timer=setTimeout(()=>finish('capture incomplete; received '+parts.size+' fixture resources; events '+loaded+' types '+types.join(',')),15000);
+      h.on(Hls.Events.ERROR,(_,d)=>{if(d.fatal)finish('playback error '+d.type+'/'+d.details);});
+      h.on(Hls.Events.MANIFEST_PARSED,()=>{h.startLoad(0);video.play().catch(()=>{});});
+      h.attachMedia(video);h.loadSource(origin+'/capture/master.m3u8');
+    })''', {'origin': origin})
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--extension', type=Path)
@@ -181,6 +232,25 @@ def main():
                     saved = Path(tmp)/'download.mp4'
                     d.value.save_as(saved)
                     check('Native browser MP4 download is byte-identical and needs no helper or new permission', saved.read_bytes() == MP4.read_bytes())
+                    at = len(HITS)
+                    parts = capture_playback(page, origin)
+                    expected = [CAPTURE_HLS/'init.mp4'] + sorted(CAPTURE_HLS.glob('seg*.m4s'))
+                    blocks = [base64.b64decode(p['data'], validate=True) for p in parts]
+                    check('Passive playback capture gets init and every short-fixture segment byte-identically',
+                          len(blocks) == len(expected) and all(b == f.read_bytes() for b, f in zip(blocks, expected)))
+                    media_hits = [x for x in HITS[at:] if x['path'].startswith('/capture/')]
+                    check('Capture adds no duplicate media fetches: one normal playback GET per resource',
+                          len(media_hits) == len(expected)+2 and len({x['path'] for x in media_hits}) == len(expected)+2 and all(x['session'] for x in media_hits))
+                    captured = Path(tmp)/'captured-fragmented.mp4'
+                    before_assembly = len(HITS)
+                    captured.write_bytes(b''.join(blocks))
+                    probe = subprocess.run(['ffprobe','-v','error','-show_entries','stream=codec_name:format=duration','-of','json',str(captured)],
+                                           capture_output=True, text=True, check=True)
+                    info = json.loads(probe.stdout)
+                    check('Captured playback fixture forms readable VP9/Opus fragmented MP4 of full fixture duration',
+                          {s['codec_name'] for s in info['streams']} == {'vp9','opus'} and 59.9 <= float(info['format']['duration']) <= 60.2)
+                    check('Offline assembly and inspection issue no additional HTTP request', len(HITS) == before_assembly)
+                    report['passive_capture'] = '60-s VP9/Opus fixture only; no added media requests; not Helper HLS-supported codecs; no helper upload'
                     for suffix in ('cross', 'private'):
                         at = len(HITS)
                         r = fetch_info(page, origin+'/redirect-'+suffix)

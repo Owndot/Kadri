@@ -1,11 +1,11 @@
 # Browsergestütztes Speichern – geprüfter Ausgangspunkt, noch kein freigegebener Modus
 
-Stand: 2026-11-08. **IN_PROGRESS – isolierte Machbarkeitsprüfung**, keine Produktimplementierung und keine Sicherheitsfreigabe.
+Stand: 2026-11-08. **DONE – erster isolierter Machbarkeitsversuch; neuer Modus BLOCKED**, keine Produktimplementierung und keine Sicherheitsfreigabe.
 Produktion bleibt **UNAPPROVED**. Bestehende Direktdownloads, Noise KK, SafeHttpClient und Abbruchvorrang bleiben erhalten.
 
 ## Erste experimentelle Ergebnisse
 
-**DONE – lokale Browserprüfung, 21 Nachweise:** `tests/browser_download_feasibility.py`,
+**DONE – lokale Browserprüfung, 25 Nachweise einschließlich passiver Übernahme:** `tests/browser_download_feasibility.py`,
 Desktop Chromium 141 / Playwright 1.56, frisches Profil, ausschließlich temporärer lokaler HTTPS-Server,
 synthetisches HttpOnly-Cookie und vorhandene H.264/AAC-Testmedien. Keine echte Sitzung, kein Helper-Upload.
 
@@ -24,11 +24,31 @@ synthetisches HttpOnly-Cookie und vorhandene H.264/AAC-Testmedien. Keine echte S
 - Logout verhindert den folgenden Medienabruf. Gleicher MIME-Typ macht Init nicht zur vollständigen
   MP4: ffprobe zählt dort keine Medienpakete, in der MP4 dagegen schon.
 
-**IN_PROGRESS – bestehender Kadri-Pfad:** derselbe Versuch läuft in der vorhandenen CI zusätzlich
-über den unveränderten Test-Build und dessen echte Hintergrund-/DNR-Prüfungen. Lokal verhindert die
-bekannte verwaltete Erweiterungsrichtlinie das Laden; sie wird nicht verändert.
+**DONE – bestehender Kadri-Pfad:** vollständige CI zu `2025bb244d7fafed5f378e5a873f0972763210e5`,
+[42471919334](https://github.com/Owndot/Kadri/actions/runs/42471919334), alle fünf Jobs grün.
+27/27 Nachweise vor Ergänzung der passiven Übernahme. Über den echten `kadri-xhr`-Port mit echtem
+Tab-Absender sind direkte private IP und der private Redirect blockiert, der auf Loopback aufgelöste
+Testhostname erreicht dagegen den Server (HTTP 200). Unveränderte Hintergrund-/DNR-Regeln geprüft.
+Lokal verhindert die verwaltete Erweiterungsrichtlinie das Laden; sie wird nicht verändert.
 Grüne Experimenttests bedeuten nur belastbare Beobachtungen, ausdrücklich **SAFETY_GATE BLOCKED**.
 Frame-/Quellautorisierung, dynamisches Rebinding, Medienupload und Android-Lebenszyklus bleiben ungeprüft.
+
+**DONE – engerer lokaler Versuch: passives Kopieren der tatsächlichen Player-Ladeantworten.**
+Ein eigener Testplayer mit dem vorhandenen hls.js lädt eine vorhandene 60-s-VP9/Opus-Fixture.
+Ein Beobachter kopiert Init und zwölf Segmente vor der Übergabe des Puffers an den Player-Worker;
+keine eigenen Medienabrufe, kein Auslesen von Cookies. Alle 13 Ressourcen byteidentisch, jede Liste/
+Medienressource genau einmal abgerufen. Lokales Zusammenfügen ergibt laut ffprobe zwei erwartete
+Tracks und die volle Fixture-Dauer; Zusammenfügen und Prüfen erzeugen keine weiteren HTTP-Anfragen.
+
+Grenzen: Der Test konfiguriert ausdrücklich 120 s Player-Puffer für die kurze Fixture, maximal 4 MiB
+Kopien und 1 MiB je Ressource. Das ist kein Beweis für passive Vollaufnahme eines beliebigen bestehenden
+Players oder großer Videos. H.264/AAC-Wiedergabe wird vom lokalen Test-Chromium nicht unterstützt;
+VP9/Opus belegt die Byteübernahme, gehört aber **nicht** zum unterstützten HLS-Eingang des Helpers.
+Kein Produktpatch, Remux-/Integritätsnachweis für beliebige Medien, Helper-Upload oder Samsung-Test.
+Ein später `FRAG_LOADED`-Beobachter war im Versuch unzuverlässig, weil hls.js den ArrayBuffer bereits
+an seinen Worker übertragen hatte. Kopieren direkt vor dem unveränderten ursprünglichen
+Loader-Callback funktionierte. Nicht als Ursache der realen Downloadfehler interpretieren.
+**IN_PROGRESS – CI der zusätzlichen vier Capture-Prüfungen**, lokales Ergebnis 25/25.
 
 Reproduktion ohne Erweiterung: `python3 tests/browser_download_feasibility.py` (Playwright 1.56,
 Chromium, openssl, ffprobe). Mit bestehendem Test-Build: `node tools/build.js --test`, dann
@@ -89,12 +109,18 @@ Das ist ein **Entwurf**, kein bereits sicherer oder funktionierender Ersatz. Bes
   Keine neue Kryptografie entwerfen und keine existierenden Kontrollvalidatoren aufweichen.
 - DRM, Zugangsverweigerung und sonstige serverseitige Beschränkungen werden nicht umgangen.
 
-## Kleinstmöglicher nächster Versuch
+## Exakt nächster Entwicklungsschritt
 
-**TODO – isolierte Machbarkeitsprüfung**, kein allgemeiner Browserproxy:
+**TODO – passive Übernahme im vorhandenen eigenen Player isoliert prüfen:** zunächst mit einer vom
+Helper unterstützten H.264/AAC-Fixture und geeignetem Decoder. Danach fehlende/duplizierte Segmente,
+Quell-/Qualitätswechsel und Nutzerabbruch als Negativfälle. Keine Nachladeanfragen aus dem Beobachter;
+unvollständige Aufnahme darf nicht als vollständige Datei gelten. Noch kein Uploadprotokoll bauen.
+Der native MP4-Link ist separat auf Vivaldi Android **NEEDS_TEST**. Reale HTTP-404/412-Ursachen bleiben offen.
 
-- Kontrollierte MP4/HLS-Fixtures: normale Sitzung liefert Medien, anonymer Abruf liefert bewusst 412;
-  nachweisen, ob derselbe zulässige Browser-Kontext Medien ohne Credential-Export zugänglich macht.
+Weitere verbleibende Prüfungen, kein allgemeiner Browserproxy:
+
+- **DONE – kontrollierte MP4/HLS-Fixtures:** normale Sitzung liefert Medien, anonymer Abruf bewusst 412;
+  der getestete Browser-Kontext macht Medien ohne Credential-Export zugänglich.
 - Negativfälle vor einem Transfer: fremde Quelle/Frame, Quelle gewechselt, fremde Redirects, private Adressen,
   DNS-Rebinding, manipulierte Playlist, Init statt MP4, HTML/JSON statt Medien. Blockierung vor dem unzulässigen
   Request prüfen, nicht nur nachträgliches Verwerfen der Antwort.

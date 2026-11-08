@@ -9,28 +9,39 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
-## Aktuell – isolierte Browser-Machbarkeitsprüfung ausdrücklich beauftragt
+## Aktuell – erster Browserversuch abgeschlossen; kein neuer Downloadmodus freigegeben
 
-- **IN_PROGRESS:** Eigentümer hat den beschriebenen isolierten Versuch beauftragt. Nur Testcode,
-  bestehende CI und Dokumentation geändert; keine Freigabe eines Browserproxies daraus ableiten.
-- **DONE – lokale Evidenz 21/21:** gleicher MP4/HLS-Abruf anonym 412, mit Browser-Sitzung byteidentisch;
+- **DONE – beauftragter isolierter Versuch:** nur Tests, bestehende CI und Dokumentation geändert.
+  Letzter verifizierter gepushter Teststand `2025bb244d7fafed5f378e5a873f0972763210e5`;
+  zusätzliche passive Capture-Probe im vorliegenden Commit. Anwendung weiterhin `7811d5a`.
+- **DONE – CI des bisherigen Versuchs:** https://github.com/Owndot/Kadri/actions/runs/42471919334,
+  alle fünf Jobs grün, 27/27 Machbarkeitsnachweise. Kanal-/Download-/HLS-/Browser-/Datenschutzregressionen
+  ebenfalls grün (u. a. Diagnose 39, HLS-Integration 98, MP4-Browser 134, direkter Knopf 81).
+- **DONE – Sitzung ohne Export:** synthetische MP4/HLS-Abrufe anonym 412, im Browser byteidentisch;
   HttpOnly-Cookie nicht ausgelesen/weitergegeben; nativer MP4-Link speichert richtige Datei. Nach Logout 412.
-  Fremde/private Redirectziele mit `redirect:error` vor dem Zielabruf blockiert.
-- **BLOCKED – Netzwerkgleichwertigkeit:** CORS verhindert nicht die Zielanfrage. Ein Testhostname,
-  statisch auf Loopback aufgelöst, erreicht den lokalen Server. Das ist keine dynamische DNS-Rebinding-Probe,
-  aber ein konkreter Gegenbeleg zur Gleichsetzung von Hostnamenprüfung/CORS und SafeHttpClient-IP-/Peer-Prüfung.
-- **IN_PROGRESS – CI:** dieselbe Probe gegen den unveränderten Kadri-Test-Build ergänzt. Vorhandene
-  Schutzregeln werden weder entfernt noch gelockert. Positive Befunde sind Experimentergebnisse,
-  keine Freigabe; Gesamtentscheidung bleibt **SAFETY_GATE BLOCKED**.
-  Erster Lauf https://github.com/Owndot/Kadri/actions/runs/42471719909:
-  reguläre Seitenproben grün, Testaufbau wartet danach fälschlich auf die noch nicht benötigte Player-UI.
-  **DONE – Testkorrektur:** Probe als isoliertes Content-Script über vorhandenes `scripting` und echten
-  `kadri-xhr`-Port senden; Absender-/Netzwerkregeln unverändert. Kein Produktfehler/keine Lockerung.
-- Details und Reproduktion: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md),
-  `tests/browser_download_feasibility.py`. **Nächster Schritt:** CI-Nachweis des echten Browserpfads auswerten;
-  bei fehlender Grenze keinen Medientransfer implementieren. Engere Alternativen anhand der Befunde bewerten.
-- Anwendung weiterhin `7811d5a`; Helper `862c1d1` / App `8b906c5` unverändert. Kein neues Lieferpaket,
-  Produktion **UNAPPROVED**, P4B-A10-SIZE rot; Samsung-PASS der unabhängigen Basis nicht auf Browsermodus übertragen.
+- **BLOCKED – Netzwerkgleichwertigkeit:** auch der unveränderte echte Kadri-`kadri-xhr`-Pfad erreicht den
+  statisch auf Loopback aufgelösten Testhostname mit HTTP 200. Direkte private IP/privater Redirect blockiert.
+  CORS/Hostname-/DNR-Prüfung ist damit kein gleichwertiger Ersatz für SafeHttpClient-DNS-/Peer-Prüfung.
+  Kein dynamischer Rebinding-Test; keine reale Seite beteiligt. Keinen allgemeinen Browserabrufmodus aktivieren.
+- **DONE – passiver lokaler Versuch, jetzt 25/25 Nachweise:** Beobachter kopiert tatsächliche Ladeantworten
+  einer 60-s-VP9/Opus-Fixture vor dem Player-Worker-Transfer. Init + zwölf Segmente byteidentisch, keine
+  zusätzlichen Medienabrufe; lokale Fragmentdatei enthält erwartete Tracks/Dauer. Expliziter 120-s-Testpuffer,
+  maximal 4 MiB Kopien. Kein Beleg für lange Videos, andere Player, Android oder Helper-kompatible Codecs.
+  Test-Chromium unterstützt die H.264/AAC-Wiedergabe nicht; deshalb getrennte VP9/Opus-Capture-Fixture.
+- **IN_PROGRESS – CI der vier zusätzlichen Capture-Prüfungen:** lokaler Lauf grün; Ergebnis nachtragen.
+- **BLOCKED – reale HTTP 404/412 weiterhin OFFEN:** Sitzungstest ist kein Ursachenbeweis für site-a.
+  media-regression-c braucht weiterhin den anonymisierten tatsächlichen Helper-Code statt `[entfernt]`.
+- **Nächster Schritt – TODO:** passive Übernahme im bestehenden eigenen Player mit H.264/AAC und geeignetem
+  Decoder isoliert prüfen; fehlende/duplizierte Segmente, Quellwechsel und Abbruch müssen eine vollständige
+  Veröffentlichung verhindern. Keine zusätzlichen Abrufe aus dem Beobachter, noch kein Helper-Medientransfer.
+  Nativen MP4-Link auf Vivaldi Android prüfen (**NEEDS_TEST**).
+- Details: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md),
+  `tests/browser_download_feasibility.py`. Helper unverändert und sauber:
+  `862c1d19ea80eefad7b9b341b93a70cde338fa7d`, App/Pin `8b906c504f0612ff4af69a397a2745b717f156b3`.
+  Keine neue APK/Erweiterung, keine Kopplung. Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
+  Samsung F1/F2/R1/R2/C1 bleiben bestätigte PASS der unabhängigen Basis, kein PASS des Browserentwurfs.
+
+Die folgenden Abschnitte enthalten historische Zwischenstände; maßgeblich ist der Abschluss oben.
 
 ## Aktuell – weiterhin Fehler; sicheren Weg mit Browser-Sitzung untersuchen
 
