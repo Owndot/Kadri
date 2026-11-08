@@ -9,6 +9,36 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – Nutzerziel präzisiert: vollständiger Download unabhängig von der Wiedergabe
+
+- **DONE – verbindliche Präzisierung:** Eigentümer will ausdrücklich vollständige Downloads unabhängig
+  von der Wiedergabe. **Passives Mitspeichern ist keine gewünschte Produktlösung.** Keine Aufnahme-UI
+  oder Wiedergabezwang implementieren. Die isolierten Medien-/Ablagetests bleiben technische Vorarbeit.
+- **DONE – letzte Code-/Teststände:** Kadri **`0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e`**;
+  Helper **`95aa0f563cdedb29a7f42cdd90b74497970bfb2f`**. Danach nur Dokumentation.
+  Anwendungscode beider Repositories per Git-Diff weiterhin unverändert: Kadri `7811d5a`,
+  Helper-App/Kadri-Pin `8b906c5`; keine neue installierbare Lieferung.
+- **DONE – lokal zusammengesetzter Versuch:** 51 Playerprüfungen und zuletzt **26** Prüfungen mit
+  tatsächlichem adressfreiem Browser-Testexport durch private Ablage und unveränderten Helper-Remuxer.
+  Begrenzung von Hash/Länge vor dem Kopieren in Helper `60fd5ea`, gemeinsame CI in `95aa0f5` ergänzt.
+- **DONE – Kadri-CI:** https://github.com/Owndot/Kadri/actions/runs/42514010691,
+  alle fünf Jobs grün, einschließlich 31 Browser-Machbarkeits- und 51 Playerprüfungen.
+- **IN_PROGRESS – Helper-CI:** https://github.com/Owndot/video-assistent-helper/actions/runs/42514519399;
+  Remuxer einschließlich zusammengesetzter Browserprobe und Mutationen sowie Lieferkettenprüfung
+  bereits grün, HLS-Kern läuft noch. Weitere bestehende Helper-Workflows laufen; Abschluss nachtragen.
+  Die unveränderte CI baut intern kurzlebige Emulator-Test-APKs; keine Geräte-APK verteilt.
+- **IN_PROGRESS – vollständiger Browserabruf:** gezielt Chromium `targetAddressSpace: "public"`
+  prüfen. TCP-Verbindungen getrennt von HTTP-Anfragen zählen; Request-Konstruktor und direkte
+  Fetch-Option, Ausgangsadressraum und Berechtigungszustand unterscheiden. Ein erkannter Optionsname
+  oder eine CORS-Fehlermeldung beweist keine Blockierung vor Netzverbindungen. Kein Produktpatch.
+- **BLOCKED – reale HTTP 404/412 weiterhin OFFEN:** keine neue Ursache belegt, keine Cookies,
+  Referer, Authorization oder Sitzung zum Helper. Kein allgemeiner URL-Proxy und keine gelockerten
+  SafeHttpClient-Regeln. Nächster Schritt: Abrufgrenze messen und als Voraussetzung für einen
+  vollständigen, wiedergabeunabhängigen Modus bewerten; Aufnahmeansatz nicht weiter als Produkt ausbauen.
+- Produktion **UNAPPROVED**, P4B-A10-SIZE rot, Samsung F1/F2/R1/R2/C1 bleiben bestätigte PASS der Basis.
+
+Die folgenden Abschnitte sind historische Zwischenstände; maßgeblich ist der Abschluss oben.
+
 ## Aktuell – Browser-Dateikandidat bis zur bestehenden Helper-Medienprüfung verbunden
 
 - **DONE – lokaler Nachweis:** tatsächliche H.264/AAC-Daten aus dem vorhandenen Kadri-Player →

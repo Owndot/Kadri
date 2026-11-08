@@ -3,6 +3,22 @@
 Stand: 2026-11-08. **DONE – erster isolierter Machbarkeitsversuch; neuer Modus BLOCKED**, keine Produktimplementierung und keine Sicherheitsfreigabe.
 Produktion bleibt **UNAPPROVED**. Bestehende Direktdownloads, Noise KK, SafeHttpClient und Abbruchvorrang bleiben erhalten.
 
+## Verbindliches Produktziel nach Präzisierung des Eigentümers
+
+**DONE – Entscheidung:** ausschließlich vollständiger Download unabhängig von der Wiedergabe.
+Passives Mitspeichern ist **keine gewünschte Produktlösung**; keine Aufnahme-UI implementieren.
+Die folgenden Capture-/Ablageprototypen bleiben isolierte technische Nachweise, keine Produktzusage.
+Aktuelle Teststände: Kadri `0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e`, Helper
+`95aa0f563cdedb29a7f42cdd90b74497970bfb2f`; letzter lokaler zusammengesetzter Lauf 51 + 26 Prüfungen.
+
+**IN_PROGRESS – nächster Abrufnachweis:** explizites `targetAddressSpace: "public"` bei Chromium prüfen,
+mit getrennten TCP-/HTTP-Zählern, direktem Fetch versus Request-Objekt und kontrollierter Herkunft.
+[WICG-Diskussion der Implementierung](https://github.com/WICG/local-network-access/issues/60) nennt
+Unterschiede zwischen Spezifikation, Implementierung und Verbindungs-/Anfragephase; keine Freigabe daraus ableiten.
+[Chrome-Dokumentation](https://developer.chrome.com/docs/modern-web-guidance/guides/security/local-network-access)
+beschreibt Zieladressräume und Tests mit simuliertem öffentlichem Ursprung. Testoptionen verändern
+nur frische synthetische Browserprofile; keine Produkt-/Browserrichtlinienänderung.
+
 ## Zweiter Versuch – vorhandener Kadri-Player mit H.264/AAC
 
 **DONE – isolierter Prototyp**, ausschließlich `tests/experiments/passive_capture.js` und
