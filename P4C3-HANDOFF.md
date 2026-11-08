@@ -29,8 +29,10 @@ Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor 
   https://github.com/Owndot/Kadri/actions/runs/42421893939 und Paketlauf
   https://github.com/Owndot/Kadri/actions/runs/42421931157 grün. Noch nicht als neue Lieferung empfohlen:
   Diagnosekorrektur wird mit aufgenommen, damit nur eine Aktualisierung nötig ist.
-- **Nächster Schritt – IN_PROGRESS:** Diagnosekorrektur pushen, vollständige CI des kombinierten
-  Quellstands abwarten, bestehenden isolierten P4-Paketworkflow auf diesen Commit setzen und tatsächliches
+- **IN_PROGRESS – kombinierter Quellstand:** `7811d5a662152b96fdad6cd9e74d9cb97c41d6d3` gepusht;
+  CI https://github.com/Owndot/Kadri/actions/runs/42457921171. Bestehender P4-Paketworkflow auf genau
+  diesen Commit gesetzt, Helper-Pin und Upload-Guard unverändert.
+- **Nächster Schritt – IN_PROGRESS:** vollständige CI des kombinierten Quellstands abwarten und tatsächliches
   ZIP prüfen. Nur Erweiterung, keine APK/neue Kopplung. Danach Nachtest media-regression-b und
   Fehlercode media-regression-c auswerten; site-a HTTP 404/412 bleibt offen/blockiert wie unten beschrieben.
 
