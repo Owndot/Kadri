@@ -9,6 +9,27 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – weiterhin Fehler; sicheren Weg mit Browser-Sitzung untersuchen
+
+- **IN_PROGRESS – Eigentümerbericht:** auch nach den bisherigen Korrekturen weiterhin kein Erfolg gemeldet;
+  konkrete neue Fehlercodes/Zuordnung der Fälle fehlen. Nicht als erfolgreiche reale Fehlerbehebung werten.
+- **DONE – historischer Unterschied nachgewiesen:** Kadri vor der Kanalumstellung übergab teilweise
+  JavaScript-lesbare Cookies, Referer und Browserkennung; alternativ lud ein Browserpfad mit Sitzung.
+  Heutiger Helper lädt unabhängig ohne diese Daten. Das ist eine Architekturänderung neben der Verschlüsselung,
+  kein Beweis, dass Cookies allein die aktuellen HTTP 404/412 verursachen.
+- **DONE – konkreter Entwurf dokumentiert:** [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md).
+  Kandidat: Browser lädt das ausdrücklich gewählte Video, Sitzung bleibt dort, Helper empfängt nur Medien
+  über authentisierten begrenzten Transfer. Keine Aktivierung des alten Proxys und kein Credential-Export.
+- **TODO / BLOCKED – Machbarkeit:** Browser-Kontext und gleichwertige Grenzen vor Netzverbindungen
+  (Redirects, private Netze, DNS-Rebinding) mit kontrollierten Fixtures beweisen. Ohne diesen Nachweis kein
+  Browserersatz für SafeHttpClient. HLS, Android-Hintergrundbetrieb und neuer Medientransfer separat prüfen.
+- **Nächster Schritt:** isolierte Machbarkeitsprüfung gemäß Entwurf, beginnend bei Browser-Kontext und
+  Netzwerkgrenzen; keine reale Sitzungsdatenweitergabe, kein allgemeiner URL-Proxy. Für vollständige MP4
+  zunächst nativen Browserdownload bewerten. Kein Versprechen, jede abspielbare Quelle herunterladen zu können.
+- **DONE – nur Dokumentation:** Anwendung `7811d5a`, Paketworkflow `bc8e983`, Helper-HEAD `862c1d1` /
+  App `8b906c5` unverändert. Keine neue APK/Erweiterung, PRs bleiben Draft, Produktion **UNAPPROVED**.
+  Samsung F1/F2/R1/R2/C1 bleiben PASS der Basis; P4B-A10-SIZE bleibt rot.
+
 ## Neuer Diagnosebefund – entfernter Helper-Code (maßgeblich)
 
 - **DONE – weiterer anonymisierter Gerätebericht (media-regression-c):** `hlsplan` lehnt nach 1 s ab,
