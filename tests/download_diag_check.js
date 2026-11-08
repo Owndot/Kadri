@@ -89,5 +89,23 @@ function setup(kind = 'mp4') {
   g.ctx.reply = () => ({ ok: false, error: { kind: 'helper-busy' } });
   await g.api.pageDlStartMp4(g.opt);
   check('fixed channel codes with hyphens are preserved', /Grund helper-busy/.test(g.api.hdlDiagText(g.api.diags[0])));
+  // Known protocol errors must survive the *anonymous copy*, not just the unfiltered diagnostic.
+  // These are synthetic cases, not a guess at the device's redacted reason.
+  for (const reason of ['no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
+    'blocked_automatic_retry', 'blocked_bad_argument', 'blocked_body_too_large', 'blocked_credential_header',
+    'blocked_credentials_in_url', 'blocked_headers_too_large', 'blocked_redirect_target',
+    'blocked_redirect_without_location', 'blocked_too_many_redirects']) {
+    const h = setup('hls');
+    h.ctx.reply = () => ({ ok: false, error: { kind: 'plan', reason } });
+    await h.api.pageDlPlan(h.opt);
+    const anon = h.ctx.scrub(h.api.hdlDiagText(h.api.diags[0]));
+    check('anonymous copy preserves known helper code ' + reason, anon.includes('Grund ' + reason + ' nach') && anon.includes('Phase hlsplan'));
+  }
+  const scrub = g.ctx.scrub;
+  for (const secret of ['private_identifier_123456789', 'blocked_private_identifier_123456789',
+    'no_supported_variant_private', 'private_no_supported_variant', 'NO_SUPPORTED_VARIANT',
+    'https://private.invalid/no_supported_variant?token=private_identifier_123456789', 'no_supported_variant.private.invalid']) {
+    check('anonymous copy still removes synthetic private value ' + secret.split(':')[0], scrub(secret) === '[entfernt]');
+  }
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

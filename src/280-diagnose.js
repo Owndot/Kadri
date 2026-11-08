@@ -43,9 +43,16 @@
   const anonKind = (u) => (/^blob:/i.test(u) ? 'blob' : /\.m3u8(\?|#|$)/i.test(u) ? 'hls' : /\.mpd(\?|#|$)/i.test(u) ? 'dash' : /\.(mp4|m4v)(\?|#|$)/i.test(u) ? 'mp4' :
     /\.(m4s|ts|cmfv|cmfa|m4a|aac)(\?|#|$)/i.test(u) ? 'segment-datei' : /^https?:/i.test(u) ? 'sonstige' : '-');
   function anonScrub(t) {
+    // Nur diese vollständigen festen Codes des gepinnten Helpers sind öffentliche Protokollbegriffe.
+    // Einige sind ≥ 20 Zeichen lang und wurden bisher wie private Kennungen entfernt. Keine allgemeine
+    // Ausnahme für „blocked_*“, Unterstriche oder längere Fehlertexte: unbekannte Werte bleiben verborgen.
+    const publicCodes = new Set(['no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
+      'blocked_automatic_retry', 'blocked_bad_argument', 'blocked_body_too_large', 'blocked_credential_header',
+      'blocked_credentials_in_url', 'blocked_headers_too_large', 'blocked_redirect_target',
+      'blocked_redirect_without_location', 'blocked_too_many_redirects']);
     return String(t).replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '[entfernt]')
-      .replace(/\b(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]{1,}\b/gi, (m) => (/^\d+(\.\d+)+$/.test(m) ? m : '[entfernt]'))
-      .replace(/[A-Za-z0-9_~%+=-]{20,}/g, '[entfernt]');
+      .replace(/\b(?:[a-z0-9_-]+\.)+[a-z][a-z0-9-]{1,}\b/gi, (m) => (/^\d+(\.\d+)+$/.test(m) ? m : '[entfernt]'))
+      .replace(/[A-Za-z0-9_~%+=-]{20,}/g, (m) => publicCodes.has(m) ? m : '[entfernt]');
   }
   function diagAnon() {
     const L = [];

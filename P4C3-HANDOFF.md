@@ -7,7 +7,32 @@ nicht belegt), *geplant*, *implementiert* (im Code, ggf. ungetestet), *getestet*
 
 Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
-Stand dieses Dokuments: 2026-11-07. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+
+## Neuer Diagnosebefund – entfernter Helper-Code (maßgeblich)
+
+- **DONE – weiterer anonymisierter Gerätebericht (media-regression-c):** `hlsplan` lehnt nach 1 s ab,
+  Grund in anonymer Kopie `[entfernt]`. HLS-Quelle im eigenen Player geladen, Auswahl aktuell,
+  Beobachtungsalter 3 s. Kein HTTP-Status bekannt; kein Beleg für einen Timeout oder einen 404.
+- **DONE – Diagnosefehler reproduziert:** `anonScrub()` entfernt alle Kennungen ab 20 Zeichen,
+  dadurch auch feste Helper-Codes. Neuer Test gegen `8372957` scheitert an Erhaltung eines bekannten
+  Codes in der anonymen Kopie. Dieser synthetische Code ist **keine Behauptung zur Geräteursache**.
+- **DONE – enge Diagnosekorrektur:** exakt 13 bekannte lange Codes des gepinnten Helpers bleiben
+  erhalten, keine Präfix-/Freitext-Ausnahme. Unbekannte Codes, längere Werte mit bekanntem Präfix/Suffix,
+  URLs und Domains bleiben verborgen; Domainfilter erfasst zusätzlich Unterstriche.
+  Build und Diagnose-Regression **39/39** lokal grün (inkl. Negativtests auf private synthetische Werte).
+  Keine Änderung an Download-/Quellenvalidierung, Helper oder Sicherheitsgrenzen.
+- **NEEDS_TEST – tatsächlicher Grund:** Eigentümer um ausschließlich das einzelne Wort nach „Grund“
+  aus der normalen Diagnose gebeten, ausdrücklich keine Rohdiagnose/Adressen. Alternativ nach Aktualisierung
+  erneut „Anonymisiert kopieren“. Keine Codec-/Server-/Redirect-Ursache aus `[entfernt]` erraten.
+- **DONE – Timeoutkorrektur `8372957`:** vollständige CI
+  https://github.com/Owndot/Kadri/actions/runs/42421893939 und Paketlauf
+  https://github.com/Owndot/Kadri/actions/runs/42421931157 grün. Noch nicht als neue Lieferung empfohlen:
+  Diagnosekorrektur wird mit aufgenommen, damit nur eine Aktualisierung nötig ist.
+- **Nächster Schritt – IN_PROGRESS:** Diagnosekorrektur pushen, vollständige CI des kombinierten
+  Quellstands abwarten, bestehenden isolierten P4-Paketworkflow auf diesen Commit setzen und tatsächliches
+  ZIP prüfen. Nur Erweiterung, keine APK/neue Kopplung. Danach Nachtest media-regression-b und
+  Fehlercode media-regression-c auswerten; site-a HTTP 404/412 bleibt offen/blockiert wie unten beschrieben.
 
 ## Neuer Samsung-Befund – Planungs-Timeout und site-a HTTP 412/404 (maßgeblich)
 
