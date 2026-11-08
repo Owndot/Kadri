@@ -29,12 +29,34 @@ Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor 
   https://github.com/Owndot/Kadri/actions/runs/42421893939 und Paketlauf
   https://github.com/Owndot/Kadri/actions/runs/42421931157 grün. Noch nicht als neue Lieferung empfohlen:
   Diagnosekorrektur wird mit aufgenommen, damit nur eine Aktualisierung nötig ist.
-- **IN_PROGRESS – kombinierter Quellstand:** `7811d5a662152b96fdad6cd9e74d9cb97c41d6d3` gepusht;
-  CI https://github.com/Owndot/Kadri/actions/runs/42457921171. Bestehender P4-Paketworkflow auf genau
-  diesen Commit gesetzt, Helper-Pin und Upload-Guard unverändert.
-- **Nächster Schritt – IN_PROGRESS:** vollständige CI des kombinierten Quellstands abwarten und tatsächliches
-  ZIP prüfen. Nur Erweiterung, keine APK/neue Kopplung. Danach Nachtest media-regression-b und
-  Fehlercode media-regression-c auswerten; site-a HTTP 404/412 bleibt offen/blockiert wie unten beschrieben.
+- **DONE – kombinierter Quellstand:** `7811d5a662152b96fdad6cd9e74d9cb97c41d6d3` gepusht;
+  vollständige CI **alle fünf Jobs grün**: https://github.com/Owndot/Kadri/actions/runs/42457921171.
+  Diagnose 39/39, Kanal-Unit 45/45, Download-Unit 116/116, Kanal-Integration 74/74,
+  MP4-Integration 38/38, HLS-Unit 69/69, HLS-Integration 98/98, Kanal-Browser 34/34,
+  Netzschutz-Ausfall 4/4, 53 Mutationen erkannt; Browser: Helper 18/18, Menü 7/7,
+  MP4 134/134, HLS 24/24, direkter Download 81/81. Allgemeine Browser-/Datenschutz-/Firefox-Jobs grün.
+- **DONE – Lieferung:** bestehender isolierter Paketworkflow auf genau diesen Quellcommit gesetzt,
+  Workflow-Commit **`bc8e983ddfeca000ffa2ae73d26d2df984b06bd7`**; danach nur Dokumentationscommits.
+  Paketlauf **grün**: https://github.com/Owndot/Kadri/actions/runs/42457960301.
+  **Aktuelles Artefakt:** https://github.com/Owndot/Kadri/actions/runs/42457960301/artifacts/13608746744
+  (`kadri-p4test-7811d5a-vivaldi-test`, verfügbar bis **2026-11-10 07:23 UTC**).
+  Enthält `kadri-p4-test-extension.zip`, Erweiterungsordner, `SHA256SUMS`, Evidence.
+  Erweiterungs-ZIP SHA-256: **`3fc235391fe15498e2cd8f9f8c2ea02d4581694bdb47ab6786891f63178dc5ff`**.
+  Tatsächliches CI-Artefakt heruntergeladen: Archiv-Digest gegen GitHub-Metadaten, alle **32**
+  Prüfsummeneinträge, Ordner/ZIP-Gleichheit und Bytegleichheit zum lokalen Build geprüft.
+  Evidence bestätigt Quelle, Helper-Pin, P4-ID, Produktion UNAPPROVED, kein Helper-Update/Pairing-Reset.
+  Helper-HEAD weiterhin **`862c1d19ea80eefad7b9b341b93a70cde338fa7d`**, App/Pin **`8b906c5`**, unverändert.
+- **Nächster Schritt – NEEDS_TEST (Samsung):** bestehende P4-Erweiterung mit dem enthaltenen ZIP
+  aktualisieren, nicht deinstallieren. Keine APK und keine neue Kopplung. Seite neu laden und Download
+  bei media-regression-b erneut versuchen; bei media-regression-c den tatsächlichen Fehlercode ermitteln
+  (erneut Erweiterungsmenü → „Diagnose anzeigen“ → „Anonymisiert kopieren“).
+  Nur anonymisierten Text senden. Es wurde keine erfolgreiche reale Downloadkorrektur behauptet;
+  die Timeout- und Diagnosefehler sind synthetisch reproduziert und korrigiert.
+  site-a MP4-GET 404 / HLS-Planung 412 bleibt **BLOCKED** für die konkrete Ursache wie unten beschrieben.
+  F1/F2/R1/R2/C1 bleiben bestätigte PASS der Basis; Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
+
+Die folgenden Abschnitte protokollieren ältere Zwischenstände; für Quellstand, Lieferung, CI und
+nächsten Schritt gilt der Abschluss oben. Ältere Paketlinks enthalten nicht beide aktuellen Korrekturen.
 
 ## Neuer Samsung-Befund – Planungs-Timeout und site-a HTTP 412/404 (maßgeblich)
 
