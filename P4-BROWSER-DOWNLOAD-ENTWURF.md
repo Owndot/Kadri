@@ -3,6 +3,59 @@
 Stand: 2026-11-08. **DONE – erster isolierter Machbarkeitsversuch; neuer Modus BLOCKED**, keine Produktimplementierung und keine Sicherheitsfreigabe.
 Produktion bleibt **UNAPPROVED**. Bestehende Direktdownloads, Noise KK, SafeHttpClient und Abbruchvorrang bleiben erhalten.
 
+## Zweiter Versuch – vorhandener Kadri-Player mit H.264/AAC
+
+**DONE – isolierter Prototyp**, ausschließlich `tests/experiments/passive_capture.js` und
+`tests/passive_player_capture.py`, nicht Bestandteil eines Erweiterungsbuilds.
+Der vorhandene System-Chromium 156 unterstützt H.264/AAC; die frühere Decodergrenze betrifft den
+separaten Playwright-Chromium 141, nicht sämtliche lokal verfügbaren Browser.
+
+- Der Test lädt die tatsächlichen `src/*.js` und öffnet deren eigenen Player. Testinstrumentierung
+  legt die Quellenauswahl fest und macht den Playerzustand erreichbar. **Kein Nachweis der Registry-
+  Autorisierung oder Erweiterungsisolation**; keine verwaltete Browserrichtlinie verändert.
+- H.264/AAC, integrierte Tonspur, unverschlüsseltes fMP4-VOD, 20 Sekunden: Init und fünf Segmente
+  byteidentisch erfasst. Dieselben Medienanfragen wie beim Player ohne Beobachter, kein vergrößerter
+  Puffer und kein veränderter Startpunkt. FFprobe bestätigt Tracks/Dauer; FFmpeg decodiert die
+  vollständige Datei einschließlich Ton ohne Fehler. Das ist ein überprüfter **Dateikandidat**, keine
+  automatische Veröffentlichung und kein Sicherheitsnachweis für beliebige fremde Container.
+- Fehlendes Segment, Einstieg bei Sekunde 12, widersprüchliches Duplikat, Nutzerabbruch (auch nach
+  Empfang des letzten Segments), Speicherlimit, tatsächliches Player-Schließen und Ersatzplayer:
+  kein Dateikandidat, eigene Bytes/Quellenzuordnung verworfen. Identische Duplikate werden nicht
+  doppelt angehängt. Wiedergabe bleibt bei den Beobachterfehlern funktionsfähig.
+- Quellen-/Qualitätswechsel werden mit gezielten Benachrichtigungen an den Beobachter geprüft;
+  **keine vollständigen End-to-End-Wechseltests** mit mehreren realen Varianten. Quellenwahl bleibt
+  im Test festgelegt. Vorschauplayer wird ausdrücklich nicht mit dem Hauptplayer vermischt.
+- **DONE – konkrete Lücke im ersten Prototyp reproduziert und behoben:** `closePlayer()` setzt `vp`
+  sofort auf null, zerstört HLS aber verzögert (normalerweise nächstes Bild, spätestens nach 250 ms;
+  eingebettete Fenster können auf die Größenänderung warten). Nur `DESTROYING` zu beobachten lässt
+  dazwischen einen Dateikandidaten zu. Der Prototyp prüft nun zusätzlich die aktuelle Playerinstanz
+  vor Datenannahme und vor `finish()`. Die Gegenprobe mit absichtlich ausgeschalteter Bindung
+  reproduziert die Lücke im selben JavaScript-Task. **Kein behaupteter Fehler bestehender Downloads**,
+  keine Änderung an deren Abbruchlogik. Verspätete Metadaten reaktivieren einen Abbruch nicht.
+- **DONE – lokaler Lauf 51 Prüfungen**, System-Chromium `156.0.8078.79`.
+  **IN_PROGRESS – CI** in der bestehenden Pipeline, dort installierter Chrome mit H.264/AAC.
+  Kein neues Paket, keine APK und keine Änderung des Helpers oder der Produktdateien.
+
+Reproduktion: `KADRI_CAPTURE_CHROMIUM=/usr/bin/chromium python3 tests/passive_player_capture.py`
+(Playwright, FFmpeg/FFprobe, vorhandener Browser mit H.264/AAC). Der Test setzt keine echte Sitzung
+voraus und verwendet ausschließlich lokale bekannte Testmedien. Ausgabe enthält nur feste Gründe,
+Zähler und Testnamen. Prototypgrenzen: 4 MiB insgesamt, 1 MiB je Ressource, 2048 Segmente;
+keine Disk-Ablage, keine Übertragung, kein automatisches Wiederanlaufen und keine Produktionstauglichkeit.
+
+## Einordnung für einen tatsächlich nutzbaren Download
+
+**BLOCKED – als fertiger Downloadmodus:** Die bisherige Übernahme sammelt nur das, was während der
+Wiedergabe tatsächlich ankommt. Sie kann weder fehlende Anfangssegmente noch übersprungene Teile
+ersetzen und verspricht kein schnelles vollständiges Herunterladen eines langen Films. Ein Menüpunkt
+„Herunterladen“ wäre dafür derzeit irreführend. Kein ungeprüftes Nachladen als Ausweg ergänzen.
+
+**TODO – nächster Schritt:** begrenzte adressfreie Ablage/Medienannahme und die vorhandene
+Helper-Containerprüfung für solche Dateikandidaten gezielt prüfen. Vor einem Produktpfad müssen
+Quell-/Frame-Autorisierung, vollständige Medienvalidierung, Speichergrenzen und Abbruch bis zur
+endgültigen Veröffentlichung zusammen nachgewiesen sein. Aufnahme aus dem laufenden Browser bleibt
+abhängig von dessen Lebenszyklus; die unabhängigen Samsung-PASS gelten dafür nicht. Eine neue
+Sicherheitsgrenze oder Produktionsfreigabe wird aus dem Prototyp nicht abgeleitet.
+
 ## Erste experimentelle Ergebnisse
 
 **DONE – lokale Browserprüfung, 25 Nachweise einschließlich passiver Übernahme:** `tests/browser_download_feasibility.py`,
@@ -120,12 +173,10 @@ Das ist ein **Entwurf**, kein bereits sicherer oder funktionierender Ersatz. Bes
   Keine neue Kryptografie entwerfen und keine existierenden Kontrollvalidatoren aufweichen.
 - DRM, Zugangsverweigerung und sonstige serverseitige Beschränkungen werden nicht umgangen.
 
-## Exakt nächster Entwicklungsschritt
+## Weitere Entwicklung
 
-**TODO – passive Übernahme im vorhandenen eigenen Player isoliert prüfen:** zunächst mit einer vom
-Helper unterstützten H.264/AAC-Fixture und geeignetem Decoder. Danach fehlende/duplizierte Segmente,
-Quell-/Qualitätswechsel und Nutzerabbruch als Negativfälle. Keine Nachladeanfragen aus dem Beobachter;
-unvollständige Aufnahme darf nicht als vollständige Datei gelten. Noch kein Uploadprotokoll bauen.
+Der H.264/AAC-Player-/Vollständigkeitsversuch ist oben abgeschlossen. Maßgeblicher nächster Schritt
+und verbleibende Produktgrenzen stehen unter „Einordnung für einen tatsächlich nutzbaren Download“.
 Der native MP4-Link ist separat auf Vivaldi Android **NEEDS_TEST**. Reale HTTP-404/412-Ursachen bleiben offen.
 
 Weitere verbleibende Prüfungen, kein allgemeiner Browserproxy:

@@ -50,6 +50,13 @@ jobs:
           set -euo pipefail
           mkdir -p tests/out
           python3 -u tests/browser_download_feasibility.py --extension dist/test --output tests/out/browser-feasibility.json | tee tests/out/browser-feasibility.log
+      - name: Passive capture in the actual player (H.264/AAC, cancellation, no product mode)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Hosted Ubuntu includes Chrome with proprietary codecs; bundled Playwright Chromium does not.
+          export KADRI_CAPTURE_CHROMIUM="$(command -v google-chrome)"
+          python3 -u tests/passive_player_capture.py | tee tests/out/passive-player-capture.log
       - name: Prove recovery regression against the broken predecessor
         env:
           GH_TOKEN: ${{ github.token }}

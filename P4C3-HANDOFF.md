@@ -9,6 +9,41 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – passive Übernahme im echten Player geprüft, Produktmodus weiterhin BLOCKED
+
+- **IN_PROGRESS – aktuelles Arbeitspaket:** beauftragte Fortsetzung im bestehenden Player, nur
+  isolierter Prototyp/Tests/CI/Dokumentation. Letzter vorher gepushter Kadri-HEAD `f35956a`;
+  der vorliegende Testcommit ergänzt `tests/experiments/passive_capture.js` und
+  `tests/passive_player_capture.py`. Anwendung und letzte Lieferung bleiben `7811d5a`.
+- **DONE – H.264/AAC lokal:** vorhandener System-Chromium `156.0.8078.79` unterstützt die Codecs.
+  Tatsächliche Playerquellen unter Testinstrumentierung, feste Quellenauswahl; kein Beweis für
+  Erweiterungsisolation/Registry-Autorisierung. 20-s-fMP4 mit Ton vollständig bytegleich erfasst,
+  keine zusätzlichen Medienabrufe gegenüber demselben Player ohne Beobachter. FFprobe und vollständiger
+  FFmpeg-Decode bestätigen Tracks/Dauer und fehlerfreie Bild-/Tondaten.
+- **DONE – 51 lokale Prüfungen:** fehlende Segmente, Beginn mitten im Video, widersprüchliche Duplikate,
+  Abbruch vor/nach vollständigem Empfang, Speichergrenze, tatsächliches Schließen und Ersatzplayer
+  liefern keine Datei. Quellen-/Qualitätswechselmeldungen sind gezielt simuliert, keine vollständigen
+  Variantenwechseltests. Identische Duplikate werden nicht doppelt gespeichert. Hauptplayer/Vorschau getrennt.
+- **DONE – Prototypfehler behoben:** HLS-Destroy erfolgt beim tatsächlichen Schließen zeitversetzt.
+  Vorher konnte `finish()` dazwischen noch einen Dateikandidaten liefern. Nun aktuelle Playerinstanz
+  vor Annahme/Finalisierung prüfen; absichtlich ungebundene Gegenprobe reproduziert das alte Verhalten.
+  Abbruch bleibt trotz verspäteter Daten/Metadaten wirksam. Keine Änderung bestehender Downloads.
+- **IN_PROGRESS – CI:** neuer Test in bestehender Pipeline, Ergebnis nach dem Push nachtragen.
+- **BLOCKED – fertiger Downloadmodus:** passives Mitspeichern ersetzt keine fehlenden/übersprungenen
+  Teile und ist kein schneller vollständiger Filmdownload. Keine Disk-Ablage, keine produktive
+  Containerprüfung/Übertragung, kein Android-Lebenszyklusnachweis; nur 4-MiB-Testpuffer.
+- **Nächster Schritt – TODO:** begrenzte adressfreie Medienablage/Annahme und Wiederverwendung der
+  vorhandenen Helper-Medienprüfung prüfen. Vor Veröffentlichung außerdem echte Quelle/Frame-Bindung,
+  Vollständigkeit, Speichergrenzen und Abbruch bis zum letzten Schritt nachweisen. Keine zusätzlichen
+  Browserabrufe als Ersatz für die weiterhin fehlenden gleichwertigen Netzwerkgrenzen.
+- **BLOCKED – reale HTTP 404/412 weiterhin OFFEN:** kein neuer Ursachenbeweis auf realen Seiten,
+  keine echten URLs/Sitzungen verwendet. Details: [P4-BROWSER-DOWNLOAD-ENTWURF.md](P4-BROWSER-DOWNLOAD-ENTWURF.md).
+- Helper unverändert `862c1d19ea80eefad7b9b341b93a70cde338fa7d`, App/Pin `8b906c5`.
+  Keine neue APK/Erweiterung, keine Kopplung, keine neuen PRs/Tags/Releases. Produktion **UNAPPROVED**;
+  P4B-A10-SIZE bleibt rot. Samsung F1/F2/R1/R2/C1 bleiben PASS der unabhängigen Basis.
+
+Die folgenden Abschnitte sind historische Zwischenstände; maßgeblich ist der Abschluss oben.
+
 ## Aktuell – erster Browserversuch abgeschlossen; kein neuer Downloadmodus freigegeben
 
 - **DONE – beauftragter isolierter Versuch:** nur Tests, bestehende CI und Dokumentation geändert.
