@@ -5,7 +5,9 @@ fixture page, expose a test-only player entry point and fix its candidate URL.
 Selection/registry authorization and extension isolation are explicitly NOT tested.
 Requires an installed H.264/AAC-capable browser (KADRI_CAPTURE_CHROMIUM or Chrome/Chromium).
 """
+import argparse
 import base64
+import hashlib
 import http.server
 import json
 import os
@@ -167,6 +169,9 @@ def run_case(browser, server, scenario, enabled=True):
 
 
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--export-fixture',type=Path,help='Export only the known complete local fixture after all checks pass; never a product download')
+    args=parser.parse_args()
     executable = os.environ.get('KADRI_CAPTURE_CHROMIUM') or shutil.which('google-chrome') or shutil.which('chromium')
     if not executable:
         raise RuntimeError('An installed H.264/AAC-capable Chrome/Chromium is required')
@@ -207,6 +212,14 @@ def main():
                 repeat=run_case(browser,server,'duplicate')
                 check('Identical duplicate observations do not duplicate file bytes',repeat['blocks']==good['blocks'])
                 check('Identical duplicate observations add no requests',sorted(repeat['requests'])==sorted(baseline['requests']))
+                if args.export_fixture:
+                    args.export_fixture.mkdir(parents=True,exist_ok=False)
+                    lines=['capture-fixture-v1','20000',str(len(blocks))]
+                    for i,block in enumerate(blocks):
+                        (args.export_fixture/f'{i:04d}.bin').write_bytes(block)
+                        lines.append(f'{len(block)} {hashlib.sha256(block).hexdigest()}')
+                    (args.export_fixture/'fixture.txt').write_text('\n'.join(lines)+'\n')
+                    print('Exported known local fixture only: numbered media blocks, lengths, hashes; no URLs or session data',flush=True)
                 print(json.dumps({'browser':browser.version,'checks':len(CHECKS),'product_mode':'NOT_IMPLEMENTED',
                     'limits':['source selection fixed by test','no extension isolation proof','20-second muxed fMP4 only',
                               'no production container validator','no helper transfer','no Android/background proof']}),flush=True)

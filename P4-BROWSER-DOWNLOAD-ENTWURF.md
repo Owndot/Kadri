@@ -42,6 +42,35 @@ voraus und verwendet ausschließlich lokale bekannte Testmedien. Ausgabe enthäl
 Zähler und Testnamen. Prototypgrenzen: 4 MiB insgesamt, 1 MiB je Ressource, 2048 Segmente;
 keine Disk-Ablage, keine Übertragung, kein automatisches Wiederanlaufen und keine Produktionstauglichkeit.
 
+## Dritter Versuch – Browserdaten durch vorhandenen Helper-Remuxer
+
+**DONE – lokaler zusammengesetzter Nachweis:** `tests/passive_player_capture.py --export-fixture DIR`
+exportiert erst nach sämtlichen 51 Prüfungen die bekannte lokale Fixture als nummerierte Mediendateien,
+Längen/SHA-256 und 20-s-Dauer. Keine URL-, Header- oder Sitzungsfelder. Dieses lokale Testformat ist
+kein Netzwerkprotokoll. Der isolierte Helper-Prototyp nimmt die Daten in 16-KiB-Blöcken auf, prüft
+Reihenfolge, Offset, Ressourcenlängen und Hashes, schreibt private temporäre Dateien und prüft die
+Hashes vor dem Remux erneut. Anschließend läuft der **unveränderte** `Media3HlsRemuxer` samt seiner
+Spur-/Sample-/Zeit-/Dauerprüfung; FFmpeg decodiert die tatsächliche Ausgabe vollständig.
+
+Helper-Testcommit **`2746b8f2154a98ce70701c084a25246aef91fd9a`** auf dem bestehenden Branch;
+[Details und Reproduktion](https://github.com/Owndot/video-assistent-helper/blob/2746b8f2154a98ce70701c084a25246aef91fd9a/P4-PASSIVE-MEDIA-PROBE.md).
+**24/24** lokale Ablageprüfungen mit Fixture-Dateien, **25/25** mit dem tatsächlichen Browserexport.
+Abbruch vor Remux und unmittelbar nach erfolgreicher Verifikation verhindert den Zustand `verified`;
+Fehler/Abbruch bereinigen private Medien. HTML wird trotz gültigem Hash durch den Remuxer abgelehnt.
+Ein lokaler Abbruchmarker bleibt beim Wiederöffnen gesperrt; unterbrochene Aufnahmen starten nicht neu.
+
+**IN_PROGRESS – Helper-CI:** [HLS-Prüfungen](https://github.com/Owndot/video-assistent-helper/actions/runs/42513744679).
+Weitere bestehende Helper-Workflows laufen ebenfalls. Nur Testdateien und Dokumentation geändert;
+App-Code `8b906c5`, Kadri-Pin, Noise-Kern, Validatoren und Netzwerk-Endpunkte unverändert.
+
+**BLOCKED – Produktverbindung:** Testablage hat keine Kanal-/Auftragsautorisierung, globale Quote,
+Android-Dauerhaftigkeitsprüfung oder Veröffentlichungsfunktion. Markerdatei lokal synchronisiert,
+Elternverzeichnis nicht; kein Android-Prozess-/Stromverlustnachweis. Kein Resume implementiert.
+Browserexport und Java-Eingang sind durch lokale Testdateien verbunden, **nicht über Noise/HTTP**.
+Der vorhandene Rust-Kern kennt zwar typisierte Media-/End-Records, aber der Kadri-WASM-Sender bietet
+nur `seal_control` an und der App-`ChannelServer` lehnt andere Recordarten ausdrücklich ab.
+Diese Grenzen wurden nicht geöffnet. Kein Abspielen-zu-Download-Versprechen für reale Seiten.
+
 ## Einordnung für einen tatsächlich nutzbaren Download
 
 **BLOCKED – als fertiger Downloadmodus:** Die bisherige Übernahme sammelt nur das, was während der
@@ -49,8 +78,9 @@ Wiedergabe tatsächlich ankommt. Sie kann weder fehlende Anfangssegmente noch ü
 ersetzen und verspricht kein schnelles vollständiges Herunterladen eines langen Films. Ein Menüpunkt
 „Herunterladen“ wäre dafür derzeit irreführend. Kein ungeprüftes Nachladen als Ausweg ergänzen.
 
-**TODO – nächster Schritt:** begrenzte adressfreie Ablage/Medienannahme und die vorhandene
-Helper-Containerprüfung für solche Dateikandidaten gezielt prüfen. Vor einem Produktpfad müssen
+**TODO – nächster Schritt:** typisierten authentisierten Medientransfer mit Auftrag-/Absenderbindung
+auf Grundlage der vorhandenen Noise-Records isoliert prüfen. Adressfreie Testablage und vorhandene
+Helper-Containerprüfung sind oben lokal verbunden, noch keine App-Integration. Vor einem Produktpfad müssen
 Quell-/Frame-Autorisierung, vollständige Medienvalidierung, Speichergrenzen und Abbruch bis zur
 endgültigen Veröffentlichung zusammen nachgewiesen sein. Aufnahme aus dem laufenden Browser bleibt
 abhängig von dessen Lebenszyklus; die unabhängigen Samsung-PASS gelten dafür nicht. Eine neue

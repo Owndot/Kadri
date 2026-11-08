@@ -9,6 +9,41 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – Browser-Dateikandidat bis zur bestehenden Helper-Medienprüfung verbunden
+
+- **DONE – lokaler Nachweis:** tatsächliche H.264/AAC-Daten aus dem vorhandenen Kadri-Player →
+  adressfreier lokaler Testexport → begrenzte private Ablage → unveränderter Helper-Remuxer →
+  vorhandene Spur-/Sample-/Zeit-/Dauerprüfung → vollständiger FFmpeg-Decode von Bild und Ton.
+  Kein Netzwerktransfer und keine Veröffentlichung. **51 Playerprüfungen**, **24 Ablageprüfungen**,
+  **25 Ablageprüfungen mit tatsächlichem Browserexport** bestanden.
+- **DONE – sichere Ablehnungen im Prototyp:** fehlende/abweichende Ressourcen, falsche Reihenfolge/
+  Offsets/Hashes, Datenänderung auf Disk, Speichergrenzen und HTML trotz gültiger Prüfsumme.
+  Abbruch vor Remux oder nach Verifikation verhindert `verified`; verspätete Blöcke bleiben gesperrt.
+  Wiederöffnen eines lokalen Abbruchmarkers bleibt abgebrochen; andere Unterbrechungen starten nicht neu.
+- **DONE – gepushte Zwischenstände:** Kadri `7904145134f4dec119191efdbef1c886d8a1455d` (Playerprobe);
+  vorliegender Commit ergänzt die geprüfte Testexportoption. Helper
+  **`2746b8f2154a98ce70701c084a25246aef91fd9a`** (ausschließlich Tests/Dokumentation).
+  App-Code und vendorter Helper-Pin bleiben **`8b906c5`**, Kadri-Anwendung/Lieferung **`7811d5a`**.
+- **IN_PROGRESS – CI:** Kadri https://github.com/Owndot/Kadri/actions/runs/42512983973;
+  neuer Player-Test bereits grün, Abschluss nachtragen. Helper-HLS
+  https://github.com/Owndot/video-assistent-helper/actions/runs/42513744679;
+  bestehende Helper-Sicherheits-/Kanal-/Browserworkflows ebenfalls gestartet. Keine APK ausgelöst.
+- **BLOCKED – produktiver Download:** Verbindung bisher nur über lokale bekannte Testdateien,
+  nicht über den authentisierten Kanal. Keine globale Quote, App-/Frame-/Auftragsautorisierung,
+  Android-Crash-Dauerhaftigkeit oder MediaStore-Veröffentlichung. Passives Mitspeichern ersetzt keine
+  fehlenden/übersprungenen Teile und ist kein schneller vollständiger Filmdownload.
+- **Nächster Schritt – TODO:** typisierten authentisierten Medientransfer mit Auftrag-/Absenderbindung
+  isoliert prüfen. Rust kennt Media/End bereits; WASM-Sender exportiert nur `seal_control`,
+  `ChannelServer` lehnt Media/End unverändert ab. Keine Kontrollvalidatoren aufweichen, kein URL-Proxy.
+  Vor App-Integration sind Autorisierung, globale Grenzen und Abbruch bis zur Veröffentlichung zu beweisen.
+- Details: [Browserentwurf](P4-BROWSER-DOWNLOAD-ENTWURF.md),
+  [Helper-Probe](https://github.com/Owndot/video-assistent-helper/blob/2746b8f2154a98ce70701c084a25246aef91fd9a/P4-PASSIVE-MEDIA-PROBE.md).
+  **BLOCKED – reale HTTP 404/412 weiterhin OFFEN**, keine neuen realen Seiten-/Sitzungsdaten.
+  Keine neue installierbare Erweiterung/APK, Kopplung, PR, Tags oder Releases. Produktion **UNAPPROVED**;
+  Samsung F1/F2/R1/R2/C1 bleiben PASS der unabhängigen Basis; P4B-A10-SIZE bleibt rot.
+
+Die folgenden Abschnitte sind historische Zwischenstände; maßgeblich ist der Abschluss oben.
+
 ## Aktuell – passive Übernahme im echten Player geprüft, Produktmodus weiterhin BLOCKED
 
 - **IN_PROGRESS – aktuelles Arbeitspaket:** beauftragte Fortsetzung im bestehenden Player, nur
