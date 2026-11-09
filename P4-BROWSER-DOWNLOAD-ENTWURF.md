@@ -1,6 +1,6 @@
 # Browsergestütztes Speichern – geprüfter Ausgangspunkt, noch kein freigegebener Modus
 
-Stand: 2026-11-08. **DONE – erster isolierter Machbarkeitsversuch; neuer Modus BLOCKED**, keine Produktimplementierung und keine Sicherheitsfreigabe.
+Stand: 2026-11-09. **DONE – isolierte Machbarkeitsversuche; neuer Modus BLOCKED**, keine Produktimplementierung und keine Sicherheitsfreigabe.
 Produktion bleibt **UNAPPROVED**. Bestehende Direktdownloads, Noise KK, SafeHttpClient und Abbruchvorrang bleiben erhalten.
 
 ## Verbindliches Produktziel nach Präzisierung des Eigentümers
@@ -11,8 +11,42 @@ Die folgenden Capture-/Ablageprototypen bleiben isolierte technische Nachweise, 
 Aktuelle Teststände: Kadri `0fa3bcbd8cad843d8cda9ea43aa78e2b5b989f4e`, Helper
 `95aa0f563cdedb29a7f42cdd90b74497970bfb2f`; letzter lokaler zusammengesetzter Lauf 51 + 26 Prüfungen.
 
-**IN_PROGRESS – nächster Abrufnachweis:** explizites `targetAddressSpace: "public"` bei Chromium prüfen,
-mit getrennten TCP-/HTTP-Zählern, direktem Fetch versus Request-Objekt und kontrollierter Herkunft.
+**DONE – Abrufnachweis:** `tests/browser_address_space_probe.py`, getrennte TCP-/HTTP-Zähler,
+direktes Fetch versus Request-Objekt und kontrollierte Herkunft. Je fünf Beobachtungen mit Chromium
+141.0.7390.37 und 156.0.8078.79; zusätzlich fünf mit simuliertem öffentlichem Ursprung auf 156,
+Loopbackberechtigung ausdrücklich im richtigen frischen Browserkontext erteilt.
+
+| Aufruf / Zielklassifizierung | TCP angenommen | HTTP angekommen |
+|---|---:|---:|
+| Ohne Option, Loopbackziel | 1 | 1 (200) |
+| Direkter Fetch mit `targetAddressSpace: "public"`, Loopbackziel | 1 | 0 (TypeError) |
+| Nur `new Request(url, {targetAddressSpace: "public"})`, dann `fetch(request)` | 1 | 1 (200) |
+| Option beim `fetch(request, options)` erneut gesetzt, Loopbackziel | 1 | 0 (TypeError) |
+| Direkter Fetch mit Option, als öffentlich klassifiziertes Testziel | 1 | 1 (200) |
+
+Alle drei Testkonfigurationen liefern dieses Ergebnis. Ungültiger Enumwert wird abgelehnt; das allein
+beweist keine wirksame Schutzgrenze. Die positive Zielkontrolle zeigt, dass die Option nicht schlicht
+alle Abrufe verhindert. Öffentlich klassifizierte Ziele/Ursprünge sind ausdrücklich **simuliert**:
+alle Server tatsächlich auf Loopback, eigene kurzlebige TLS-Zertifikate, ausschließlich frische Testprofile.
+Kein dynamisches DNS-Rebinding, keine echten Anmeldungen, kein Erweiterungs-/Android-Test.
+Keine Aussage, ob vor der Ablehnung zusätzlich TLS-Daten übertragen wurden: gezählt werden TCP und HTTP.
+
+**BLOCKED – Produktentscheidung:** Auch die korrekte direkte Option ersetzt nicht SafeHttpClients
+Prüfung vor Verbindungsaufbau. Den vorhandenen allgemeinen Browserpfad damit nicht zum Helper-Ersatz
+erklären. Keine Cookies/Referer/Authorization weitergeben; kein Aufnahmemodus als Ersatz für das Nutzerziel.
+Reale 404/412 bleiben ungeklärt. Nächster Schritt ist die genaue adressfreie HLS-Planungsdiagnose.
+
+Reproduktion (Playwright 1.56 und OpenSSL, vorhandene Browser):
+
+```sh
+python3 tests/browser_address_space_probe.py --chromium /usr/bin/chromium
+python3 tests/browser_address_space_probe.py --chromium /usr/bin/chromium --public-origin
+```
+
+`--public-origin` setzt die aktuelle Chrome-Loopbackberechtigung voraus (hier nur 156 geprüft).
+Die Assertions konservieren einen **negativen Machbarkeitsbefund**, keinen erwünschten Produktzustand.
+Ändert sich das Browserverhalten, Nachweis neu bewerten; keine Produktvalidatoren aufweichen.
+
 [WICG-Diskussion der Implementierung](https://github.com/WICG/local-network-access/issues/60) nennt
 Unterschiede zwischen Spezifikation, Implementierung und Verbindungs-/Anfragephase; keine Freigabe daraus ableiten.
 [Chrome-Dokumentation](https://developer.chrome.com/docs/modern-web-guidance/guides/security/local-network-access)

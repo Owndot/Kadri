@@ -7,7 +7,42 @@ nicht belegt), *geplant*, *implementiert* (im Code, ggf. ungetestet), *getestet*
 
 Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
-Stand dieses Dokuments: 2026-11-08. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+Stand dieses Dokuments: 2026-11-09. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+
+## Aktuell – vollständiger Browserabruf an Netzwerkgrenze blockiert; Planungsdiagnose als nächster Schritt
+
+- **DONE – Abrufgrenze reproduziert:** `tests/browser_address_space_probe.py`, Chromium 141 und 156,
+  zusammen 15 Beobachtungen einschließlich simuliertem öffentlichem Ursprung (156) und positiver
+  öffentlicher Zielkontrolle. Direkte Fetch-Option `targetAddressSpace: "public"` blockiert HTTP zum
+  Loopbackziel, aber erst **nach TCP-Verbindung**. Nur im `Request`-Konstruktor gesetzt erreicht auch
+  HTTP das Ziel; erneute Angabe bei `fetch(request, options)` blockiert wieder HTTP. Keine echte Seite,
+  kein dynamischer DNS-Rebinding-Test, keine Erweiterungs-/Android-Aussage, keine Browserrichtlinie geändert.
+- **BLOCKED – Browserersatz:** erfüllt die bisher verlangte Prüfung vor Verbindungsaufbau nicht.
+  Kein allgemeiner Browserproxy, Credential-Export oder passiver Aufnahmemodus als Produkt aktiviert.
+  Dies beweist weder die reale Ursache von 404/412 noch eine universelle Unmöglichkeit von Downloads.
+- **DONE – Helper-CI zu `95aa0f563cdedb29a7f42cdd90b74497970bfb2f`:**
+  HLS [42514519399](https://github.com/Owndot/video-assistent-helper/actions/runs/42514519399)
+  vollständig grün, einschließlich tatsächlichem Browser-Testexport, bestehendem Remuxer und Mutationen.
+  Browser [42514524850](https://github.com/Owndot/video-assistent-helper/actions/runs/42514524850)
+  alle vier Jobs grün. Kanal [42514524956](https://github.com/Owndot/video-assistent-helper/actions/runs/42514524956)
+  JVM/Netzschutz/MP4, Signierprüfung und API 26/34 grün; API 29 scheitert ausschließlich an
+  **P4B-A10-SIZE** (64 MiB tatsächliche Datei, SIZE-Spalte 0), bleibt rot.
+- **IN_PROGRESS – zusätzlicher CI-Befund:**
+  [42514524882](https://github.com/Owndot/video-assistent-helper/actions/runs/42514524882),
+  `download-manager-privacy` erwartet genau einen GET, beobachtet zwei identische GETs.
+  Kein nachgewiesener Referer-Leak; Headerassertionen folgen erst nach dieser fehlgeschlagenen Zählprüfung.
+  Ein unveränderter Wiederholungslauf nur des fehlgeschlagenen Jobs gestartet; ersten Fehlschlag nicht verbergen.
+  Übrige ausgeführte Jobs grün. Keine neue Geräte-APK verteilt.
+- **IN_PROGRESS – exakt nächster Arbeitsschritt:** eng begrenzte, adressfreie `hlsplan`-Diagnose prüfen:
+  Einstiegsplaylist versus Video-/Audioplaylist, Abruf versus Parser, Zahl erfolgreich verarbeiteter Listen.
+  Aktueller Helper meldet nur `reason`; deshalb lässt sich der reale 412 nicht genauer zuordnen.
+  Vor Auslieferung synthetische 404/412 und Datenschutztests, relevante CI; keine Downloadlogik ändern.
+- Letzte gepushte Stände vor diesem Prüfcommit: Kadri `13ef27cbed408050c96d437fd4302c82c7a9122d`,
+  Helper `95aa0f563cdedb29a7f42cdd90b74497970bfb2f`. Anwendung weiterhin Kadri `7811d5a`, Helper `8b906c5`.
+  Vollständiger Download unabhängig von Wiedergabe bleibt das Ziel. Reale Fehler **OFFEN / BLOCKED**,
+  Samsung F1/F2/R1/R2/C1 PASS der Basis; Produktion **UNAPPROVED**.
+
+Die folgenden Abschnitte sind historische Zwischenstände; maßgeblich ist der Abschluss oben.
 
 ## Aktuell – Nutzerziel präzisiert: vollständiger Download unabhängig von der Wiedergabe
 
