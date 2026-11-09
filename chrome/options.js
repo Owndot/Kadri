@@ -102,7 +102,7 @@
     el('h2', {}, t('Download & Helfer')),
     el('div', { class: 'card' },
       pick('downloader', 'Download', [['ytdlnis', 'YTDLnis'], ['share', 'Teilen']]),
-      yes('systemHelper', 'Helper-App', 'Helligkeit und Lautstärke über die Helfer-App; Downloads über die App sind vorübergehend aus')),
+      yes('systemHelper', 'Helper-App', 'Helligkeit und Lautstärke über die Helfer-App; MP4-Dateien im Player über ⬇ direkt aufs Handy speichern')),
     el('h2', {}, t('Helfer koppeln')),
     pairCard(),
     el('h2', {}, t('Seiten')),

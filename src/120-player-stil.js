@@ -310,6 +310,8 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
     (r.qualities || []).forEach((c) => add(c.u, c.res));
     add(r.best);
     (r.list || []).forEach((x) => add(x.u));
+    // Gemeinsamer Quellenbestand (P1): dieselben Ergebnisse mit Herkunft und Bindung – ändert die Liste nicht
+    try { mediaObserveFor(v, r, resMap); } catch (e) {}
     return out;
   }
   function skipIcon(fwd) {

@@ -91,7 +91,7 @@
     helper('/ping').then((d) => {
       if (!d || !d.ok || vp !== st) return;
       st.sys = { vol: true, bright: !!(d.overlay || d.write), max: d.volMax || 15, dl: !!d.dl, proxy: !!d.proxy, dash: !!d.dash };
-      if (st.refreshDl) st.refreshDl();   // mit Helfer lassen sich auch Streams speichern
+      if (st.refreshDl) st.refreshDl();
       if (typeof d.vol === 'number') {
         st.level = clamp(d.vol, 0, 1);
         st.sysK = typeof d.volStep === 'number' ? d.volStep : Math.round(st.level * st.sys.max);

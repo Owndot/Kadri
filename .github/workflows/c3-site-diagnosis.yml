@@ -1,0 +1,54 @@
+name: C3 public player diagnosis
+on:
+  push:
+    branches: [feature/c3-helper-mp4]
+    paths: [.github/workflows/c3-site-diagnosis.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+      - name: Public iframe and media types (no signed URLs or browser data logged)
+        run: |
+          python - <<'PY'
+          import json
+          from urllib.parse import urlsplit
+          from playwright.sync_api import sync_playwright
+          def safe(u):
+              p=urlsplit(u)
+              return dict(scheme=p.scheme,host=p.hostname,suffix=p.path.rsplit('.',1)[-1] if '.' in p.path and len(p.path.rsplit('.',1)[-1])<8 else '',playlist=any(x in p.path.lower() for x in ('.m3u8','.mpd')))
+          with sync_playwright() as p:
+              b=p.chromium.launch()
+              pg=b.new_page()
+              seen=[]
+              def response(r):
+                  ct=r.headers.get('content-type','').split(';')[0]
+                  if any(s in ct for s in ('video/','mpegurl','dash+xml')):
+                      item=dict(url=safe(r.url),type=ct,status=r.status)
+                      if item not in seen: seen.append(item)
+              pg.on('response',response)
+              try: pg.goto('https://kinogo.ec/127437-kurer.html',wait_until='domcontentloaded',timeout=45000)
+              except Exception as e: print('NAVIGATION',type(e).__name__)
+              pg.wait_for_timeout(15000)
+              for fr in pg.frames:
+                  print('FRAME',json.dumps(safe(fr.url)))
+                  try:
+                      vv=fr.locator('video')
+                      print('VIDEO_COUNT',vv.count())
+                      for v in vv.all():
+                          print('VIDEO',json.dumps(safe(v.evaluate('(v)=>v.currentSrc||v.src'))))
+                          if v.is_visible(): v.click(timeout=3000)
+                      print('CONTROLS',json.dumps(fr.locator('button,[role=button]').all_text_contents()[:12],ensure_ascii=False))
+                  except Exception as e: print('FRAME_ACCESS',type(e).__name__)
+              pg.wait_for_timeout(10000)
+              print('MEDIA',json.dumps(seen))
+              b.close()
+          PY

@@ -1,0 +1,203 @@
+name: C3 isolated extension test package
+on:
+  push:
+    branches: [feature/c3-helper-mp4]
+    paths: [.github/workflows/c3-test-extension.yml]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: c3-test-extension
+  cancel-in-progress: false
+jobs:
+  kadri-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: Owndot/Kadri
+        ref: 49949a70d22504cd38828c02e91dae7b013a7a16
+        persist-credentials: false
+    - name: Exact paired sources
+      run: 'set -euo pipefail
+
+        test "$(git rev-parse HEAD)" = 49949a70d22504cd38828c02e91dae7b013a7a16
+
+        grep -qx ''helper_commit=ca605408924644eeba6c29b4037dd90a324bb078'' vendor/kadri-pairing-poc/SOURCE'
+    - name: Pinned helper commit
+      id: pin
+      run: 'sha=$(sed -n ''s/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p'' vendor/kadri-pairing-poc/SOURCE)
+
+        test -n "$sha"
+
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+        '
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        repository: Owndot/video-assistent-helper
+        ref: ${{ steps.pin.outputs.sha }}
+        path: helper
+        persist-credentials: false
+    - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3
+      with:
+        distribution: temurin
+        java-version: '17'
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: '22'
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Toolchains (Rust 1.97.0 from the helper's rust-toolchain.toml, wasm-bindgen-cli 0.2.104)
+      run: 'set -euo pipefail
+
+        (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+
+        cargo install wasm-bindgen-cli --version 0.2.104 --locked
+
+        '
+    - name: Rebuild the vendored WASM core from the pinned commit and compare
+      run: 'set -euo pipefail
+
+        grep -q ''"status": "UNAPPROVED"'' helper/release/production-policy.json
+
+        bash helper/poc/android-capability/tools/build-wasm-kadri.sh "$RUNNER_TEMP/wasm"
+
+        for f in kadri_pairing_poc.js kadri_pairing_poc_bg.wasm; do cmp "$RUNNER_TEMP/wasm/kadri-wasm/$f" "vendor/kadri-pairing-poc/$f"; done
+
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d'' '' -f1)" = "$(sed -n ''s/^sha256_wasm=//p'' vendor/kadri-pairing-poc/SOURCE)"
+
+        test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d'' '' -f1)" = "$(sed -n ''s/^sha256_js=//p'' vendor/kadri-pairing-poc/SOURCE)"
+
+        echo ''PASS: vendored WASM core rebuilt bit-identically from the pinned helper commit; helper production policy UNAPPROVED''
+
+        '
+    - name: Desktop helper (real ChannelServer of the helper app)
+      run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+    - name: Playwright (Chromium) for Node and Python
+      run: 'set -euo pipefail
+
+        npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+
+        npx playwright install --with-deps chromium
+
+        pip install playwright==1.56.0
+
+        python -m playwright install chromium
+
+        sudo apt-get install -y xvfb
+
+        '
+    - name: Build; channel only in the Chrome build, nothing of the legacy helper anywhere
+      run: 'set -euo pipefail
+
+        node tools/build.js --test
+
+        test -f dist/chrome/channel/kadri_pairing_poc_bg.wasm
+
+        test ! -e dist/firefox/channel
+
+        if unzip -l dist/kadri-firefox-*.zip | grep -qE ''channel|wasm''; then echo ''channel in the Firefox zip''; exit 1; fi
+
+        if grep -rnE "''X-EVP-Key'' *:|[''\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome dist/firefox --include=*.js | grep -vE ''^[^:]+:[0-9]+: *//''; then echo ''legacy helper client in a build''; exit 1; fi
+
+        echo ''PASS: channel in dist/chrome only; no legacy helper client, key or port in any build''
+
+        '
+    - name: Persistent public test identity (no transport private key needed)
+      run: "set -euo pipefail\ncat > \"$RUNNER_TEMP/public-pair.json\" <<'C3_PUBLIC_EOF'\n{\n  \"existing_extension_id\": \"ladlndddhohknfpnfibchcadhgbpdlhm\",\n  \"test_extension_id\": \"fhjmppadldgkhdgkdplpalmoooocoinn\",\n  \"manifest_key\": \"MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAvIyEogqFvLfeRmhYNffm39ejXD4zPMV5lSvjftyIiOWb8ou8M6YmWEA/5yFRoueH8iZKsLqdGsQlFB12RD68UOpMAwQy151S+JLtuP/lrVXY92xtOhzC6Ado3x+zBI/c9QT3/iDbMXBhhxAco7q01thNZ6VDsOdiejF2nI74IKdekd3hoLY0tEHpDZH28WMY+q38ZcWNd5i6MS2vVWyixcz5ho8+KpoDn+sekqEnsRwFbpQGAhppHBLWk/yNa07ZfGVlnf3ZlWFZUoagMdi8cqJDjOXK+fFWggsGNJg5x29GWPC0qmBg1Cxqi4E+zbu6F0fRHa42khFxigkBfY8GHYMcKnEt1oq/Y/8c2GDH6CrTbgcdvHK01Mgt4/gZEPHMBSfL3qU7qoUbK57UHiL+V2vQ1sS3mIZpfrfgx+FpXrluw5PYfcgZE8nKixm6hp7hsnW8Xa3kOllPHt9d/BZ1fII5TyFpFqgkWh3IOdYoXdpPFaciukUzWcURwyGqokUdAgMBAAE=\",\n  \"kadri_commit\": \"49949a70d22504cd38828c02e91dae7b013a7a16\",\n  \"helper_commit\": \"ca605408924644eeba6c29b4037dd90a324bb078\",\n  \"production_status\": \"UNAPPROVED\"\n}\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/pack_extension.py\" <<'C3_PUBLIC_EOF'\nimport base64\nimport hashlib\nimport json\nimport sys\nimport zipfile\nfrom pathlib import Path\n\nroot, output, config_path = map(Path, sys.argv[1:])\nconfig = json.loads(config_path.read_text())\npublic = base64.b64decode(config['manifest_key'], validate=True)\nextension_id = hashlib.sha256(public).hexdigest()[:32].translate(str.maketrans('0123456789abcdef', 'abcdefghijklmnop'))\nassert extension_id == config['test_extension_id']\nassert extension_id != config['existing_extension_id']\nbase = json.loads((root/'manifest.json').read_text())\nassert not any(k in base for k in ['key', 'update_url', 'externally_connectable'])\nassert base['permissions'] == ['storage', 'declarativeNetRequestWithHostAccess', 'scripting']\nassert base['content_security_policy']['extension_pages'] == \"script-src 'self' 'wasm-unsafe-eval'; object-src 'self';\"\nmanifest = dict(base, name='Kadri C3 TEST', description='Isoliertes C3-Testpaar 49949a7 / ca60540. UNAPPROVED.', key=config['manifest_key'])\nassert {k for k in set(base)|set(manifest) if base.get(k) != manifest.get(k)} == {'name', 'description', 'key'}\nentries = sorted(p for p in root.rglob('*') if p.is_file())\nassert entries and all(not p.is_symlink() for p in entries)\nwith zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as z:\n    for p in entries:\n        name = p.relative_to(root).as_posix()\n        content = (json.dumps(manifest, indent=2, ensure_ascii=False)+'\\n').encode() if name == 'manifest.json' else p.read_bytes()\n        info = zipfile.ZipInfo(name, date_time=(1980,1,1,0,0,0))\n        info.external_attr = 0o644 << 16\n        info.compress_type = zipfile.ZIP_DEFLATED\n        z.writestr(info, content)\nwith zipfile.ZipFile(output) as z:\n    assert z.namelist() == [p.relative_to(root).as_posix() for p in entries]\n    for p in entries:\n        name = p.relative_to(root).as_posix()\n        if name != 'manifest.json':\n            assert z.read(name) == p.read_bytes(), name\nprint('PASS: only test name, description and fixed public key differ; extension ID', extension_id)\nC3_PUBLIC_EOF\ncat > \"$RUNNER_TEMP/isolation.cjs\" <<'C3_PUBLIC_EOF'\nconst {chromium}=require('playwright');\nconst fs=require('fs'), path=require('path'), os=require('os'), assert=require('assert/strict');\nconst [pack,control,expected,existing]=process.argv.slice(2);\nconst tmp=fs.mkdtempSync(path.join(os.tmpdir(),'c3-identity-'));\nasync function launch(paths, profile) {\n  return chromium.launchPersistentContext(profile,{headless:false,args:[`--disable-extensions-except=${paths.join(',')}`,`--load-extension=${paths.join(',')}`]});\n}\nasync function workers(ctx,n){\n  for(let i=0;i<150;i++) {\n    const w=ctx.serviceWorkers();\n    if(w.length===n) return w;\n    await new Promise(r=>setTimeout(r,100));\n  }\n  throw Error('extension workers missing');\n}\nasync function idb(w,write,value){return w.evaluate(async({write,value})=>{\n  const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('c3-isolation-probe',1);r.onupgradeneeded=()=>r.result.createObjectStore('s');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});\n  try {return await new Promise((resolve,reject)=>{const tx=db.transaction('s',write?'readwrite':'readonly');const r=write?tx.objectStore('s').put(value,'marker'):tx.objectStore('s').get('marker');let result;r.onsuccess=()=>{result=r.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(tx.error);});}finally{db.close();}\n},{write,value});}\n(async()=>{\n  assert.notEqual(expected,existing);\n  let ctx=await launch([pack,control],path.join(tmp,'profile1'));\n  try{\n    const ws=await workers(ctx,2);\n    const test=ws.find(w=>new URL(w.url()).host===expected);\n    const other=ws.find(w=>new URL(w.url()).host!==expected);\n    assert.ok(test&&other,'two distinct extension IDs');\n    assert.equal(await test.evaluate(()=>chrome.runtime.id),expected);\n    await test.evaluate(()=>chrome.storage.local.set({'c3-isolation-probe':'test'}));\n    assert.deepEqual(await other.evaluate(()=>chrome.storage.local.get('c3-isolation-probe')),{});\n    await other.evaluate(()=>chrome.storage.local.set({'c3-isolation-probe':'control'}));\n    assert.equal((await test.evaluate(()=>chrome.storage.local.get('c3-isolation-probe')))['c3-isolation-probe'],'test');\n    await idb(test,true,'test');\n    assert.equal(await idb(other,false),undefined);\n    await idb(other,true,'control');\n    assert.equal(await idb(test,false),'test');\n    console.log('PASS: two extensions, separate storage.local and IndexedDB; no existing installation used');\n  }finally{await ctx.close();}\n  const relocated=path.join(tmp,'different-path');fs.cpSync(pack,relocated,{recursive:true});\n  ctx=await launch([relocated],path.join(tmp,'profile2'));\n  try{const [w]=await workers(ctx,1);assert.equal(new URL(w.url()).host,expected);console.log('PASS: same test ID after relocation and fresh browser profile');}\n  finally{await ctx.close();}\n})().catch(e=>{console.error(e);process.exitCode=1;}).finally(()=>fs.rmSync(tmp,{recursive:true,force:true}));\nC3_PUBLIC_EOF\n"
+    - name: Independent test packaging from two build paths; production gates unchanged
+      run: 'set -euo pipefail
+
+        mkdir -p "$RUNNER_TEMP/second-source"
+
+        git archive HEAD | tar -x -C "$RUNNER_TEMP/second-source"
+
+        (cd "$RUNNER_TEMP/second-source" && node tools/build.js)
+
+        python3 "$RUNNER_TEMP/pack_extension.py" dist/chrome "$RUNNER_TEMP/kadri-a.zip" "$RUNNER_TEMP/public-pair.json"
+
+        python3 "$RUNNER_TEMP/pack_extension.py" "$RUNNER_TEMP/second-source/dist/chrome" "$RUNNER_TEMP/kadri-b.zip" "$RUNNER_TEMP/public-pair.json"
+
+        cmp "$RUNNER_TEMP/kadri-a.zip" "$RUNNER_TEMP/kadri-b.zip"
+
+        mkdir -p "$RUNNER_TEMP/packaged-extension"
+
+        unzip -q "$RUNNER_TEMP/kadri-a.zip" -d "$RUNNER_TEMP/packaged-extension"
+
+        sha256sum "$RUNNER_TEMP/kadri-a.zip" > "$RUNNER_TEMP/zip-before.sha256"
+
+        '
+    - name: Exact packaged extension - channel security and fail-closed checks
+      env:
+        HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
+        CHANNEL_DIST_DIR: ${{ runner.temp }}/packaged-extension
+      run: 'set -euo pipefail
+
+        node tests/channel/channel_browser_check.js
+
+        node tests/channel/channel_netguard_failure_check.js'
+    - name: Stable ID and separated extension data in a disposable Chromium profile
+      run: 'set -euo pipefail
+
+        NODE_PATH="$PWD/node_modules" xvfb-run -a node "$RUNNER_TEMP/isolation.cjs" "$RUNNER_TEMP/packaged-extension" "$PWD/dist/chrome" fhjmppadldgkhdgkdplpalmoooocoinn ladlndddhohknfpnfibchcadhgbpdlhm
+
+        sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
+
+        '
+    # Full unit/integration/browser/mutation suites already pass on this exact source commit.
+    # Reuse that required result; packaging still rechecks the actual manifest, channel and identity.
+    - name: Require complete normal CI on the exact source commit before upload
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        test "$(git rev-parse HEAD)" = 49949a70d22504cd38828c02e91dae7b013a7a16
+        git diff --exit-code
+        for attempt in $(seq 1 100); do
+          gh api 'repos/Owndot/Kadri/actions/runs?head_sha=49949a70d22504cd38828c02e91dae7b013a7a16' > "$RUNNER_TEMP/ci-state.json"
+          status=$(python3 -c 'import json,sys; a=[r for r in json.load(open(sys.argv[1]))["workflow_runs"] if r["path"]==".github/workflows/ci.yml"]; r=max(a,key=lambda r:r["id"]) if a else {}; print((r.get("conclusion") or "failure") if r.get("status")=="completed" else "pending")' "$RUNNER_TEMP/ci-state.json")
+          if [ "$status" = success ]; then break; fi
+          if [ "$status" != pending ]; then echo "Required source CI: $status"; exit 1; fi
+          sleep 15
+        done
+        test "$status" = success
+        sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
+        python3 - <<'PY'
+        import json,os,zipfile
+        from pathlib import Path
+        root=Path(os.environ['RUNNER_TEMP'])
+        with zipfile.ZipFile(root/'kadri-a.zip') as z:
+            files={p.relative_to(root/'packaged-extension').as_posix():p.read_bytes() for p in (root/'packaged-extension').rglob('*') if p.is_file()}
+            expected={name:z.read(name) for name in z.namelist()}
+            changed=[name for name,body in expected.items() if files.get(name) != body]
+            extra=sorted(set(files)-set(expected))
+            print('Browser-created extra files:',extra)
+            assert not changed, ('Tested source files changed',changed)
+            assert all(name.startswith('_metadata/') for name in extra), ('Unexpected browser files',extra)
+            # Chromium compiles DNR rules into _metadata beside an unpacked extension.
+            # Ship only the immutable, reproducibly built ZIP contents, never that browser cache.
+            delivery=root/'delivery-extension'
+            delivery.mkdir()
+            for name,body in expected.items():
+                p=Path(name)
+                assert not p.is_absolute() and '..' not in p.parts
+                dest=delivery/p
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                dest.write_bytes(body)
+            assert {p.relative_to(delivery).as_posix():p.read_bytes() for p in delivery.rglob('*') if p.is_file()} == expected
+        print(json.dumps(json.loads((root/'public-pair.json').read_text()),indent=2))
+        print('PASS: exact tested extension files; normal CI succeeded; existing helper APK unchanged')
+        PY
+    # Owner authorized an updated isolated test ZIP. This exception is only for the TEST identity;
+    # ci.yml and PACKAGE-UPLOAD-BLOCKED remain unchanged. No APK, signing key or release is created.
+    - name: Short-lived isolated TEST extension only (public Actions artifact, not a release)
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: kadri-c3-49949a7-vivaldi-test
+        path: ${{ runner.temp }}/delivery-extension/
+        retention-days: 1
+        if-no-files-found: error
+        include-hidden-files: true

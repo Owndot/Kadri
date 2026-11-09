@@ -23,9 +23,15 @@
     if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new TransportError('config', 'ungültiger Port');
     const base = 'http://127.0.0.1:' + port;
 
-    async function post(path, body) {
+    async function post(path, body, profile) {
       if (!PATHS.has(path)) throw new TransportError('config', 'Pfad nicht erlaubt');
       if (!(body instanceof Uint8Array) || body.length > MAX_BODY) throw new TransportError('config', 'Anfrage zu groß');
+      // Nur der validierte hlsplan-Aufruf im Kanal wählt dieses feste Profil. Keine Frist aus Seiten-/Nutzerdaten.
+      // Der bestehende Helfer plant synchron mit einem 20-s-Budget zwischen Listenabrufen; 5 s schneiden gültige
+      // Pläne ab. 25 s lassen dafür Reserve, bleiben aber begrenzt (auch bei einem hängenden Helfer/Antwortkörper).
+      // Alle übrigen Befehle einschließlich Handshake, Status, Abbruch und Start behalten ihre kurze Grenze.
+      if (profile !== undefined && (profile !== 'hlsplan' || path !== '/p1/ch/rec')) throw new TransportError('config', 'Zeitprofil nicht erlaubt');
+      const requestTimeoutMs = profile === 'hlsplan' ? 25000 : timeoutMs;
       if (tap && tap.request) body = tap.request(path, body);
       let res;
       try {
@@ -33,7 +39,7 @@
           method: 'POST', body,
           headers: { 'Content-Type': 'application/octet-stream', 'X-Kadri-Helper': '2' },
           credentials: 'omit', redirect: 'error', cache: 'no-store', referrerPolicy: 'no-referrer',
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.timeout(requestTimeoutMs),
         });
       } catch (e) {
         if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) throw new TransportError('timeout', 'Helfer antwortet nicht rechtzeitig');

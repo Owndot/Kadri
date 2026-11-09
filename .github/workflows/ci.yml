@@ -42,6 +42,21 @@ jobs:
           mkdir -p /tmp/privacy-media
           ffmpeg -v error -y -f lavfi -i testsrc2=size=320x180:rate=24 -t 8 -c:v libx264 -threads 1 -pix_fmt yuv420p -g 48 -movflags +faststart /tmp/privacy-media/clip.mp4
           EXT_DIR="$PWD/dist/test" xvfb-run -a python3 -u tests/privacy_browser.py --kadri
+      - name: Declared MP4 alternatives show the complete HLS clip (duration, streams, picture; ffmpeg)
+        run: python3 tests/media_fixture_match.py
+      - name: Isolated browser-session feasibility evidence (no helper upload; safety gate remains blocked)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests/out
+          python3 -u tests/browser_download_feasibility.py --extension dist/test --output tests/out/browser-feasibility.json | tee tests/out/browser-feasibility.log
+      - name: Passive capture in the actual player (H.264/AAC, cancellation, no product mode)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Hosted Ubuntu includes Chrome with proprietary codecs; bundled Playwright Chromium does not.
+          export KADRI_CAPTURE_CHROMIUM="$(command -v google-chrome)"
+          python3 -u tests/passive_player_capture.py | tee tests/out/passive-player-capture.log
       - name: Prove recovery regression against the broken predecessor
         env:
           GH_TOKEN: ${{ github.token }}
@@ -65,8 +80,8 @@ jobs:
       - name: Remaining Chromium tests
         shell: bash
         run: |
-          # test_helper.py braucht den echten Kanal-Helfer (Desktop) und läuft im Job helper-channel.
-          export TESTS="$(python3 -c 'import glob,os; print(" ".join(os.path.basename(p) for p in sorted(glob.glob("tests/test_*.py")) if os.path.basename(p) not in {"test_abort.py","test_guard.py","test_redirect.py","test_worker_restart.py","test_helper.py"}))')"
+          # test_helper.py, test_mp4.py und test_hls.py brauchen den echten Kanal-Helfer (Desktop) und laufen im Job helper-channel.
+          export TESTS="$(python3 -c 'import glob,os; print(" ".join(os.path.basename(p) for p in sorted(glob.glob("tests/test_*.py")) if os.path.basename(p) not in {"test_abort.py","test_guard.py","test_redirect.py","test_worker_restart.py","test_helper.py","test_mp4.py","test_hls.py","test_direct_dl.py"}))')"
           tests/run_all.sh | tee ergebnis.txt
           echo '### Ergebnis' >> "$GITHUB_STEP_SUMMARY"
           cat ergebnis.txt >> "$GITHUB_STEP_SUMMARY"
@@ -99,6 +114,10 @@ jobs:
         run: node tests/helper_route_check.js
       - name: PiP/background and overlapping cleanup regression
         run: node --expose-gc tests/pip_lifecycle_check.js
+      - name: No confidential site names in tracked files (hash-based, names not in the repository)
+        run: node tests/confidential_names_check.js
+      - name: Downloadable MP4 fixtures are Android-playable and declared alternatives match the HLS clip (duration, tracks)
+        run: node tests/media_fixture_check.js
 
 
   proxy-memory-regression:
@@ -252,20 +271,67 @@ jobs:
           if unzip -l dist/kadri-firefox-*.zip | grep -qE 'channel|wasm'; then echo 'channel in the Firefox zip'; exit 1; fi
           if grep -rnE "'X-EVP-Key' *:|['\"]http://127\\.0\\.0\\.1:47811|KADRI_HELPER_KEY" dist/chrome dist/firefox --include=*.js | grep -vE '^[^:]+:[0-9]+: *//'; then echo 'legacy helper client in a build'; exit 1; fi
           echo 'PASS: channel in dist/chrome only; no legacy helper client, key or port in any build'
-      - name: Channel unit, integration, browser, fail-closed and mutation tests
+      - name: Channel and download unit, integration, browser, fail-closed and mutation tests
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         run: |
           set -euo pipefail
+          node tests/popup_downloads_check.js --mutations
+          node tests/download_source_check.js --mutations
+          node tests/download_diag_check.js
+          node tests/media_registry_check.js --mutations
+          git fetch --no-tags origin 7f6d037e865d57fbaaa382f78e19c7acb451f5aa
+          git show 7f6d037e865d57fbaaa382f78e19c7acb451f5aa:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-download-source.js"
+          if node tests/download_source_check.js "$RUNNER_TEMP/previous-download-source.js" > "$RUNNER_TEMP/previous-download-source.log" 2>&1; then
+            echo 'Unloaded candidate regression unexpectedly passed'; exit 1
+          fi
+          grep -q 'unloaded MP4 candidate must not be offered' "$RUNNER_TEMP/previous-download-source.log"
+          # hdlProbe race (P0b): the probe before the fix must fail exactly on the re-probe requirement.
+          git fetch --no-tags origin 0cdf20289e31cb6332a8cdcf5143540c44b10f1e
+          git show 0cdf20289e31cb6332a8cdcf5143540c44b10f1e:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-probe-source.js"
+          if node tests/download_source_check.js "$RUNNER_TEMP/previous-probe-source.js" > "$RUNNER_TEMP/previous-probe-source.log" 2>&1; then
+            echo 'Probe race regression unexpectedly passed'; exit 1
+          fi
+          grep -q 're-probe required after temporary unsuitability during caps' "$RUNNER_TEMP/previous-probe-source.log"
+          git fetch --no-tags origin fb66e9138f27661532e2fe136c835afbcb37a489
+          git show fb66e9138f27661532e2fe136c835afbcb37a489:chrome/popup.js > "$RUNNER_TEMP/previous-popup.js"
+          if node tests/popup_downloads_check.js "$RUNNER_TEMP/previous-popup.js" > "$RUNNER_TEMP/previous-popup.log" 2>&1; then
+            echo 'Old popup unexpectedly passed'; exit 1
+          fi
+          grep -q 'old completed/cancelled history hidden' "$RUNNER_TEMP/previous-popup.log"
           node tests/channel/channel_unit_check.js
+          node tests/channel/download_unit_check.js
+          # The fixed commit is fetched explicitly for the regression proof (default checkout is shallow).
+          git fetch --no-tags origin e044acad5b427ea4a008fed468201e6c6f19cb8a
+          node tests/channel/download_regression_check.js
           node tests/channel/channel_integration_check.js
+          node tests/channel/download_integration_check.js
+          # P4b: Stream speichern (HLS) – strenge Befehle, Verwaltung, Registry; Ende-zu-Ende gegen die echte HlsEngine
+          node tests/channel/hls_unit_check.js
+          node tests/channel/p4_identity_check.js
+          node tests/channel/hls_integration_check.js
           node tests/channel/channel_browser_check.js
           node tests/channel/channel_netguard_failure_check.js
           node tests/channel/channel_mutation_check.js
-      - name: Player with the real channel helper (gestures, menu, downloads off, legacy port never reached)
+      - name: Player and download button with the real channel helper (gestures, menu, MP4 and HLS via the real engines, automatic resume, legacy port never reached)
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
-        run: TESTS="test_helper.py test_menu.py" tests/run_all.sh
+        run: TESTS="test_helper.py test_menu.py test_mp4.py test_hls.py test_direct_dl.py" tests/run_all.sh
+      - name: P4 test extension identity - deterministic package from two build paths, fixed ID and separate data in a disposable Chromium (nothing uploaded)
+        run: |
+          set -euo pipefail
+          node tests/channel/p4_identity_check.js
+          python3 tests/p4_device_page_check.py
+          python3 tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/p4-a.zip"
+          mkdir -p "$RUNNER_TEMP/p4-second"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/p4-second"
+          (cd "$RUNNER_TEMP/p4-second" && node tools/build.js)
+          python3 tools/p4test/pack-extension.py "$RUNNER_TEMP/p4-second/dist/chrome" "$RUNNER_TEMP/p4-b.zip"
+          cmp "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip"
+          mkdir -p "$RUNNER_TEMP/p4-packed"
+          unzip -q "$RUNNER_TEMP/p4-a.zip" -d "$RUNNER_TEMP/p4-packed"
+          NODE_PATH="$PWD/node_modules" xvfb-run -a node tools/p4test/isolation.cjs "$RUNNER_TEMP/p4-packed" "$PWD/dist/chrome"
+          rm -rf "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip" "$RUNNER_TEMP/p4-packed" "$RUNNER_TEMP/p4-second"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
@@ -273,3 +339,4 @@ jobs:
           path: tests/out/*.log
           retention-days: 7
           if-no-files-found: ignore
+

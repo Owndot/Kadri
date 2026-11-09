@@ -1,0 +1,11 @@
+{
+  "purpose": "P4 HLS device test only. Separate extension identity so the C3 test pair (extension + de.evp.helfer.channeltest) keeps its data and pairing.",
+  "existing_extension_id": "ladlndddhohknfpnfibchcadhgbpdlhm",
+  "c3_test_extension_id": "fhjmppadldgkhdgkdplpalmoooocoinn",
+  "p4_test_extension_id": "pcccpjllneffccpenbepmfbkjedllkkf",
+  "p4_manifest_key": "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAxpeEUe35LC8sy/bJccvNQ9wgPQCgT3jLZPaGN4kpRntaAgcMNlFwAl3cMCJUqGB6ZiI/pIP2yUxCp6bOlnHH6Ygikns//9IUVNh/77nIl8Oe3Tm5nikSRUZF9JRRiKOhcspWAiX7jqQCq1QcBXPKcqgeGEZ7Gc0SRXAb7DohASjmYRMZgoBNPlXRRL3r+AcUS645NSaWTsHZ2B+kL1Y7kgGq0wVfDuyfh/1dD99yy5noTSx7/V/BYgLkeY5HiGzWbSWwPdufYLOjxuc6sWq+EPg0uZ8lc78XYGcU4T0J1Zz/pj5ahSYftNzSh/ukMWHEgnIy1xg5lYKPX9gxoy8UE6IeixmzpP3MQT8xpMDrX/ZZC54qNQP4+9GgeyosPWeD2ViAPGXhPGkdxjAv5RcJCW3xg5CMUzRPNnT3TGNkQgdUnpVPPNZYDA6mPmsjPoqRArjXEQuBXynE2SaK8UDBC9P6OJTlGfZY+24TBQSOk2COQK89azf2s2DTzubNVRRfAgMBAAE=",
+  "p4_name": "Kadri P4 TEST",
+  "helper_package": "de.evp.helfer.p4test",
+  "private_key": "none: discarded at creation; an unpacked test extension needs only the public key for a stable ID",
+  "production_status": "UNAPPROVED"
+}
