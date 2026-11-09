@@ -9,6 +9,43 @@ Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
 Stand dieses Dokuments: 2026-11-09. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
 
+## Aktuell – genaue HLS-Planungsdiagnose implementiert, noch kein realer Downloadfix
+
+- **DONE – Helper-Code gepusht:** `bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5` auf bestehendem Branch.
+  Optionale Fehlerdiagnose `diag: {v:1, phase, playlists}` unterscheidet Einstiegs-/Video-/Audioliste,
+  Abruf/Parser und Planaufbau. Nur feste Werte, keine Quellen-/Sitzungsdaten. Erfolgsantworten und
+  Downloadlogik unverändert. Details: [Helper-Diagnose](https://github.com/Owndot/video-assistent-helper/blob/bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5/P4-HLS-PLAN-DIAG.md).
+- **DONE – Kadri-Code:** gemeinsamer Diagnosepfad für Webseitenknopf und Player, strenge Prüfung an
+  Kanal-/Seitenübergängen, unbekannte Zusatzfelder verworfen. Alter Helper ohne Diagnose weiterhin kompatibel.
+  Version **1.12.16** zur Unterscheidung, Skriptbasis unverändert 19.30. Helper-Testpin auf `bd5ab29`,
+  vendortes WASM/JavaScript unverändert; Neuaufbau und Bytevergleich erfolgen in bestehender CI.
+- **DONE – lokal geprüft:** Helper-Koordinator **255/255**, HLS-Kernsuite und Netzschichtwächter grün;
+  Kadri HLS-Unit **80/80**, Diagnose **48/48**, echter verschlüsselter Kanal mit aktualisiertem
+  Desktop-Helper **103/103**. 404/412 an Einstieg/Video/Audio, Parserfehler, Redirect zu fehlender Liste,
+  keine Anfragen mit Credentials, keine Planfehler-Veröffentlichung. Bestehende Fortsetz-/Abbruchfälle grün.
+  Das ist kein neuer Samsung-PASS und keine Lösung der realen Abrufverweigerung.
+- **IN_PROGRESS – Helper-CI:** HLS [42547144187](https://github.com/Owndot/video-assistent-helper/actions/runs/42547144187),
+  Kanal [42547150112](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150112),
+  Validierung [42547150099](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150099),
+  Browser [42547150138](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150138).
+  Kadri-CI nach Push prüfen. Vor deren Abschluss keine neue P4-Lieferung.
+- **DONE / TODO – früherer CI-Zählfehler:** unveränderte Wiederholung von Helper-Validierung
+  [42514524882](https://github.com/Owndot/video-assistent-helper/actions/runs/42514524882) ist grün.
+  Erster Lauf erwartete einen GET und erhielt zwei; genaue Ursache bleibt offen, keine Testassertion gelockert.
+  Wiederholung startete auch weitere Jobs des Workflows; alle ausgeführten Jobs grün, keine Geräte-APK verteilt.
+- **BLOCKED – vollständiger Browserersatz:** Befund aus Kadri `7958104` unten; keine Prüfung vor
+  TCP-Verbindung, keine Freigabe eines Browserproxies. Aufnahme ist ausdrücklich keine gewünschte Produktlösung.
+- **NEEDS_TEST – nächster Geräteschritt erst nach geprüfter P4-Lieferung:** Seite neu laden →
+  „Stream speichern …“ → Fehler abwarten → Erweiterungsmenü → „Diagnose anzeigen“ → „Anonymisiert kopieren“.
+  Benötigt: Grund/HTTP-Status, Planungsschritt, Listenanzahl. Keine Rohdiagnose/Adressen.
+  Diese Ergänzung benötigt einen aktualisierten Helper; keine neue Kopplung oder Installation vorab verlangen.
+- **Nächster Schritt – IN_PROGRESS:** CI abschließen; bei ausschließlich bekanntem P4B-A10-SIZE-Fehlschlag
+  vorhandene isolierte P4-Workflows auf die geprüften Quellstände setzen und Testlieferung verifizieren.
+  Reale HTTP 404/412 bleiben **OFFEN / NEEDS_TEST**, spätere Segmentfehler weiterhin nicht exakt aufgelöst.
+  Samsung F1/F2/R1/R2/C1 bleiben PASS der Basis; Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
+
+Die folgenden Abschnitte sind historische Zwischenstände; maßgeblich ist der Abschluss oben.
+
 ## Aktuell – vollständiger Browserabruf an Netzwerkgrenze blockiert; Planungsdiagnose als nächster Schritt
 
 - **DONE – Abrufgrenze reproduziert:** `tests/browser_address_space_probe.py`, Chromium 141 und 156,

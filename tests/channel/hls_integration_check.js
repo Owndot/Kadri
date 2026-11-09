@@ -214,6 +214,9 @@ async function main() {
       let error;
       try { await s2.dl.hlsPlan(m.url(file === 'master.m3u8' ? 'preconditionsource' : 'preconditionmedia'), BIND); } catch (e) { error = e; }
       check('HTTP 412 at ' + file + ' preserves helper planning rejection', error?.kind === 'plan' && error.reason === 'http_412', error?.kind);
+      check('HTTP 412 diagnostic distinguishes entry playlist from video playlist',
+        error?.diag?.v === 1 && error.diag.phase === (file === 'master.m3u8' ? 'source_fetch' : 'video_fetch') &&
+        error.diag.playlists === (file === 'master.m3u8' ? 0 : 1));
       const hits = m.hits.slice(at);
       check('HTTP 412: one failed anonymous GET, no retry, no segments, no publication', hits.filter(x => x.status === 412).length === 1 &&
         hits.filter(x => x.path.endsWith('/' + file)).length === 1 && hits.every(x => x.path.endsWith('.m3u8') && x.method === 'GET' && !x.range && !x.cookie && !x.auth && !x.referer) && (await files(h)).length === before);
@@ -238,7 +241,10 @@ async function main() {
       m.fault = { file, after, redirect };
       let plan, err;
       try { plan = await s2.dl.hlsPlan(m.url(name), BIND); } catch (e) { err = e; }
-      if (planFailure) check(label + ': rejected at hlsplan with http_404', err && err.reason === 'http_404' && !plan);
+      if (planFailure) {
+        check(label + ': rejected at hlsplan with http_404', err && err.reason === 'http_404' && !plan);
+        check(label + ': exact anonymous helper planning phase/count', err?.diag?.phase === ['source_fetch', 'video_fetch', 'audio_fetch'][i] && err.diag.playlists === i);
+      }
       else {
         check(label + ': planning succeeds before the failing fetch', plan && plan.options.length === 2 && !err);
         if (option === 1) check('planning does not fetch the second media playlist', !m.hits.slice(start).some(x => x.path.endsWith('/v1.m3u8')));

@@ -107,7 +107,8 @@
       }, (e) => {
         const kind = (e && e.kind) || 'error';
         const reason = e && typeof e.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(e.reason) ? e.reason : '';
-        reply({ ok: false, error: Object.assign({ kind, message: reason ? NS.downloadReasonText(reason) : NS.downloadErrorText(kind) }, reason ? { reason } : {}) });
+        const diag = m.op === 'hlsplan' && kind === 'plan' ? NS.planDiagnostic(e.diag) : null;
+        reply({ ok: false, error: Object.assign({ kind, message: reason ? NS.downloadReasonText(reason) : NS.downloadErrorText(kind) }, reason ? { reason } : {}, diag ? { diag } : {}) });
       });
       return true;
     }

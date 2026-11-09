@@ -69,6 +69,25 @@ function setup(kind = 'mp4') {
   await precondition.api.pageDlPlan(precondition.opt);
   check('HTTP 412 remains a planning rejection, with no HTTP 404 substitution or probe',
     /HTTP 412.*Phase hlsplan/.test(precondition.api.hdlDiagText(precondition.api.diags[0])) && precondition.probes.length === 0 && precondition.requests.length === 1);
+  for (const [phase, playlists] of [['source_fetch', 0], ['video_fetch', 1], ['audio_fetch', 2], ['audio_parse', 2], ['plan_build', 3]]) {
+    const h = setup('hls');
+    h.ctx.reply = () => ({ ok: false, error: { kind: 'plan', reason: 'http_412',
+      diag: { v: 1, phase, playlists, url: 'https://private.invalid/SECRET', cookie: 'PRIVATE' } } });
+    await h.api.pageDlPlan(h.opt);
+    const text = h.ctx.scrub(h.api.hdlDiagText(h.api.diags[0]));
+    check('Direct button anonymous diagnostic identifies ' + phase,
+      text.includes('Planungsschritt ' + phase) && text.includes('Listen verarbeitet ' + playlists) &&
+      text.includes('Medienabrufe noch nicht begonnen') && !/private|PRIVATE|SECRET/.test(text) && h.probes.length === 0);
+  }
+  for (const diag of [{ v: 1, phase: 'https://private.invalid/SECRET', playlists: 0 },
+    { v: 1, phase: 'source_fetch', playlists: 4 }, { v: 1, phase: 'source_fetch', playlists: '0' },
+    { v: 2, phase: 'source_fetch', playlists: 0 }]) {
+    const h = setup('hls');
+    h.ctx.reply = () => ({ ok: false, error: { reason: 'http_404', diag } });
+    await h.api.pageDlPlan(h.opt);
+    check('Page boundary drops untrusted phase/count/version', !h.api.diags[0].planPhase &&
+      !h.api.hdlDiagText(h.api.diags[0]).includes('PRIVATE'));
+  }
 
   const d = setup();
   await d.api.pageDlStartMp4(d.opt);

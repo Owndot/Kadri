@@ -42,6 +42,13 @@
   function hdlDiagFailure(info, r) {
     const d = Object.assign({ at: Date.now(), state: 'rejected', failAfter: 0 }, info,
       { reason: hdlDiagCode(r && r.error && (r.error.reason || r.error.kind)) || 'unreachable' });
+    const diag = r && r.error && r.error.diag;
+    // Validate again at the page boundary. Old helpers have no diag; retain their unknown phase.
+    if (d.stage === 'hlsplan' && diag && diag.v === 1 &&
+        ['source_fetch', 'source_parse', 'source_options', 'video_fetch', 'video_parse', 'audio_fetch', 'audio_parse', 'plan_build'].indexOf(diag.phase) >= 0 &&
+        Number.isSafeInteger(diag.playlists) && diag.playlists >= 0 && diag.playlists <= 3) {
+      d.planPhase = diag.phase; d.playlists = diag.playlists;
+    }
     d.failAfter = Math.max(0, Math.round((Date.now() - d.at) / 1000));
     hdlDiags.unshift(d);
     while (hdlDiags.length > 4) hdlDiags.pop();
@@ -140,10 +147,11 @@
     const phase = d.state === 'rejected' && d.stage === 'hlsplan' ? 'hlsplan' : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
     return 'Typ ' + type + ' · Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
       (status ? ' · HTTP ' + status[1] : '') + ' · Phase ' + phase + (d.stage ? ' · Aufruf ' + d.stage : '') +
+      (d.planPhase ? ' · Planungsschritt ' + d.planPhase + ' · Listen verarbeitet ' + d.playlists + ' · Medienabrufe noch nicht begonnen' : '') +
       (d.check ? ' · Statusabfrage ' + d.check : '') +
       (type === 'hls' ? ' · Planung ' + (d.planned ? 'erfolgreich (erste Option)' : 'unbekannt') +
-        ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?') +
-        ' · genaue Fehlerressource/Segmentzahl unbekannt' : '') +
+        (d.planPhase ? ' · Ressourcen 0 (Planung)' : ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?') +
+        ' · genaue Fehlerressource/Segmentzahl unbekannt') : '') +
       ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
       ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
       ' · Identität ' + (d.identity === 'played' ? 'diese Wiedergabe' : d.identity === 'declared' ? 'laut Seite' : '?') +

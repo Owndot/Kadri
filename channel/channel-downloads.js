@@ -28,6 +28,14 @@
   // P4c-3: Gründe einer gescheiterten Abfrage, die beim Auftrag vermerkt werden (feste Codes aus channel-session.js)
   const CHECK_KINDS = new Set(['unreachable', 'timeout', 'unpaired', 'rejected', 'identity-mismatch', 'tampered', 'record-rejected', 'protocol', 'stale-session', 'busy']);   // Fähigkeitsprobe: dlstatus einer nie vergebenen Kennung
 
+  // Optional, additive helper diagnostic. Copy only fixed phases and a bounded count; never free text.
+  function planDiagnostic(d) {
+    if (!d || d.v !== 1 || !['source_fetch', 'source_parse', 'source_options', 'video_fetch', 'video_parse',
+      'audio_fetch', 'audio_parse', 'plan_build'].includes(d.phase) ||
+      !Number.isSafeInteger(d.playlists) || d.playlists < 0 || d.playlists > 3) return null;
+    return { v: 1, phase: d.phase, playlists: d.playlists };
+  }
+
   // URL für dlstart: http(s), keine Zugangsdaten, ohne Fragment (geht ohnehin nie zum Server), nur RFC-3986-Zeichen
   // (URL.href kodiert Nicht-ASCII; die restlichen erlaubten Zeichen werden hier kodiert). null = nicht direkt ladbar.
   function normalizeUrl(u) {
@@ -318,6 +326,7 @@
           // Helfer lehnt ab: mit Grund (Live, verschlüsselt, Netzgrenze …) – ohne Grund ist es ein Helfer ohne HLS
           const ok = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason);
           const e = new Error(ok ? 'plan' : 'unsupported'); e.kind = ok ? 'plan' : 'unsupported'; if (ok) e.reason = r.reason;
+          if (ok) e.diag = planDiagnostic(r.diag);
           throw e;
         }
         const p = planOf(r);
@@ -500,6 +509,7 @@
   }
 
   NS.createDownloads = createDownloads;
+  NS.planDiagnostic = planDiagnostic;
   NS.normalizeDownloadUrl = normalizeUrl;
   NS.downloadName = cleanName;
   NS.describeDownload = describe;

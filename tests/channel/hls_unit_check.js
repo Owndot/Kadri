@@ -98,6 +98,36 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
 
 (async () => {
   {
+    const diag = { v: 1, phase: 'audio_fetch', playlists: 2, url: URL1, cookie: 'PRIVATE', path: '/PRIVATE' };
+    const w = world({ hlsplan: () => ({ ok: false, reason: 'http_412', diag }) });
+    const e = await rejectWith(w.dl.hlsPlan(URL1, BIND));
+    check('HLS plan diagnostic preserves bounded phase/count and strips all extra fields',
+      e?.kind === 'plan' && e.reason === 'http_412' && JSON.stringify(e.diag) === '{"v":1,"phase":"audio_fetch","playlists":2}');
+    check('HLS plan rejection stores no job and causes no media request', !w.mem.jobs && w.sent.length === 1);
+    for (const bad of [null, {}, { v: 2, phase: 'source_fetch', playlists: 0 },
+      { v: 1, phase: URL1, playlists: 0 }, { v: 1, phase: 'source_fetch', playlists: -1 },
+      { v: 1, phase: 'source_fetch', playlists: 4 }, { v: 1, phase: 'source_fetch', playlists: 0.5 },
+      { v: 1, phase: 'source_fetch', playlists: '0' }]) {
+      const old = world({ hlsplan: () => ({ ok: false, reason: 'http_404', diag: bad }) });
+      const error = await rejectWith(old.dl.hlsPlan(URL1, BIND));
+      check('Old/malformed plan diagnostic omitted, existing failure retained', error?.reason === 'http_404' && !error.diag);
+    }
+    // Actual service response boundary, with the existing download manager and a synthetic channel.
+    let receive;
+    const serviceNS = Object.assign({}, NS, { createDownloads: () => w.dl, createTransport: () => ({}),
+      createStore: () => ({}), createChannel: () => ({}), idbBackend: () => ({}) });
+    const context = { KadriChannel: serviceNS, wasm_bindgen: () => Promise.resolve(), URL,
+      chrome: { runtime: { id: 'test-extension', getURL: p => 'chrome-extension://test-extension/' + p,
+        onMessage: { addListener: f => { receive = f; } } }, storage: { local: {} } } };
+    context.self = context;
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../channel/channel-service.js'), 'utf8'), context);
+    const reply = await new Promise(resolve => receive({ t: 'kadri-download', op: 'hlsplan', url: URL1, bind: BIND },
+      { id: 'test-extension', tab: { id: 1 }, url: 'https://page.example/' }, resolve));
+    check('Actual service delivers only sanitized planning diagnostic to the content script',
+      reply.ok === false && reply.error.reason === 'http_412' && JSON.stringify(reply.error.diag) === JSON.stringify(e.diag) &&
+      !JSON.stringify(reply).includes('PRIVATE') && !JSON.stringify(reply).includes('https:'));
+  }
+  {
     // P4c: fertiger Stream (Stand im Speicher veraltet, Player war zu): neuer Plan nennt keinen „laufenden“ Auftrag,
     // ein neuer Start ist möglich
     const w = world();
