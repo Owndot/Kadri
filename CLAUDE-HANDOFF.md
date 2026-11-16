@@ -25,6 +25,10 @@ Danach nur Übergabedokumente/gesicherte Paketentwürfe; aktuellen Dokumentation
 ermitteln. Arbeitsverzeichnisse hier: `/workspace/Kadri`, `/workspace/video-assistent-helper`.
 Nur bestehende Branches verwenden; keine neuen PRs, Merges, Tags oder Releases.
 
+Verifizierte Dokumentations-Checkpoints: Kadri `a595bc721965f83c1ad944dc1e3002357972d714`
+(danach dieser Statusnachtrag), Helper **`1a80afefffde319f9b13be4dc9c3b06f3a7918e1`**.
+Anwendungsdateien gegenüber den obigen Code-SHAs unverändert; nur Root-Markdown-Dateien unterscheiden sich.
+
 ## Bestätigte Gerätebasis – nicht erneut als offenes Problem behandeln
 
 Samsung Android 17 / One UI 9, Vivaldi; isolierte App `de.evp.helfer.p4test`, APK-Codebasis
@@ -94,12 +98,22 @@ wird in diesem MP4-Test nicht aufgerufen. Das erklärt die Ursache nicht. Der Te
 gibt `engine.diagnostics(id)` noch nicht aus, obwohl diese vorhandene Methode in anderen
 Speichertests bereits für genauere Ursachen verwendet wird.
 
-**IN_PROGRESS – genau ein unveränderter Vergleichslauf:** am 16. November gezielt den API-34-Job
-neu gestartet; neuer Job **`133224722018`**, gleicher Workflow/Quellcommit. Ergebnis vor nächstem
-Schritt abfragen. Kein „Wiederholen bis grün“, keine Assertion gelockert. Ein grüner Vergleich
-erklärt den ersten Fehler nicht. Bei erneutem Fehlschlag zuerst die Testdiagnose an der genannten
+**BLOCKED – unveränderter Vergleich abgebrochen:** am 16. November gezielt den API-34-Job
+neu gestartet; neuer Job **`133224722018`**, gleicher Workflow/Quellcommit. Dieser wurde durch
+den Übergabe-Push und die bestehende Regel `cancel-in-progress: true` abgebrochen: **kein PASS und
+kein abgeschlossener Vergleich**. Job-Log: `The operation was canceled.` Keine Assertion gelockert.
+Ein grüner Vergleich erklärt den ersten Fehler nicht. Bei erneutem Fehlschlag zuerst die Testdiagnose an der genannten
 Assertion ergänzen (auch Sampler im Fehlerfall sauber beenden), dann den konkreten Ablagefehler
 ermitteln. Kein pauschales Retry und keine Aufweichung der Veröffentlichungsprüfungen.
+
+**IN_PROGRESS – automatische CI des abschließenden Helper-Dokumentationsstands `1a80afe`:**
+[Kanal/Emulatoren 43846760700](https://github.com/Owndot/video-assistent-helper/actions/runs/43846760700),
+[Validierung 43846760650](https://github.com/Owndot/video-assistent-helper/actions/runs/43846760650),
+[Browser 43846760757](https://github.com/Owndot/video-assistent-helper/actions/runs/43846760757).
+Ergebnisse noch nicht bestätigt. Vorherige Dokumentationsläufe `43846359240/43846359336/43846359285`
+wurden durch den abschließenden Statuscheckpoint ersetzt; nicht als zusätzliche Testergebnisse zählen.
+PR-Pfadfilter betrachten die PR-Änderungen gegen die Basis: auch ein Dokumentationspush kann dadurch
+diese CI erneut starten. **Während des nächsten gezielten Vergleichs keinen Helper-Checkpoint pushen.**
 
 **BLOCKED – P4B-A10-SIZE bleibt rot:** erster API-29-Job `128934502145` bestätigt nur den bekannten
 Fehler: tatsächliche Datei 64 MiB, MediaStore-SIZE 0. Eigentümer-Ausnahme ausschließlich für
@@ -147,8 +161,12 @@ reale Cookie-Ursache und keinen fertigen vollständigen Downloadmodus. Passive C
 
 ## Exakt weiterarbeiten
 
-1. **IN_PROGRESS:** API-34-Vergleichslauf `133224722018` prüfen, ersten Fehler und Wiederholung
-   gemeinsam dokumentieren. Bei wiederholtem Speicherfehler zunächst konkrete Testdiagnose nachrüsten.
+1. **IN_PROGRESS:** Kanal-/Emulatorlauf `43846760700` auswerten; `133224722018` ist abgebrochen,
+   nicht bestanden. Bei erneutem Speicherfehler zuerst konkrete Testdiagnose nachrüsten. Wenn der
+   Dokumentationslauf besteht, für die geplante Lieferung den abgebrochenen API-34-Vergleich auf
+   **exakt `bd5ab29`** einmal abschließen, nachdem keine konkurrierende Helper-CI mehr läuft.
+   Der Paketworkflow verlangt den exakten Quellcommit; andere grüne SHAs ersetzen diese Prüfung nicht.
+   Ersten Fehlschlag, Abbruch und abgeschlossenen Vergleich getrennt dokumentieren.
 2. **BLOCKED / TODO:** Lieferentscheidung erst mit geklärter CI-Situation; Ausnahme unverändert
    nur P4B-A10-SIZE. Bestehende Paketentwürfe verwenden, exakte SHAs und Artefakte verifizieren.
 3. **NEEDS_TEST:** nach geprüfter Lieferung Samsung: Seite neu laden → „Stream speichern …“ →

@@ -37,7 +37,8 @@ Belege, gesicherte Paketentwürfe und konkrete Fortsetzung. Danach die Details h
   `Mp4DownloadsInstrumentedTest.publishesThroughMediaStoreAndReadsBack:365`, erwartet `done`,
   tatsächlich `failed:storage`, 46 Tests / 1 Fehlschlag. Ursache noch unbekannt, keine Lieferausnahme.
   Dieser MP4-Code wurde nicht geändert, neue HLS-Planungsdiagnose dort nicht aufgerufen.
-  Am 16. November genau diesen Job einmal unverändert neu gestartet: `133224722018`, **IN_PROGRESS**.
+  Am 16. November genau diesen Job einmal unverändert neu gestartet: `133224722018`; durch den
+  Dokumentations-Push und die vorhandene CI-Concurrency abgebrochen, **kein PASS**.
   Ersten Fehlschlag nicht wegtesten. Bei erneutem Fehler zuerst vorhandenes `engine.diagnostics(id)`
   in dieser Testassertion ausgeben und den Sampler auch im Fehlerfall beenden; danach gezielt untersuchen.
   Der alte Textbericht `13643824135` ist inzwischen per API nicht mehr verfügbar (404), nicht gelesen.
@@ -51,11 +52,17 @@ Belege, gesicherte Paketentwürfe und konkrete Fortsetzung. Danach die Details h
   „Stream speichern …“ → Fehler abwarten → Erweiterungsmenü → „Diagnose anzeigen“ → „Anonymisiert kopieren“.
   Benötigt: Grund/HTTP-Status, Planungsschritt, Listenanzahl. Keine Rohdiagnose/Adressen.
   Diese Ergänzung benötigt einen aktualisierten Helper; keine neue Kopplung oder Installation vorab verlangen.
-- **DONE – Übergabestand gesichert:** vorbereitete Workflow-Diffs in `P4-DELIVERY-DRAFT.md` beider
+- **DONE – Übergabestand gesichert:** Helper-Dokumentation `1a80afefffde319f9b13be4dc9c3b06f3a7918e1`,
+  Kadri-Checkpoint `a595bc721965f83c1ad944dc1e3002357972d714` plus dieser Statusnachtrag.
+  Seit getesteten Code-SHAs nur Root-Markdown-Dateien geändert. Vorbereitete Workflow-Diffs in `P4-DELIVERY-DRAFT.md` beider
   Repositories konserviert; aktive Workflows wieder unverändert. Keine neue APK/Erweiterung geliefert.
   Altes Kadri-Artefakt zu `7811d5a` war nur bis 10. November verfügbar, nicht mehr empfehlen.
-- **Nächster Schritt – IN_PROGRESS:** API-34-Vergleichslauf prüfen, Befund und Wiederholung zusammen
-  bewerten. Paketlieferung bleibt bis zur CI-Bewertung **BLOCKED**; keine weitere Ausnahme neben
+- **Nächster Schritt – IN_PROGRESS:** automatischen Kanal-/Emulatorlauf des letzten Helper-Dokumentationsstands
+  [43846760700](https://github.com/Owndot/video-assistent-helper/actions/runs/43846760700) auswerten.
+  Bei erneutem Speicherfehler konkrete Testdiagnose nachrüsten; sonst den abgebrochenen Vergleich
+  auf exakt `bd5ab29` nach Abschluss konkurrierender CI einmal beenden. Währenddessen keinen
+  Helper-Checkpoint pushen (PR-Pfadfilter + `cancel-in-progress` starten/ersetzen auch bei Dokumentationspush).
+  Befund, Abbruch und Vergleich getrennt bewerten. Paketlieferung bleibt **BLOCKED**; keine weitere Ausnahme neben
   P4B-A10-SIZE annehmen. Erst danach gesicherte isolierte P4-Entwürfe aktivieren und Artefakte verifizieren.
   Reale HTTP 404/412 bleiben **OFFEN / NEEDS_TEST**, spätere Segmentfehler weiterhin nicht exakt aufgelöst.
   Samsung F1/F2/R1/R2/C1 bleiben PASS der Basis; Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
