@@ -11,6 +11,12 @@ Stand dieses Dokuments: 2026-11-16. Aktueller Einstieg und Abschluss stehen vor 
 **Claude Code: zuerst [CLAUDE-HANDOFF.md](CLAUDE-HANDOFF.md) lesen** – kompakter aktueller Stand,
 Belege, gesicherte Paketentwürfe und konkrete Fortsetzung. Danach die Details hier und im Helper.
 
+## Aktuell – Claude-Fortsetzung 2026-11-16: API-34-Speicherfehler lokalisiert
+
+Maßgeblich ist der Abschnitt „Claude-Fortsetzung“ in [CLAUDE-HANDOFF.md](CLAUDE-HANDOFF.md): `failed:storage` =
+`IOException: publish` im MediaStore-Veröffentlichen, reproduzierbar im Resume-Pfad auf API 34; API-29-Zusatzfehler
+war ein 16-MiB-Emulatorheap. Lieferung **BLOCKED**; nachfolgender Abschnitt ist ab hier Historie.
+
 ## Aktuell – genaue HLS-Planungsdiagnose implementiert, noch kein realer Downloadfix
 
 - **DONE – Helper-Code gepusht:** `bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5` auf bestehendem Branch.

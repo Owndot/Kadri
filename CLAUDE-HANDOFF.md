@@ -4,6 +4,35 @@ Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
+## Claude-Fortsetzung 2026-11-16 – maßgeblich vor allen folgenden Abschnitten
+
+Arbeitsverzeichnisse in dieser Umgebung: `/home/user/Kadri`, `/home/user/video-assistent-helper` (`/workspace` existiert nicht).
+Anwendungscode unverändert: Kadri `7978a41`, Helper-App-Code (`app/src/main`) wie `bd5ab29`. Neue Helper-Commits
+enthalten nur Gerätetests, Testskript und Doku: `d2f3884`, `52702f6`, `4cbfb2e`, `5fa8b6d`.
+
+**CI-Auswertung (verifiziert):**
+- Kanal-Lauf `43846760700` (Doku `1a80afe`): API 34 **grün** (46/46, Wiederholung 22/22). API 29 **zwei** Fehler:
+  bekannter SIZE-Befund plus neu `cancelDuringRemuxIsFastAndLeavesNothing` (`memory` statt `cancelled`) bei
+  `maxHeapMiB=16`, obwohl der Emulator `qemu.dalvik.vm.heapsize=512m` verlangte (16m = ART-Standard).
+  In `43874560604` und `43879157709` wieder 512 MiB und dieser Test grün → **Umgebungsbefund**, kein App-Befund.
+- Browser `43846760757` rot: Firefox-Timing `nonchronological/sparse samples` (23/24), bekannte Instabilität;
+  auf `d2f3884` (`43874560582`) grün. Validierung/HLS auf `d2f3884` grün.
+- **API-34-`failed:storage` lokalisiert:** Diagnose in `d2f3884` zeigt `cause: IOException: publish`, d. h.
+  `Mp4Downloads.PendingEntry.commit()` – `update(IS_PENDING=0, DISPLAY_NAME)` betraf nicht genau einen Eintrag.
+  Betroffen in `43874560604` und `43879157709` jeweils `interruptionFailsCleanOrResumesExactly` (Resume-Pfad,
+  2 s Pause bei offenem Stream nach 3 MiB). Früher auch `publishesThroughMediaStoreAndReadsBack` (64 MiB).
+  Sonde `MediaStorePublishProbeTest` ohne Pause auf API 34: **60/60 OK**. Folge in der App: vollständig geladene
+  Datei wird danach durch `abort()` entfernt, Auftrag `failed:storage`. **Ursache des Updates noch offen.**
+- `5fa8b6d`: Sondenvarianten (Pause bei offenem Stream / vor Schließen / vor Veröffentlichen / abgebrochener
+  Nachbar) und Zustandsaufnahme im scheiternden Test. Ergebnis abwarten, dann gezielt korrigieren.
+
+**Konsequenzen:** Vergleich auf exakt `bd5ab29` nicht wiederholt – der Fehler ist reproduzierbar und betrifft
+denselben App-Code; ein Gate-PASS darauf wäre Zufall. Lieferung **BLOCKED**, bis die Veröffentlichung im
+Resume-Pfad verstanden und korrigiert ist. Danach neuer Helper-`SOURCE_SHA` (Scope-Prüfung erlaubt sonst keine
+Teständerungen) und Gate-Ergänzung `PUBLISH_PROBE_STATUS ok` (siehe Helper `P4-DELIVERY-DRAFT.md`). Kadri-Pin
+`bd5ab29` kann bleiben, solange `app/src/main` und Desktop-Helper unverändert sind; bei App-Fix neu bewerten.
+Reale HTTP 404/412 weiter **OFFEN / NEEDS_TEST**; Samsung-Diagnoseschritt erst nach geprüfter Lieferung.
+
 ## Ziel und wichtigste Einschränkung
 
 Der Eigentümer will **vollständige Downloads unabhängig von laufender Wiedergabe**. Passives
