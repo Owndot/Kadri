@@ -4,7 +4,29 @@ Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
-## Ursachenanalyse API-34-`failed:storage` – Stand 2026-11-16 abends (maßgeblich)
+## Codex-Review abgeglichen – Helper `291cff1` (2026-11-16 spät, maßgeblich vor allem Folgenden)
+
+Details und Belege: [REVIEW-CODEX-P4C3.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/REVIEW-CODEX-P4C3.md).
+Erste App-Codeänderung seit `bd5ab29` (nur Klassifikation/Diagnose, keine Sicherheits-/Abbruchregel geändert, kein Retry):
+
+- **A bestätigt + korrigiert:** Diagnose im Assertion-Text wurde vor `await` ausgewertet (2 Gerätetests).
+- **B bestätigt + korrigiert:** `DirectDownloads` meldete lokale RuntimeExceptions als `failed:network`. Jetzt Ablage →
+  `storage`, Listener/Unerwartetes → `internal`, `IOException` → `network`; Ursache nur Klasse + App-Stelle. JVM-Regressionstest
+  (rot auf altem Code), dl-Mutationen 49/49. Kadri kennt `internal` bereits.
+- **C umgesetzt:** `PendingEntry.commit` – genau ein Update; bei Fehlschlag `rows=`/`threw=`, `entry=`, `proof=`,
+  `cleanup=removed-this-entry|ran-Nx|none`, `trail=` mit gemeinsamer Folgenummer. Auf API 29 im Gerät belegt:
+  `threw=IllegalStateException(No item at …) entry=missing proof=gone cleanup=removed-this-entry(run1#3-#4) trail=insert#1,open#2,close#5,update!#6`.
+- **D:** Produktionsstart kann keinen aktiven Eintrag bereinigen (nur Test-Reflection-Reset). Keine Produktänderung.
+  `failed:network` in `publicFileForUninstallCheck` (`43883581638`) = möglicher Testinteraktions-Kandidat, nicht bewiesen.
+- **E:** nur Vorschlag (Trennung Veröffentlichung/System-Metadaten); API 29 bleibt rot, keine Android-10-Freigabe.
+
+CI `291cff1`: Lauf `43970471504` API 26 **PASS**, API 34 **PASS** (kein `failed:storage`), API 29 **FAIL nur SIZE**
+(45/46, Sonde 165/165); Kern-/JVM-Job brach vor jedem Test an Maven-Central-429 ab → ein Re-Run. Validierung `43970471486`:
+`download-manager-privacy` (`ReferrerDownloadTest`, DownloadManager wiederholte den GET) → ein Re-Run. HLS, Browser **PASS**.
+**API-34-Ursache von `IOException: publish` weiter nicht nachgewiesen**; beim nächsten Auftreten Diagnose lesen.
+Lieferung bleibt **BLOCKED**, Produktion **UNAPPROVED**.
+
+## Ursachenanalyse API-34-`failed:storage` – Stand 2026-11-16 abends (Historie)
 
 Helper-Commits nur Testcode/Doku (App-Code `app/src/main` = `bd5ab29`): `e600b79`, `8c81e83`, `e67a6a0`.
 
