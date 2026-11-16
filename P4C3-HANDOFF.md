@@ -7,7 +7,9 @@ nicht belegt), *geplant*, *implementiert* (im Code, ggf. ungetestet), *getestet*
 
 Produktion bleibt **UNAPPROVED**. Grüne Tests sind keine Sicherheitsfreigabe.
 
-Stand dieses Dokuments: 2026-11-09. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+Stand dieses Dokuments: 2026-11-16. Aktueller Einstieg und Abschluss stehen vor den historischen Abschnitten.
+**Claude Code: zuerst [CLAUDE-HANDOFF.md](CLAUDE-HANDOFF.md) lesen** – kompakter aktueller Stand,
+Belege, gesicherte Paketentwürfe und konkrete Fortsetzung. Danach die Details hier und im Helper.
 
 ## Aktuell – genaue HLS-Planungsdiagnose implementiert, noch kein realer Downloadfix
 
@@ -15,20 +17,30 @@ Stand dieses Dokuments: 2026-11-09. Aktueller Einstieg und Abschluss stehen vor 
   Optionale Fehlerdiagnose `diag: {v:1, phase, playlists}` unterscheidet Einstiegs-/Video-/Audioliste,
   Abruf/Parser und Planaufbau. Nur feste Werte, keine Quellen-/Sitzungsdaten. Erfolgsantworten und
   Downloadlogik unverändert. Details: [Helper-Diagnose](https://github.com/Owndot/video-assistent-helper/blob/bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5/P4-HLS-PLAN-DIAG.md).
-- **DONE – Kadri-Code:** gemeinsamer Diagnosepfad für Webseitenknopf und Player, strenge Prüfung an
+- **DONE – Kadri-Code `7978a41232c3b1582289c53461da4fe63ad28ff9`:** gemeinsamer Diagnosepfad für Webseitenknopf und Player, strenge Prüfung an
   Kanal-/Seitenübergängen, unbekannte Zusatzfelder verworfen. Alter Helper ohne Diagnose weiterhin kompatibel.
   Version **1.12.16** zur Unterscheidung, Skriptbasis unverändert 19.30. Helper-Testpin auf `bd5ab29`,
-  vendortes WASM/JavaScript unverändert; Neuaufbau und Bytevergleich erfolgen in bestehender CI.
+  vendortes WASM/JavaScript unverändert; Neuaufbau und Bytevergleich in bestehender CI bestanden.
 - **DONE – lokal geprüft:** Helper-Koordinator **255/255**, HLS-Kernsuite und Netzschichtwächter grün;
   Kadri HLS-Unit **80/80**, Diagnose **48/48**, echter verschlüsselter Kanal mit aktualisiertem
   Desktop-Helper **103/103**. 404/412 an Einstieg/Video/Audio, Parserfehler, Redirect zu fehlender Liste,
   keine Anfragen mit Credentials, keine Planfehler-Veröffentlichung. Bestehende Fortsetz-/Abbruchfälle grün.
   Das ist kein neuer Samsung-PASS und keine Lösung der realen Abrufverweigerung.
-- **IN_PROGRESS – Helper-CI:** HLS [42547144187](https://github.com/Owndot/video-assistent-helper/actions/runs/42547144187),
-  Kanal [42547150112](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150112),
-  Validierung [42547150099](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150099),
-  Browser [42547150138](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150138).
-  Kadri-CI nach Push prüfen. Vor deren Abschluss keine neue P4-Lieferung.
+- **DONE – CI am 16. November verifiziert:** Kadri
+  [42547277661](https://github.com/Owndot/Kadri/actions/runs/42547277661) alle fünf Jobs grün;
+  Helper HLS [42547144187](https://github.com/Owndot/video-assistent-helper/actions/runs/42547144187),
+  Validierung [42547150099](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150099) und
+  Browser [42547150138](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150138) grün.
+  Kanal [42547150112](https://github.com/Owndot/video-assistent-helper/actions/runs/42547150112):
+  JVM/Netz/MP4-Mutationen, Signierprüfung und API 26 grün; API 29 bekannter P4B-A10-SIZE-Fehler.
+- **BLOCKED – zusätzlicher API-34-Fehler:** Job `128934502193`,
+  `Mp4DownloadsInstrumentedTest.publishesThroughMediaStoreAndReadsBack:365`, erwartet `done`,
+  tatsächlich `failed:storage`, 46 Tests / 1 Fehlschlag. Ursache noch unbekannt, keine Lieferausnahme.
+  Dieser MP4-Code wurde nicht geändert, neue HLS-Planungsdiagnose dort nicht aufgerufen.
+  Am 16. November genau diesen Job einmal unverändert neu gestartet: `133224722018`, **IN_PROGRESS**.
+  Ersten Fehlschlag nicht wegtesten. Bei erneutem Fehler zuerst vorhandenes `engine.diagnostics(id)`
+  in dieser Testassertion ausgeben und den Sampler auch im Fehlerfall beenden; danach gezielt untersuchen.
+  Der alte Textbericht `13643824135` ist inzwischen per API nicht mehr verfügbar (404), nicht gelesen.
 - **DONE / TODO – früherer CI-Zählfehler:** unveränderte Wiederholung von Helper-Validierung
   [42514524882](https://github.com/Owndot/video-assistent-helper/actions/runs/42514524882) ist grün.
   Erster Lauf erwartete einen GET und erhielt zwei; genaue Ursache bleibt offen, keine Testassertion gelockert.
@@ -39,8 +51,12 @@ Stand dieses Dokuments: 2026-11-09. Aktueller Einstieg und Abschluss stehen vor 
   „Stream speichern …“ → Fehler abwarten → Erweiterungsmenü → „Diagnose anzeigen“ → „Anonymisiert kopieren“.
   Benötigt: Grund/HTTP-Status, Planungsschritt, Listenanzahl. Keine Rohdiagnose/Adressen.
   Diese Ergänzung benötigt einen aktualisierten Helper; keine neue Kopplung oder Installation vorab verlangen.
-- **Nächster Schritt – IN_PROGRESS:** CI abschließen; bei ausschließlich bekanntem P4B-A10-SIZE-Fehlschlag
-  vorhandene isolierte P4-Workflows auf die geprüften Quellstände setzen und Testlieferung verifizieren.
+- **DONE – Übergabestand gesichert:** vorbereitete Workflow-Diffs in `P4-DELIVERY-DRAFT.md` beider
+  Repositories konserviert; aktive Workflows wieder unverändert. Keine neue APK/Erweiterung geliefert.
+  Altes Kadri-Artefakt zu `7811d5a` war nur bis 10. November verfügbar, nicht mehr empfehlen.
+- **Nächster Schritt – IN_PROGRESS:** API-34-Vergleichslauf prüfen, Befund und Wiederholung zusammen
+  bewerten. Paketlieferung bleibt bis zur CI-Bewertung **BLOCKED**; keine weitere Ausnahme neben
+  P4B-A10-SIZE annehmen. Erst danach gesicherte isolierte P4-Entwürfe aktivieren und Artefakte verifizieren.
   Reale HTTP 404/412 bleiben **OFFEN / NEEDS_TEST**, spätere Segmentfehler weiterhin nicht exakt aufgelöst.
   Samsung F1/F2/R1/R2/C1 bleiben PASS der Basis; Produktion **UNAPPROVED**, P4B-A10-SIZE rot.
 
