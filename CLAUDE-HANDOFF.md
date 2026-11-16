@@ -4,6 +4,42 @@ Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
+## Ursachenanalyse API-34-`failed:storage` – Stand 2026-11-16 abends (maßgeblich)
+
+Helper-Commits nur Testcode/Doku (App-Code `app/src/main` = `bd5ab29`): `e600b79`, `8c81e83`, `e67a6a0`.
+
+**CI (verifiziert):**
+- `43886149524` (`e600b79`): API 26/34, Kern/JVM/Mutationen, Validierung, Browser, HLS **PASS**; API 29 **FAIL** nur SIZE.
+- `43890527077` (`8c81e83`): Versuch 1 API-34-Job hing >30 min im SDK-Download (kein Test lief) → Lauf
+  abgebrochen, fehlgeschlagene/abgebrochene Jobs auf demselben Commit neu gestartet (Infrastruktur, kein
+  Test-Retry). Versuch 2: API 34 **PASS** (46/46, Wiederholung 22/22), API 26 **PASS**; API 29 **FAIL** nur SIZE.
+- `43899801663` (`e67a6a0`): API 26/34 **PASS**, API 29 **FAIL** (Sonde OK, Rest im Log nicht neu geprüft).
+- API 34 heute: 3 von 7 vollständigen Ausführungen gescheitert (2× `IOException: publish`, 1× `failed:network`
+  ohne Ursache), die letzten 3 grün. **Grüne Läufe sind kein Fixnachweis.**
+
+**Hypothesen:**
+- **WIDERLEGT – Cleanup-Race als Ursache von `IOException: publish`:** deterministische Referenz
+  (`processStartCleanupDuringAJobSignature`, API 29 und 34 identisch): Prozessstart-Bereinigung während eines
+  Auftrags → Markierung weg, Eintrag weg (`rows=0`), `commit` wirft `IllegalStateException` („No item at …“).
+  `IOException: publish` entsteht nur, wenn `update()` ohne Ausnahme ≠ 1 liefert, also bei noch vorhandenem Eintrag.
+- **WIDERLEGT (Code) – Cleanup-Race in Produktion:** `Downloads.initialize` läuft nur in `HelferService.onCreate`
+  vor `Mp4Downloads.get` (und im Legacy-`Downloads.start`); `initialized` wird nur bei Erfolg gesetzt und im
+  App-Code nie zurückgesetzt; scheitert es, beendet sich der Dienst vor dem Anlegen der Engines.
+- **WIDERLEGT (Sonde, je 140–170 Zyklen, API 29+34):** Pause bei offenem Stream, Pause vor Schließen/Veröffentlichen,
+  abgebrochener Nachbar, Löschen einer 64-MiB-Datei unmittelbar vor dem Veröffentlichen, parallele Fremdlast im
+  MediaProvider – keine einzige gescheiterte Veröffentlichung isoliert.
+- **BESTÄTIGT (Code) – Fehlklassifizierung:** `DirectDownloads.run` meldet jede unerwartete RuntimeException und
+  einen verkürzten Body ohne starken ETag als `failed:network` ohne Ursache. Eine verschwundene Zeile würde also
+  als `network` erscheinen. Ursache des `network` in `publicFileForUninstallCheck` (`43883581638`) bleibt OFFEN.
+- **OFFEN – warum `update(IS_PENDING=0, DISPLAY_NAME)` gelegentlich ≠ 1 liefert:** nur im Gesamtlauf. Diagnose ist
+  jetzt in jedem MP4-Test aktiv (Zustand/Alter des Eintrags, Besitzmarkierung, Schreib-/Schließfehler,
+  Zeitleiste testseitiger Bereinigungen, Serverfehler, `initialized`). Beim nächsten Auftreten auswerten.
+- Geteilte Zustände im Testprozess geprüft: `HelferService` aus `ChannelInstrumentedTest` läuft weiter
+  (Singletons, `SLOTS`), keine asynchrone Löschung gefunden; `newProcessCleanup` nur synchron in 3 Tests,
+  keiner davon unter den gescheiterten.
+
+Kein Produktfix, keine gelockerte Assertion, kein Retry. Lieferung bleibt **BLOCKED**.
+
 ## Claude-Fortsetzung 2026-11-16 – maßgeblich vor allen folgenden Abschnitten
 
 Arbeitsverzeichnisse in dieser Umgebung: `/home/user/Kadri`, `/home/user/video-assistent-helper` (`/workspace` existiert nicht).
