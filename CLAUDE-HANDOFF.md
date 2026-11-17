@@ -4,7 +4,24 @@ Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
-## Codex-Review abgeglichen – Helper `291cff1` (2026-11-16 spät, maßgeblich vor allem Folgenden)
+## Codex-Folgereview von Helper `291cff1` (CHANGES REQUIRED) – Stand 2026-11-17 (maßgeblich vor allem Folgenden)
+
+Helper-Commit `947d806`. Details: [REVIEW-CODEX-FOLLOWUP.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/REVIEW-CODEX-FOLLOWUP.md).
+
+**Korrektur meiner CI-Aussage zu `291cff1`:** API 29 war NICHT „nur SIZE“. Versuch 2 (Job `133674082860`) zeigte im
+regulären Test `publishesThroughMediaStoreAndReadsBack` den Veröffentlichungsfehler `publish rows=0` (Eintrag über die
+Downloads-Uri nicht mehr sichtbar, Markierung vorhanden; MediaProvider hatte die Datei laut Systemprotokoll bereits auf den
+Endnamen umbenannt) und ≈3 s später einen OutOfMemoryError im Systemprozess (`DeadSystemException`, u. a. aus
+`WakeLock.release` → Arbeiterfaden starb). Getrennte Befunde; ein Zusammenhang ist nicht belegt. „cleanup=none“ war keine
+sichere Negativaussage. Die Ursache von `rows=0` ist **nicht** nachgewiesen.
+
+Abgearbeitet: P1 Abschluss trotz Aufräumfehlern (8 Regressionsfälle, 7 auf altem Code rot), P2 Diagnose ohne
+Provider-Abfrage auf dem Fehlerweg + konservative Zuordnung + H1/H2/H3-Sonden, P3 Testisolation + strenge
+Mutationsbewertung (4 ungültige und 1 zufällig erkannte Probe gefunden und korrigiert), P4 Liefer-Gate
+(`tools/device_gate.py`, 21 synthetische Fixtures; Paket-Job ohne ausdrückliche Freigabe übersprungen).
+Lieferung bleibt **BLOCKED**, Produktion **UNAPPROVED**.
+
+## Codex-Review abgeglichen – Helper `291cff1` (2026-11-16 spät, Historie – CI-Aussage zu API 29 korrigiert, s. o.)
 
 Details und Belege: [REVIEW-CODEX-P4C3.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/REVIEW-CODEX-P4C3.md).
 Erste App-Codeänderung seit `bd5ab29` (nur Klassifikation/Diagnose, keine Sicherheits-/Abbruchregel geändert, kein Retry):
@@ -20,7 +37,7 @@ Erste App-Codeänderung seit `bd5ab29` (nur Klassifikation/Diagnose, keine Siche
   `failed:network` in `publicFileForUninstallCheck` (`43883581638`) = möglicher Testinteraktions-Kandidat, nicht bewiesen.
 - **E:** nur Vorschlag (Trennung Veröffentlichung/System-Metadaten); API 29 bleibt rot, keine Android-10-Freigabe.
 
-CI `291cff1`: Lauf `43970471504` API 26 **PASS**, API 34 **PASS** (kein `failed:storage`), API 29 **FAIL nur SIZE**
+CI `291cff1`: Lauf `43970471504` API 26 **PASS**, API 34 **PASS** (kein `failed:storage`), API 29 Versuch 1 **FAIL nur SIZE** (Versuch 2: zusätzlich `publish rows=0` und System-OOM – siehe oben)
 (45/46, Sonde 165/165); Kern-/JVM-Job brach vor jedem Test an Maven-Central-429 ab → ein Re-Run. Validierung `43970471486`:
 `download-manager-privacy` (`ReferrerDownloadTest`, DownloadManager wiederholte den GET) → ein Re-Run. HLS, Browser **PASS**.
 **API-34-Ursache von `IOException: publish` weiter nicht nachgewiesen**; beim nächsten Auftreten Diagnose lesen.
