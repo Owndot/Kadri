@@ -5,6 +5,25 @@ Stand 2026-11-17. Codex-Urteil **CONDITIONAL GO** für eine isolierte Samsung-An
 Gemeinsame Einzelheiten (Gate, Restrisiken, Freigabeverfahren) im Helper:
 [P4-DELIVERY-READINESS.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-DELIVERY-READINESS.md).
 
+## Runde 4 – Codex NO-GO 3 (2026-11-17)
+
+`LOCKED`, keine Lieferung, keine Freigabe. Anwendungscode `7978a41` unverändert. In Kadri geändert: nur die
+gemeinsame Freigabesperre `tools/delivery/lock.py` (byte-gleich mit dem Helper, im Workflow neu eingebettet), ihr
+Selbsttest und `LOCK_REVIEWERS: ''` in `p4-test-extension.yml`.
+
+- „Irgendein Required Reviewer“ genügt nicht mehr. Verlangt werden:
+  - keine Admin-Umgehung (`can_admins_bypass` false);
+  - Prevent self-review an;
+  - Reviewer genau `LOCK_REVIEWERS` (einzelne Benutzer, nicht der Auslöser);
+  - im Paketjob eine Zustimmung dieses Laufs durch einen festgelegten Reviewer.
+- `LOCK_REVIEWERS` ist leer, damit zusätzlich gesperrt. Eintragen darf es nur der Eigentümer.
+- Die Einmaligkeit der Freigabe-ID hängt weiter an löschbarer Actions-Historie und wird **nicht** als dauerhaft
+  behauptet. Den Vorschlag einer geschützten Verbrauchsregistrierung und die Abläufe für ein Ein-Personen- und ein
+  Vier-Augen-Verfahren enthält
+  [P4-APPROVAL-PROPOSAL.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-APPROVAL-PROPOSAL.md).
+- Die Korrekturen an Geräte-Gate, CI-Evidenz und Orphan-Sonde betreffen den Helper. Einzelheiten stehen dort im Abschnitt
+  „Runde 4“.
+
 ## Runde 3 – Codex NO-GO abgearbeitet (2026-11-17)
 
 `LOCKED`, keine Lieferung. Einzelheiten und der Vorschlag für eine unabhängige menschliche Freigabe stehen im Helper:
@@ -66,7 +85,7 @@ Paartest gegen `546af14`.
 - Die Helper-Lieferung prüft jetzt alle Emulator-Läufe mit gleichem App-Code (`tools/delivery/ci_evidence.py`).
 - API 29 auf Helper `f3bf6a4` (App-Code = `546af14`) zeigte `publish rows=0` mit der vollständigen Datei ohne
   MediaStore-Zeile und danach einen OOM im Systemprozess. Das Gate weist das ab.
-- Auf Helper `b18a355` trat `publish rows=0` auch auf API 34 auf, ohne Speicherengpass, mit derselben Signatur:
+- Auf Helper `b18a355` trat `publish rows=0` auch auf API 34 auf, ohne nachgewiesenen Speicherengpass, mit derselben Signatur:
   Datei vollständig unter dem Endnamen, keine MediaStore-Zeile.
 - Eine Lieferung ist deshalb nach den Regeln derzeit gesperrt, bis der Eigentümer entscheidet. Einzelheiten im
   Helper-Dokument.
