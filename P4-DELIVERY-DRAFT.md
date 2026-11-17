@@ -1,5 +1,9 @@
 # P4-Testlieferung – gesicherter Entwurf, nicht aktiviert
 
+> **Überholt (2026-11-17):** maßgeblich ist [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md). Der Entwurf unten
+> setzte `HELPER_SHA` auf die WASM-Herkunft `bd5ab29`; jetzt sind Helper-Anwendungscode (`546af14`) und
+> WASM-Herkunft (`bd5ab29`) getrennte Pins, und der Workflow ist durch die Freigabesperre geschlossen.
+
 Stand 2026-11-16. **BLOCKED** bis zur Bewertung des zusätzlichen API-34-Speicherfehlers.
 Dieser Entwurf war lokal vorbereitet; er wurde nicht als Workflowänderung gepusht.
 Der aktive Workflow bleibt auf seinem bisherigen Stand. Kein neues Paket ausgeliefert.

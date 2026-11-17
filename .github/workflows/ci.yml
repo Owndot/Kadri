@@ -24,6 +24,13 @@ jobs:
         run: |
           bash tests/package_upload_gate_check.sh
           bash .github/scripts/package-upload-gate.sh
+      - name: Delivery lock self-test (P4 extension workflow stays closed; negative decisions; nothing built)
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/lockvenv"
+          "$RUNNER_TEMP/lockvenv/bin/pip" install -q --only-binary :all: pyyaml==6.0.2
+          "$RUNNER_TEMP/lockvenv/bin/python" -I tests/delivery/test_lock.py .github/workflows/p4-test-extension.yml feature/c3-helper-mp4 "SOURCE_SHA HELPER_SHA WASM_CORE_ORIGIN_SHA"
+          cmp tools/delivery/lock.py <(git show HEAD:tools/delivery/lock.py)
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -332,6 +339,46 @@ jobs:
           unzip -q "$RUNNER_TEMP/p4-a.zip" -d "$RUNNER_TEMP/p4-packed"
           NODE_PATH="$PWD/node_modules" xvfb-run -a node tools/p4test/isolation.cjs "$RUNNER_TEMP/p4-packed" "$PWD/dist/chrome"
           rm -rf "$RUNNER_TEMP/p4-a.zip" "$RUNNER_TEMP/p4-b.zip" "$RUNNER_TEMP/p4-packed" "$RUNNER_TEMP/p4-second"
+      # Codex Release-Readiness P2: Kanaltest mit dem tatsächlich vorgesehenen Paar der P4-Lieferung, ohne Lieferung.
+      # Kadri-Dateien = SOURCE_SHA (nur Liefer-/Prüfwerkzeuge und Doku dürfen abweichen); Gegenstelle = echter ChannelServer
+      # des gepaarten Helper-Anwendungscodes HELPER_SHA; WASM-Kern = vendorte Herkunft WASM_CORE_ORIGIN_SHA (oben bitgenau
+      # neu gebaut). Das P4-Paket wird nur im Runner geprüft und verworfen, nie hochgeladen.
+      - name: P4 delivery pair - pins from the delivery workflow, provenance kept separate
+        id: pair
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/p4-test-extension.yml
+          pin() { sed -n "s/^  $1: \([0-9a-f]\{40\}\)$/\1/p" "$wf"; }
+          src="$(pin SOURCE_SHA)"; helper="$(pin HELPER_SHA)"; origin="$(pin WASM_CORE_ORIGIN_SHA)"
+          test -n "$src" && test -n "$helper" && test -n "$origin"
+          grep -qx "helper_commit=$origin" vendor/kadri-pairing-poc/SOURCE
+          git fetch -q --no-tags --depth=1 origin "$src"
+          changed="$(git diff --name-only "$src" HEAD | grep -vxE '\.github/workflows/(p4-test-extension|ci)\.yml|tools/delivery/[^/]+\.py|tests/delivery/.+|[^/]+\.md' || true)"
+          [ -z "$changed" ] || { echo "Kadri files differ from the delivery source $src: $changed" >&2; exit 1; }
+          echo "helper=$helper" >> "$GITHUB_OUTPUT"
+          echo "PAIR: Kadri source $src (files identical), helper application $helper, WASM core origin $origin"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pair.outputs.helper }}
+          path: helper-pair
+          persist-credentials: false
+      - name: P4 delivery pair - exact P4 package against the real ChannelServer of the paired helper (nothing uploaded)
+        run: |
+          set -euo pipefail
+          test "$(git -C helper-pair rev-parse HEAD)" = "${{ steps.pair.outputs.helper }}"
+          grep -q '"status": "UNAPPROVED"' helper-pair/release/production-policy.json
+          bash helper-pair/tests/java/channel/build.sh "$RUNNER_TEMP/helper-pair-host"
+          python3 tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/pair.zip"
+          mkdir -p "$RUNNER_TEMP/pair-packed" && unzip -q "$RUNNER_TEMP/pair.zip" -d "$RUNNER_TEMP/pair-packed"
+          export HELPER_HOST_DIR="$RUNNER_TEMP/helper-pair-host"
+          node tests/channel/channel_integration_check.js
+          node tests/channel/download_integration_check.js
+          node tests/channel/hls_integration_check.js
+          CHANNEL_DIST_DIR="$RUNNER_TEMP/pair-packed" node tests/channel/channel_browser_check.js
+          CHANNEL_DIST_DIR="$RUNNER_TEMP/pair-packed" node tests/channel/channel_netguard_failure_check.js
+          rm -rf "$RUNNER_TEMP/pair.zip" "$RUNNER_TEMP/pair-packed"
+          echo "PASS: P4 package of the Kadri delivery source paired with helper ${{ steps.pair.outputs.helper }} (real ChannelServer); nothing uploaded"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

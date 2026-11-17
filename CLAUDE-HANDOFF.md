@@ -1,10 +1,28 @@
 # Claude Code – Fortsetzung von Kadri und Android Helper
 
-Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Übergabe:
+Stand: **2026-11-17**. Kurzer aktueller Einstieg; maßgebliche ausführliche Übergabe:
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
-## Endstand Codex-Folgereview – Helper `546af14` (2026-11-17, maßgeblich vor allem Folgenden)
+## Codex-Release-Readiness (CONDITIONAL GO) – Liefervorbereitung (2026-11-17, maßgeblich vor allem Folgenden)
+
+Kurz: [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md), ausführlich im Helper:
+[P4-DELIVERY-READINESS.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-DELIVERY-READINESS.md).
+
+- **Freigabesperre:** in `p4-test-extension.yml` und im Helper `p4-test-package.yml`, standardmäßig geschlossen
+  (`DELIVERY_APPROVAL: 'none'`). Nur eine einmalige, an die SHAs gebundene, neu eingeführte Freigabe des Eigentümers
+  liefert. Der Job `gate` prüft das ohne Checkout.
+- **Pins:**
+  - Kadri `SOURCE_SHA` `7978a41`.
+  - `HELPER_SHA` `546af14`: Anwendungscode der P4-App; Gegenstelle des Kanaltests.
+  - `WASM_CORE_ORIGIN_SHA` `bd5ab29`: vendorte WASM-Herkunft, bitgenau neu gebaut, nicht umetikettiert.
+- **CI:** Die Kadri-CI testet das P4-Paket der Lieferquelle gegen den echten ChannelServer von `546af14`, ohne Upload.
+- **Geräte-Gate (Helper):** vollständige feste Testmengen, positive Zyklenzahlen, API-Zuordnung, 22 Wiederholungen;
+  63 synthetische Fälle und echte Logs geprüft.
+- **Metadaten:** Ersatz der P4-App und Neukopplung als nötig ausgewiesen; Artefaktnamen aus den Pins.
+- **Keine Lieferung gestartet.** Freigabe nur durch den Eigentümer nach dem letzten Codex-Review.
+
+## Endstand Codex-Folgereview – Helper `546af14` (2026-11-17)
 
 CI auf `546af14` vollständig:
 
