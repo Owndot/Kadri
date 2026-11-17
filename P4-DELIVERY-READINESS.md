@@ -54,6 +54,8 @@ Paartest gegen `546af14`.
 - Die Helper-Lieferung prüft jetzt alle Emulator-Läufe mit gleichem App-Code (`tools/delivery/ci_evidence.py`).
 - API 29 auf Helper `f3bf6a4` (App-Code = `546af14`) zeigte `publish rows=0` mit der vollständigen Datei ohne
   MediaStore-Zeile und danach einen OOM im Systemprozess. Das Gate weist das ab.
+- Auf Helper `b18a355` trat `publish rows=0` auch auf API 34 auf, ohne Speicherengpass, mit derselben Signatur:
+  Datei vollständig unter dem Endnamen, keine MediaStore-Zeile.
 - Eine Lieferung ist deshalb nach den Regeln derzeit gesperrt, bis der Eigentümer entscheidet. Einzelheiten im
   Helper-Dokument.
 

@@ -23,6 +23,9 @@ Kurz: [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md), ausführlich im Help
 - **CI-Belege:** Die Helper-Lieferung bewertet alle Emulator-Läufe mit gleichem App-Code, nicht nur den auf
   `SOURCE_SHA`. Neuer echter Befund auf Helper `f3bf6a4`, API 29: `publish rows=0` (Datei vollständig, ohne Zeile)
   und danach ein OOM im Systemprozess. Das Gate weist ihn ab, die Lieferung ist nach den Regeln derzeit gesperrt.
+- **`publish rows=0` korrigiert:** Auf Helper `b18a355` auch auf API 34, ohne Speicherengpass. In allen Fällen mit
+  Provider-Schnappschuss liegt die vollständige Datei unter dem Endnamen, aber ohne MediaStore-Zeile. Die App meldet
+  einen Fehler, die Datei bleibt verwaist. Frühere Aussage „keine Reste“ ist widerlegt; H1 erklärt die CI-Fälle nicht.
 - **Keine Lieferung gestartet.** Freigabe nur durch den Eigentümer nach dem letzten Codex-Review.
 
 ## Endstand Codex-Folgereview – Helper `546af14` (2026-11-17)
