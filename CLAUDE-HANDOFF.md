@@ -4,6 +4,20 @@ Stand: **2026-11-17**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
+## Codex NO-GO der Lieferworkflows – abgearbeitet (2026-11-17, maßgeblich vor allem Folgenden)
+
+Beide Lieferworkflows `LOCKED`. Änderungen:
+- Sperre auch im Paketjob, gegen Re-Runs.
+- Environment `p4-delivery` als Pflicht (noch nicht eingerichtet).
+- Bindung an den Lieferumfang.
+- CI-Evidenz: vollständig paginiert, alle Versuche, fail closed.
+- Geräte-Gate: globale Logprüfung, alle 22 Wiederholungen einzeln belegt.
+- Publish-Fehler auf API 29 und 34 mit gesicherten Logs.
+- Sonde für verwaiste Dateien.
+
+Details: Helper `P4-DELIVERY-READINESS.md`, Abschnitt „Runde 3“, und `P4-APPROVAL-PROPOSAL.md`. Eine unabhängige
+menschliche Freigabe ist ohne manuelle Rechtebeschränkung des Agenten nicht durchsetzbar.
+
 ## Codex-Release-Readiness (CONDITIONAL GO) – Liefervorbereitung (2026-11-17, maßgeblich vor allem Folgenden)
 
 Kurz: [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md), ausführlich im Helper:

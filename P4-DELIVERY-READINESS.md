@@ -5,6 +5,18 @@ Stand 2026-11-17. Codex-Urteil **CONDITIONAL GO** für eine isolierte Samsung-An
 Gemeinsame Einzelheiten (Gate, Restrisiken, Freigabeverfahren) im Helper:
 [P4-DELIVERY-READINESS.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-DELIVERY-READINESS.md).
 
+## Runde 3 – Codex NO-GO abgearbeitet (2026-11-17)
+
+`LOCKED`, keine Lieferung. Einzelheiten und der Vorschlag für eine unabhängige menschliche Freigabe stehen im Helper:
+[P4-DELIVERY-READINESS.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-DELIVERY-READINESS.md),
+[P4-APPROVAL-PROPOSAL.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4-APPROVAL-PROPOSAL.md).
+
+- Der Paketjob verlangt `environment: p4-delivery` mit Required Reviewers, das noch nicht eingerichtet ist. Er führt
+  die volle Sperre erneut aus: vor dem Checkout und vor dem Upload. Re-Run, Ablauf und verbrauchte ID sperren.
+- Die Freigabe ist zusätzlich an den Lieferumfang `SCOPE=kadri-p4test` gebunden.
+- Die normale CI lehnt eine gültige, noch nicht ausgeführte Freigabe nicht mehr ab (PENDING), eine ungültige schon.
+  Der positive Pfad ist nur mit Attrappen getestet.
+
 ## Pins in `.github/workflows/p4-test-extension.yml`
 
 | Rolle | Commit |
