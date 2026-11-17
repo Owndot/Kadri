@@ -398,22 +398,24 @@ jobs:
         set -euo pipefail
         NODE_PATH="$PWD/node_modules" xvfb-run -a node tools/p4test/isolation.cjs "$RUNNER_TEMP/packaged-extension" "$PWD/dist/chrome"
         sha256sum -c "$RUNNER_TEMP/zip-before.sha256"
-    - name: Require complete normal CI on the exact source commit before upload
+    - name: Require complete normal CI on the exact source commit AND on the workflow commit (pair test against HELPER_SHA) before upload
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
         test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
         git diff --exit-code
-        for attempt in $(seq 1 160); do
-          gh api "repos/Owndot/Kadri/actions/runs?head_sha=$SOURCE_SHA" > "$RUNNER_TEMP/ci-state.json"
-          status=$(python3 -c 'import json,sys; a=[r for r in json.load(open(sys.argv[1]))["workflow_runs"] if r["path"]==".github/workflows/ci.yml"]; r=max(a,key=lambda r:r["id"]) if a else {}; print((r.get("conclusion") or "failure") if r.get("status")=="completed" else "pending")' "$RUNNER_TEMP/ci-state.json")
-          if [ "$status" = success ]; then break; fi
-          if [ "$status" != pending ]; then echo "Required source CI: $status"; exit 1; fi
-          sleep 15
+        for sha in "$SOURCE_SHA" "$WORKFLOW_SHA"; do
+          for attempt in $(seq 1 160); do
+            gh api "repos/Owndot/Kadri/actions/runs?head_sha=$sha" > "$RUNNER_TEMP/ci-state.json"
+            status=$(python3 -c 'import json,sys; a=[r for r in json.load(open(sys.argv[1]))["workflow_runs"] if r["path"]==".github/workflows/ci.yml"]; r=max(a,key=lambda r:r["id"]) if a else {}; print((r.get("conclusion") or "failure") if r.get("status")=="completed" else "pending")' "$RUNNER_TEMP/ci-state.json")
+            if [ "$status" = success ]; then break; fi
+            if [ "$status" != pending ]; then echo "Required CI on $sha: $status"; exit 1; fi
+            sleep 15
+          done
+          test "$status" = success
+          echo "PASS: normal CI (ci.yml) succeeded on $sha"
         done
-        test "$status" = success
-        echo "PASS: normal CI (ci.yml) succeeded on $SOURCE_SHA"
     - name: Delivery - extension folder, separate ZIP, SHA256SUMS, evidence (commits, ID, expiry)
       run: |
         set -euo pipefail

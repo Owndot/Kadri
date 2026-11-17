@@ -20,6 +20,9 @@ Kurz: [P4-DELIVERY-READINESS.md](P4-DELIVERY-READINESS.md), ausführlich im Help
 - **Geräte-Gate (Helper):** vollständige feste Testmengen, positive Zyklenzahlen, API-Zuordnung, 22 Wiederholungen;
   63 synthetische Fälle und echte Logs geprüft.
 - **Metadaten:** Ersatz der P4-App und Neukopplung als nötig ausgewiesen; Artefaktnamen aus den Pins.
+- **CI-Belege:** Die Helper-Lieferung bewertet alle Emulator-Läufe mit gleichem App-Code, nicht nur den auf
+  `SOURCE_SHA`. Neuer echter Befund auf Helper `f3bf6a4`, API 29: `publish rows=0` (Datei vollständig, ohne Zeile)
+  und danach ein OOM im Systemprozess. Das Gate weist ihn ab, die Lieferung ist nach den Regeln derzeit gesperrt.
 - **Keine Lieferung gestartet.** Freigabe nur durch den Eigentümer nach dem letzten Codex-Review.
 
 ## Endstand Codex-Folgereview – Helper `546af14` (2026-11-17)

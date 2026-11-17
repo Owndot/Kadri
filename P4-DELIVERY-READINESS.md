@@ -46,6 +46,17 @@ Was der Paketjob mit den drei Herkünften macht:
 - Das P4-Paket von `dist/chrome` läuft im Runner gegen den echten ChannelServer von `HELPER_SHA`. Das Paket wird
   danach verworfen, nichts wird hochgeladen.
 
+Der Paketjob verlangt eine grüne `ci.yml` auf `SOURCE_SHA` **und** auf dem Workflow-Commit; nur dort läuft der
+Paartest gegen `546af14`.
+
+## Stand der Helper-Belege (2026-11-17)
+
+- Die Helper-Lieferung prüft jetzt alle Emulator-Läufe mit gleichem App-Code (`tools/delivery/ci_evidence.py`).
+- API 29 auf Helper `f3bf6a4` (App-Code = `546af14`) zeigte `publish rows=0` mit der vollständigen Datei ohne
+  MediaStore-Zeile und danach einen OOM im Systemprozess. Das Gate weist das ab.
+- Eine Lieferung ist deshalb nach den Regeln derzeit gesperrt, bis der Eigentümer entscheidet. Einzelheiten im
+  Helper-Dokument.
+
 ## Liefermetadaten
 
 - Die Evidenz trennt drei Herkünfte: `kadri_source_commit`, `helper_pair_commit` (Anwendungscode) und
