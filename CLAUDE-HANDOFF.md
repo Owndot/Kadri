@@ -4,7 +4,28 @@ Stand: **2026-11-16**. Kurzer aktueller Einstieg; maßgebliche ausführliche Üb
 [P4C3-HANDOFF.md](P4C3-HANDOFF.md). Dortige ältere „Aktuell“-Abschnitte sind ausdrücklich Historie.
 Helper-Vorbereitung: [P4C-VORBEREITUNG.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/P4C-VORBEREITUNG.md).
 
-## Codex-Folgereview von Helper `291cff1` (CHANGES REQUIRED) – Stand 2026-11-17 (maßgeblich vor allem Folgenden)
+## Endstand Codex-Folgereview – Helper `546af14` (2026-11-17, maßgeblich vor allem Folgenden)
+
+CI auf `546af14` vollständig:
+
+- **Grün:** API 26, API 34, JVM inkl. strenger Mutationsproben (dl 57, net 29, channel 31), HLS/hlsmux, Validierung, Browser.
+- **API 29:** nur SIZE; Gate `ACCEPTED_SIZE_ONLY` (kein Android-10-Freigabe).
+- **Neues Liefer-Gate:** `tools/device_gate.py`. Der Paket-Job ist ohne `DELIVERY_REQUESTED: 'yes'` übersprungen; keine Lieferung gestartet.
+
+**`publish rows=0`:**
+
+- Mechanismus H1 (Löschen während der Update-Folge) auf API 34 reproduziert.
+- Der Löscher im CI-Fall ist NICHT identifiziert.
+- Der eigene Prozessstart-Cleanup ist durch `proof=present` und die Zähler praktisch ausgeschlossen.
+
+**Weitere Befunde:**
+
+- **H4:** Android 10 lehnt das Veröffentlichen auf einen Endnamen ab, unter dem eine Datei ohne eigenen Eintrag liegt.
+- **Testumgebung:** sporadisch 16-MiB-App-Heap auf API 29; das Gate weist ihn aus.
+
+Details: `REVIEW-CODEX-FOLLOWUP.md` im Helper. Lieferung weiter **BLOCKED** bis zur Entscheidung des Eigentümers, Produktion **UNAPPROVED**.
+
+## Codex-Folgereview von Helper `291cff1` (CHANGES REQUIRED) – Stand 2026-11-17 (Historie)
 
 Helper-Commit `947d806`. Details: [REVIEW-CODEX-FOLLOWUP.md](https://github.com/Owndot/video-assistent-helper/blob/feature/c3-browser-downloads/REVIEW-CODEX-FOLLOWUP.md).
 
