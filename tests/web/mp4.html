@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>Testclip MP4</title></head>
+<body style="margin:0;background:#eee"><h1 style="font:16px sans-serif;padding:8px">MP4-Testseite</h1>
+<video id=v muted autoplay playsinline loop style="width:100%;display:block"></video>
+<p style="height:1500px">Text darunter</p>
+<script>
+  // ?src=/pfad?abfrage (Medienserver 127.0.0.1:8791 aus tests/test_mp4.py) · ?login=1: Sitzung der Seite als Cookie
+  const q = new URLSearchParams(location.search);
+  if (q.get('login')) document.cookie = 'sess=browser-session-cookie; path=/';
+  document.getElementById('v').src = 'http://127.0.0.1:8791' + (q.get('src') || '/videos/pub.mp4');
+</script></body></html>

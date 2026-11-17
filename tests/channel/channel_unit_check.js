@@ -21,8 +21,9 @@ const STATUS = { ok: true, v: 3, dl: false, dash: false, proxy: false, app: 'fak
 
 // Schein-Helfer: antwortet mit der Status-JSON; `bend` ersetzt genau die Antwort auf einen Befehl.
 function fakeHelper(bend) {
-  const h = { handshakes: 0, sent: [] };
-  h.post = async (path, body) => {
+  const h = { handshakes: 0, sent: [], profiles: [] };
+  h.post = async (path, body, profile) => {
+    h.profiles.push({ path, profile });
     if (path === '/p1/ch/hs') { h.handshakes++; return new Uint8Array(69); }
     const text = new TextDecoder().decode(body);
     h.sent.push(text);
@@ -93,6 +94,53 @@ async function main() {
   // Review I1: nach HTTP 404 werden genau die fünf Steuerbefehle einmal wiederholt (absolute Werte, Abfragen).
   check('Wiederholung nach 404 nur für die fünf Steuerbefehle', ['status', 'beat', 'end', 'vol', 'bright'].every((op) => NS.retryableAfterStaleSession(op)) &&
     !['ping', 'dummy', 'download', 'push', 'pull', 'pair', '', undefined].some((op) => NS.retryableAfterStaleSession(op)));
+  {
+    const { channel, helper } = channelWith(() => control({ ok: true }));
+    const bind = { player: 'p0123456789abcdef01234567', gen: 1, rev: 1 }, id = 'ab'.repeat(16);
+    await channel.download('hlsplan', { url: 'https://media.example/master.m3u8', bind });
+    await channel.download('hlsstart', { id, planId: id, option: 'cd'.repeat(12), bind });
+    await channel.download('dlstart', { id, url: 'https://media.example/clip.mp4' });
+    await channel.download('dlstatus', { id });
+    await channel.download('dlcancel', { id });
+    await channel.command('status');
+    check('Only validated hlsplan selects the bounded planning profile; handshake/start/status/cancel stay short',
+      helper.profiles.length === 7 && helper.profiles[1].profile === 'hlsplan' && helper.profiles.filter(x => x.profile !== undefined).length === 1);
+    const before = helper.profiles.length;
+    check('Page cannot supply a planning timeout', await expectError(channel.download('hlsplan', { url: 'https://media.example/master.m3u8', bind, timeoutMs: 999999 }), 'input') === true && helper.profiles.length === before);
+  }
+  // Actual transport with controlled deadline signals: exercise cancellation both before headers and in the body.
+  // No long wall-clock wait and no change to production timers.
+  {
+    const fs = require('fs'), path = require('path'), vm = require('vm');
+    const clocks = [];
+    const ctx = { Uint8Array, AbortSignal: { timeout(ms) { const c = new AbortController(); clocks.push({ ms, c }); return c.signal; } } };
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(process.env.CHANNEL_SRC_DIR || path.join(__dirname, '../../channel'), 'channel-transport.js'), 'utf8'), ctx);
+    const requests = [];
+    const tr = ctx.KadriChannel.createTransport({ port: 47899, fetchImpl: async (u, o) => {
+      requests.push(o);
+      return { status: 200, headers: { get: () => '0' }, body: { getReader: () => ({ read: async () => ({ done: true }) }) } };
+    } });
+    await tr.post('/p1/ch/rec', new Uint8Array(), 'hlsplan');
+    await tr.post('/p1/ch/rec', new Uint8Array());
+    await tr.post('/p1/ch/hs', new Uint8Array());
+    check('Planning has fixed 25-s cap; ordinary records and handshake retain 5 s', clocks.map(x => x.ms).join(',') === '25000,5000,5000');
+    check('Planning retains credential-free nonredirecting transport', requests.every(x => x.credentials === 'omit' && x.redirect === 'error' && x.referrerPolicy === 'no-referrer' && x.cache === 'no-store'));
+    for (const [p, profile] of [['/p1/ch/hs', 'hlsplan'], ['/p1/ch/rec', 999999], ['/p1/ch/rec', 'other']])
+      check('Invalid timeout profile rejected before fetch: ' + p + '/' + profile, await expectError(tr.post(p, new Uint8Array(), profile), 'config') === true);
+    const hung = (signal) => new Promise((resolve, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    for (const body of [false, true]) {
+      const t = ctx.KadriChannel.createTransport({ port: 47899, fetchImpl: async (u, o) => body ?
+        { status: 200, headers: { get: () => '1' }, body: { getReader: () => ({ read: () => hung(o.signal) }) } } : hung(o.signal) });
+      const result = expectError(t.post('/p1/ch/rec', new Uint8Array(), 'hlsplan'), 'timeout');
+      await Promise.resolve();
+      clocks[clocks.length - 1].c.abort(new DOMException('synthetic deadline', 'TimeoutError'));
+      check('Planning deadline aborts stalled ' + (body ? 'response body' : 'response headers'), await result === true);
+    }
+  }
   summary('channel-unit');
 }
 

@@ -1,0 +1,46 @@
+<!doctype html><html lang=de><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Kadri P4 – HLS speichern (Testseite)</title>
+<script src="../hls.min.js"></script></head>
+<body style="margin:0;font:15px sans-serif;background:#f4f4f4">
+<!-- Öffentliche Gerätetestseite für P4c (HLS → MP4 über die Test-App de.evp.helfer.p4test). Eigenes synthetisches
+     Material aus tools/p4test/make-device-page.sh: Testbild, weißer Blitz und Piepton alle 2 s gleichzeitig (A/V-Versatz
+     am Inhalt sichtbar/hörbar). Keine fremden Medien, keine Anmeldung, keine Cookies. -->
+<video id=v muted playsinline controls style="width:100%;display:block;background:#000"></video>
+<div style="padding:10px 12px">
+  <b>Kadri P4 – HLS speichern</b> · Wiedergabe: <span id=s>bitte Fall wählen</span>
+  <div id=b style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0"></div>
+  <div id=e style="font-size:14px;color:#333"></div>
+</div>
+<script>
+  const cases = [
+    ['T1', 'TS · Ton getrennt', 'p4/ts_sep/master.m3u8', '1 Option (360p · de). Datei 20 s, Blitz und hoher Piepton gleichzeitig.'],
+    ['T2', 'TS · Ton im Video', 'p4/ts_muxed/master.m3u8', '1 Option (360p · Ton im Stream). Datei 20 s mit Ton.'],
+    ['T3', 'fMP4 · Ton getrennt', 'p4/fmp4_sep/master.m3u8', '1 Option (360p · de). Datei 20 s, synchron.'],
+    ['T4', 'fMP4 · Ton im Video', 'p4/fmp4_muxed/master.m3u8', '1 Option (360p · Ton im Stream). Datei 20 s mit Ton.'],
+    ['T5', 'Qualität 360p / 180p', 'p4/quality/master.m3u8', '2 Optionen: 360p und 180p. Gewählte Auflösung steckt in der Datei.'],
+    ['T6', 'Zwei Tonspuren', 'p4/two_audio/master.m3u8', '2 Optionen: de = hoher Piepton, en = tiefer Piepton. Die Datei enthält genau die gewählte Spur.'],
+    ['T7', 'Langsam (5 min, ≈600 Abrufe)', 'p4/slow/master.m3u8', 'Lädt lange genug für Abbruch, Fortsetzen, Parallelität und Bildschirm aus.'],
+    ['T14a', 'Verschlüsselt (AES-128)', 'p4/aes/master.m3u8', 'Kein Speichern möglich – klarer Grund „verschlüsselt“, keine Datei.'],
+    ['T14b', 'Live', 'p4/live/index.m3u8', 'Kein Speichern möglich – klarer Grund „Live“, keine Datei.'],
+  ];
+  const v = document.getElementById('v'), s = document.getElementById('s'), b = document.getElementById('b'), e = document.getElementById('e');
+  let h = null;
+  function play(c) {
+    if (h) { h.destroy(); h = null; }
+    s.textContent = c[0] + ' lädt …';
+    e.textContent = 'Erwartung: ' + c[3] + ' Video im Kadri-Player öffnen, ⬇ → „Stream speichern …“.';
+    if (!(window.Hls && Hls.isSupported())) { s.textContent = 'hls.js nicht verfügbar'; return; }
+    h = new Hls();
+    h.loadSource(c[2]);
+    h.attachMedia(v);
+    h.on(Hls.Events.MANIFEST_PARSED, () => { s.textContent = c[0] + ' · ' + c[1]; v.play().catch(() => {}); });
+    h.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) s.textContent = c[0] + ' – Wiedergabefehler: ' + d.type + ' (für T14 erwartbar)'; });
+  }
+  for (const c of cases) {
+    const x = document.createElement('button');
+    x.textContent = c[0] + ' ' + c[1];
+    x.style.cssText = 'padding:8px 10px;font:14px sans-serif';
+    x.onclick = () => play(c);
+    b.appendChild(x);
+  }
+</script></body></html>

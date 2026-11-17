@@ -117,13 +117,15 @@ threading.Thread(target=hsrv.serve_forever, daemon=True).start()
 # ---------- echte Helfer-Seite des sicheren Kanals (ChannelServer der Helper-App auf dem Desktop) ----------
 # HELPER_HOST_DIR: Ausgabe von tests/java/channel/build.sh im Helper-Repository. Gerät (Helligkeit, Lautstärke) nachgebildet.
 class ChannelHelper:
-    def __init__(self):
+    # state: Zustand eines früheren Prozesses weiterverwenden (Neustart des Helfers, Phase C3)
+    def __init__(self, state=None):
         import subprocess
         d = os.environ.get('HELPER_HOST_DIR')
         if not d: raise RuntimeError('HELPER_HOST_DIR fehlt (Helper-Repository: tests/java/channel/build.sh)')
-        self.state = tempfile.mkdtemp(prefix='kadri-helper-')
+        self.state = state or tempfile.mkdtemp(prefix='kadri-helper-')
         self.p = subprocess.Popen(['java', '-Djava.library.path=' + os.path.join(d, 'lib'), '-cp', os.path.join(d, 'classes'),
-                                   'de.evp.helfer.ChannelHarness', self.state], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+                                   'de.evp.helfer.ChannelHarness', self.state], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
+                                  env=dict(os.environ, LC_ALL='C.UTF-8'))   # UTF-8-Dateinamen in der Desktop-Ablage
         self.ready = self._line()
     def _line(self):
         while True:
@@ -141,6 +143,9 @@ class ChannelHelper:
         try: self.cmd('quit')
         except Exception: pass
         self.p.wait(10)
+    def kill(self):
+        # hart beenden (wie ein Absturz bzw. Android beendet die App) – Zustand bleibt für einen Neustart
+        self.p.kill(); self.p.wait(10)
 
 def pair_helper(ctx, ext_id, helper):
     """Koppelt Kadri über die echte Einstellungsseite mit dem Code des Helfers."""
@@ -154,7 +159,7 @@ def pair_helper(ctx, ext_id, helper):
 def launch(p, user_dir=None, extra_args=None):
     user_dir = user_dir or tempfile.mkdtemp(prefix='kadri-')
     ctx = p.chromium.launch_persistent_context(
-        user_dir, headless=False,
+        user_dir, headless=False, executable_path=os.environ.get('KADRI_CHROMIUM') or None,   # (lokal: anderes Chromium)
         args=['--disable-extensions-except=' + EXT, '--load-extension=' + EXT, '--autoplay-policy=no-user-gesture-required'] + (extra_args or []),
         viewport={'width': 400, 'height': 800}, is_mobile=True, has_touch=True, device_scale_factor=2, locale='de-DE')
     # Hintergrund der Erweiterung abwarten (startet manchmal erst spät – dann einmal eine Seite öffnen und weiter warten)
@@ -168,7 +173,9 @@ def launch(p, user_dir=None, extra_args=None):
             pg.goto(B + 'direct.html'); sw = ctx.service_workers[0] if ctx.service_workers else None
     return ctx, sw, user_dir
 
+LAST_OPEN = {}   # Zustand des letzten open_player (nur Booleans, keine Adressen)
 def open_player(pg, url):
+    LAST_OPEN.clear()
     pg.goto(url)
     pg.wait_for_function('document.getElementById("v").currentTime > 0.8', timeout=20000)
     pg.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.0)
@@ -176,8 +183,10 @@ def open_player(pg, url):
     pg.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
     pg.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
     # (nahtloser Start: bis die eigene Kopie aufgeholt hat, läuft die Seite sichtbar weiter – dann still)
-    try: pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=12000)
-    except Exception: pass
+    # Ob die Brücke wirklich endete, wird festgehalten (LAST_OPEN) statt verschluckt: Tests mit harten
+    # Startvoraussetzungen geben es bei einem Fehlschlag in ihrer Diagnose aus.
+    try: pg.wait_for_function('() => !%s.querySelector(".vbridge")' % R, timeout=12000); LAST_OPEN['bridge_ended'] = True
+    except Exception: LAST_OPEN['bridge_ended'] = False
     time.sleep(0.6)
 
 def settings(pg):
@@ -189,6 +198,17 @@ def settings(pg):
     return pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).map(b => [b.firstChild.textContent, b.querySelector("small") ? b.querySelector("small").textContent : ""])' % R)
 def pick(pg, label):
     return pg.evaluate('(l) => { const b = Array.from(%s.querySelectorAll(".vmenu.on .vmi")).find(b => b.firstChild.textContent === l); if (b) b.click(); return !!b; }' % R, label)
+def player_diag(pg, path=None):
+    """Redigierter Zustand des eigenen Players für Fehlermeldungen: keine Adressen, Cookies oder Serverantworten.
+    path: erwarteter Pfad der Quelle – ausgegeben wird nur, ob currentSrc dazu passt (Boolean)."""
+    d = pg.evaluate('''(p) => { const r = %s; const v = r.querySelector(".vv"); const b = r.querySelector("button[aria-label^=Herunterladen]");
+      let match = null; if (v && p) { try { match = v.currentSrc !== "" && new URL(v.currentSrc).pathname === p; } catch (e) { match = false; } }
+      return { readyState: v ? v.readyState : null, paused: v ? v.paused : null, ended: v ? v.ended : null,
+        error: v && v.error ? v.error.code : null, srcObject: !!(v && v.srcObject), sourceMatch: match,
+        bridge: !!r.querySelector(".vbridge"), menu: Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((x) => x.firstChild.textContent),
+        hdl: b ? (b.dataset.hdl || "none") : null, hdlGen: b ? Number(b.dataset.hdlGen || 0) : null }; }''' % R, path)
+    d['bridgeEndedAtOpen'] = LAST_OPEN.get('bridge_ended')
+    return d
 def close_menu(pg):
     pg.evaluate('() => { const r = %s; r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); }' % R)
 

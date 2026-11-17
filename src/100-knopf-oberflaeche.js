@@ -25,11 +25,20 @@
 .pill .pb:focus-visible{outline:2px solid #fff;outline-offset:1px}
 .pill svg{width:23px;height:23px;fill:currentColor;flex:none;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.55)) drop-shadow(0 0 3px rgba(0,0,0,.25))}
 /* feine Trennlinie zwischen den zwei Symbolen */
-.pill .dl::after{content:"";position:absolute;right:-1px;top:11px;bottom:11px;width:1px;background:linear-gradient(transparent,rgba(255,255,255,.28),transparent)}
+.pill .dl::after{content:"";position:absolute;left:-1px;top:11px;bottom:11px;width:1px;background:linear-gradient(transparent,rgba(255,255,255,.28),transparent)}
 /* HD gefunden: kleiner eisblauer Punkt */
 .pill .hdot{position:absolute;top:8px;right:7px;width:7px;height:7px;border-radius:50%;background:#641800;box-shadow:0 0 8px rgba(100,24,0,.9);filter:invert(1);opacity:0;transform:scale(.4);transition:opacity .2s ease,transform .3s cubic-bezier(.34,1.56,.64,1)}
 .pill.hd .hdot{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){.pill,.pill .pb,.pill .hdot{transition:opacity .15s ease !important}}
+.dlm{position:fixed;z-index:2147483647;display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:18px;max-height:70vh;overflow:auto;
+ background:rgba(28,30,40,.82);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);color:#fff;
+ box-shadow:0 10px 30px rgba(0,0,0,.4);font:14px/1.3 var(--font);pointer-events:auto}
+.dlm .dlh{padding:6px 10px 4px;font-weight:700;font-size:13px;opacity:.8}
+.dlm .dli{all:unset;display:flex;flex-direction:column;gap:2px;padding:9px 10px;border-radius:12px;cursor:pointer;color:#fff}
+.dlm .dli:active,.dlm .dli:focus-visible{background:rgba(255,255,255,.14)}
+.dlm .dli small{font-size:12px;opacity:.72}
+.dlm .dli.info{cursor:default;opacity:.92}
+.dlm .dlx{align-items:center;opacity:.75;font-size:13px}
 .diag{position:fixed;left:10px;right:10px;top:10%;bottom:10%;display:flex;flex-direction:column;gap:8px;background:#161616;color:#eee;border-radius:18px;padding:12px;font:13px/1.35 var(--font);box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483647;pointer-events:auto}
 .diag .dh{font-weight:700;font-size:15px}
 .diag textarea{flex:1;width:100%;background:#000;color:#9f9;border:0;border-radius:10px;padding:8px;font:11px/1.35 monospace;resize:none}
@@ -285,13 +294,14 @@
     const st = document.createElement('style');
     st.textContent = CSS;
     const btn = h('button', { class: 'pb', 'aria-label': 'Im Videoplayer öffnen' }, icon(I.player), h('span', { class: 'hdot', 'aria-hidden': 'true' }));
-    const dlBtn = h('button', { class: 'pb dl', 'aria-label': 'Herunterladen (z. B. mit YTDLnis)' }, icon(I.download));
-    dlBtn.addEventListener('click', () => onDownload());
+    // P4c: ⬇ neben ▶ – speichert das laufende Video der Seite über die Helfer-App (src/105-download-knopf.js), ohne den
+    // Player zu öffnen; ohne Helfer-Kanal (Firefox/Userscript) wie bisher YTDLnis/Teilen. Lange drücken: Teilen.
+    const dlBtn = h('button', { class: 'pb dl', 'aria-label': 'Video speichern' }, icon(I.download));
+    dlBtn.addEventListener('click', () => onPageDownload());
     dlBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); onDownload(null, { share: true }); });   // lange drücken: Teilen
-    // Auf "nur Download"-Seiten (z. B. YouTube) gibt es keinen Player-Button
-    // Download-Button nur auf Seiten, die YTDLnis kann
-    // Der eingebaute Player geht überall – auch auf "nur Download"-Seiten wie YouTube
-    pill = h('div', { class: 'pill' }, btn);   // Download gibt es im großen Player
+    // Der eingebaute Player geht überall – auch auf "nur Download"-Seiten wie YouTube; ⬇ nur mit Helfer-Kanal oder
+    // auf Seiten, die YTDLnis kann (sonst gäbe es dort nichts zu speichern)
+    pill = pageDlShown() ? h('div', { class: 'pill' }, btn, dlBtn) : h('div', { class: 'pill' }, btn);   // [ ▶ ] [ ⬇ ]
     // Ein Tipp öffnet direkt (Verschieben zählt nicht als Tipp)
     pill.addEventListener('click', (e) => {
       if (suppressClick) {           // das war ein Verschieben, kein Tippen

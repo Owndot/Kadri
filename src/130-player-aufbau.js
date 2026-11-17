@@ -17,6 +17,14 @@
       framed: IN_FRAME, rfs: false, fsWait: null,   // eingebettetes Fenster: Hauptseite übernimmt Vollbild/Drehen
     };
     vp = st;
+    // Gemeinsamer Quellenbestand (P1): Kontext des Originalvideos; die Wiedergabe behält genau die bisherige Reihenfolge
+    // (Projektion), dazu je Eintrag die Kennung der Quelle. Download-Angebote kommen in 180 aus dem Bestand, nicht aus st.cur.
+    st.media = { orig: null, own: null };
+    try {
+      st.media.orig = mediaRegistry.contextFor(orig);
+      const pr = mediaRegistry.selectPlayback(st.media.orig, st.sources);
+      st.sources = pr.sources; st.srcIds = pr.ids;
+    } catch (e) { st.media.orig = null; }
     // Zeitmessung fürs Öffnen (Diagnose): ab dem Antippen des Knopfs
     st.openStat = openTimes = { t0: tapAt && performance.now() - tapAt < 4000 ? tapAt : performance.now(), how: '' };
     // Tonverstärkung vorbereiten, solange der Tipp auf "Player" noch "frisch" ist (sonst startet der Ton stumm)

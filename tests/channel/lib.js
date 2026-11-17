@@ -26,7 +26,7 @@ function loadChannel() {
   globalThis.wasm_bindgen.initSync({ module: fs.readFileSync(path.join(dir, 'kadri_pairing_poc_bg.wasm')) });
   // CHANNEL_SRC_DIR: nur für die Mutationsprobe (tests/channel/channel_mutation_check.js) – mutierte Kopien.
   const srcDir = process.env.CHANNEL_SRC_DIR || path.join(ROOT, 'channel');
-  for (const f of ['channel-store.js', 'channel-transport.js', 'channel-session.js'])
+  for (const f of ['channel-store.js', 'channel-transport.js', 'channel-session.js', 'channel-downloads.js'])
     vm.runInThisContext(fs.readFileSync(path.join(srcDir, f), 'utf8'), { filename: f });
   return { NS: globalThis.KadriChannel, core: globalThis.wasm_bindgen };
 }
@@ -43,10 +43,11 @@ async function portFree(port, ms) {
   throw new Error('port ' + port + ' still busy');
 }
 
-function startHelper() {
+// opts.state: Zustandsverzeichnis eines früheren Laufs weiterverwenden (Neustart des Helfer-Prozesses, Phase C3).
+function startHelper(opts = {}) {
   const dir = process.env.HELPER_HOST_DIR;
   if (!dir) throw new Error('HELPER_HOST_DIR not set (output of the helper repository\'s tests/java/channel/build.sh)');
-  const state = fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-helper-'));
+  const state = opts.state || fs.mkdtempSync(path.join(os.tmpdir(), 'kadri-channel-helper-'));
   const events = [], waiting = [];
   let p = null, buf = '';
   const next = () => new Promise((res, rej) => {
@@ -55,7 +56,8 @@ function startHelper() {
   });
   const ready = portFree(47899, 15000).then(() => {
     p = spawn('java', ['-Djava.library.path=' + path.join(dir, 'lib'), '-cp', path.join(dir, 'classes'), 'de.evp.helfer.ChannelHarness', state],
-      { stdio: ['pipe', 'pipe', 'inherit'] });
+      // UTF-8-Dateinamen in der Desktop-Ablage (auf Android immer UTF-8)
+      { stdio: ['pipe', 'pipe', 'inherit'], env: Object.assign({}, process.env, { LC_ALL: 'C.UTF-8' }) });
     p.stdout.on('data', (d) => {
       buf += d;
       let i;
@@ -81,14 +83,14 @@ function startHelper() {
       return o;
     },
     async regs() { const r = await cmd('list'); return r.split(' ').slice(1); },
-    async stop() {
+    // keep: Zustand (Kopplungen, Download-Journal, Dateien) für einen Neustart behalten; kill: Prozess hart beenden.
+    async stop(o = {}) {
       if (p) {
         const exited = new Promise((r) => p.once('exit', r));
-        try { await cmd('quit'); } catch (e) {}
-        p.kill();
+        if (o.kill) p.kill('SIGKILL'); else { try { await cmd('quit'); } catch (e) {} p.kill(); }
         await exited;
       }
-      fs.rmSync(state, { recursive: true, force: true });
+      if (!o.keep) fs.rmSync(state, { recursive: true, force: true });
     },
   };
 }

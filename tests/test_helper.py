@@ -1,7 +1,9 @@
 # Helfer-App über den sicheren Kanal (Kopplung per Code, Noise KK; echter ChannelServer der Helper-App auf dem Desktop,
 # nur das Gerät ist nachgebildet). Ohne Kopplung sieht man nur, was auch ohne App geht (keine Helligkeit, kein Eintrag
-# „Helper-App“). Gekoppelt sind Helligkeit und Lautstärke wieder da und kommen am Gerät an; Downloads über die App
-# bleiben vorübergehend aus (keine Helfer-Wege im Download-Menü). Der alte Port 47811 wird nie angesprochen.
+# „Helper-App“). Gekoppelt sind Helligkeit und Lautstärke wieder da und kommen am Gerät an. Der Helfer läuft hier OHNE
+# Download-Modus (wie eine App-Version ohne C2-Downloads): keine Helfer-Wege im Download-Menü; die alten Wege (Cookies
+# über /download, Laden über den Browser) gibt es nie. Direkte MP4-Downloads prüft test_mp4.py. Der alte Port 47811
+# wird nie angesprochen.
 #   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>
 import time
 from common import *
@@ -60,7 +62,7 @@ with sync_playwright() as p:
     check('… Einstellungen mit „Helper-App“', 'Helper-App' in names2, names2)
     close_menu(pg)
     dl2 = dl_menu()
-    check('… Download-Menü weiterhin ohne Helfer-Wege (Helfer-Downloads vorübergehend aus), Browser-Wege da', dl2 and 'Mit dem Helper' not in dl2 and 'Über den Browser laden' not in dl2, dl2)
+    check('… Helfer ohne Downloads: Download-Menü ohne Helfer-Wege, Browser-Wege da', dl2 and 'Mit dem Helper' not in dl2 and 'Über den Browser laden' not in dl2 and 'Mit der Helfer-App speichern' not in dl2 and 'Im Browser speichern' in dl2, dl2)
     time.sleep(3.0)
     check('… Lebenszeichen erreichen das Gerät', helper.device()['beats'] > d2['beats'])
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R)
