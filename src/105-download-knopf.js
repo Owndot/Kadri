@@ -1,6 +1,8 @@
   // ---------- P4c: Download-Knopf direkt am Video, neben „▶ Player“ ----------
-  // Ein Tipp auf ⬇ speichert das laufende Video der Seite über die Helfer-App, ohne den Kadri-Player zu öffnen; das Video
-  // der Seite läuft dabei unverändert weiter. Derselbe Weg wie im Player:
+  // Ein Tipp auf ⬇ öffnet immer zuerst die Auswahl (auch bei nur einer Option); erst ein Tipp auf einen Eintrag handelt.
+  // Die Helfer-App steht oben; „Im Browser speichern/öffnen“, YTDLnis und Teilen bleiben ausdrücklich wählbare
+  // Alternativen. Nie navigiert ein einfacher Tipp zur Videodatei oder startet einen Browser-Download. Der Kadri-Player
+  // öffnet sich dabei nicht; das Video der Seite läuft unverändert weiter. Derselbe Weg wie im Player:
   //  - Quellen aus der gemeinsamen Registry (mediaRegistry) mit denselben Belegen: Adresse am Element, Stücke GENAU dieses
   //    Streams gerade geladen („läuft gerade, geprüft“), Seitendaten mit Video-ID, Adapter; dazu, was das Element
   //    nachweislich gerade abspielt (currentSrc, kein MSE). Nichts wird geraten, kein versteckter Player.
@@ -9,7 +11,7 @@
   //  - dieselbe zentrale Download-Verwaltung im Hintergrund (start/hlsplan/hlsstart/find/cancel über KADRI_DOWNLOAD):
   //    dort werden auch doppelte Starts zwischen Knopf und Player erkannt.
   // HLS-Stücke werden nie als MP4 gespeichert (mediaDownloadState: Segmente/Listen sind keine MP4-Datei).
-  // Lange drücken: Teilen wie bisher; YTDLnis/Teilen bleiben im Menü erreichbar.
+  // Lange drücken: Teilen wie bisher; YTDLnis, Browser und Teilen bleiben im Menü erreichbar.
   const pageDl = { busy: false, job: null, url: '' };
   // (Funktionsdeklarationen: ui() in 100 fragt pageDlShown() schon beim Start ab)
   function pageDlHelper() { return typeof KADRI_DOWNLOAD === 'function' && CONFIG.systemHelper !== false; }
@@ -54,21 +56,43 @@
     : kind === 'rejected' ? 'Die Helfer-App erkennt diese Kopplung nicht mehr – neu koppeln'
       : 'Helfer-App nicht erreichbar – App öffnen und erneut tippen';
 
-  // Externe Wege bleiben erreichbar (wie bisher über ⬇ am Video bzw. lange drücken)
+  // Videodatei, die das Element nachweislich gerade abspielt (wie directUrl im Player): http(s), kein MSE/Blob, Bild
+  // vorhanden, kein Stream (HLS/DASH). Nur sie wird dem Browser angeboten – keine behauptete oder geratene Quelle.
+  function pageDlDirect(v) {
+    let u = '';
+    try { u = v.currentSrc || ''; } catch (e) { return ''; }
+    if (!/^https?:/i.test(u) || v.srcObject || v.readyState < 2 || v.error) return '';
+    return /\.(m3u8|mpd)(\?|#|$)/i.test(u) ? '' : u;
+  }
+  // Alternativen, nur auf ausdrücklichen Tipp (wie im Player): YTDLnis, Browser-Download, im Browser öffnen, Teilen
   function pageDlExternal(v, items) {
     let link = '';
     try { link = SHOW_DOWNLOAD ? postUrlFor(v) : ''; } catch (e) {}
-    if (link) {
-      items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', fn: () => toYtdlnis(link) });
-      items.push({ label: 'Link teilen', sub: 'Teilen-Menü', fn: () => shareUrl(link) });
+    const d = pageDlDirect(v);
+    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', fn: () => toYtdlnis(link) });
+    if (d) {
+      items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => {
+        toast('Download wird vorbereitet …');
+        browserDownload(d).then((ok) => toast(ok ? 'Download läuft im Browser – du kannst die Seite verlassen'
+          : 'Die Seite sperrt den Download'));
+      } });
+      items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
+        const w = window.open(d, '_blank');
+        if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
+      } });
     }
+    if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
     return items;
   }
 
   async function onPageDownload() {
     const v = active;
     if (!v) return;
-    if (!pageDlHelper()) { onDownload(); return; }   // ohne Helfer-Kanal (Firefox, Userscript): wie bisher
+    if (!pageDlHelper()) {   // ohne Helfer-Kanal (Firefox, Userscript): dieselbe Auswahl, nur die Alternativen
+      const ext = pageDlExternal(v, []);
+      if (ext.length) pageDlMenu('Speichern', ext); else toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen');
+      return;
+    }
     if (pageDl.busy) return;
     pageDl.busy = true;
     try {
@@ -97,10 +121,7 @@
       }
       const n = o.mp4.length + o.hls.length;
       if (!n) { pageDlMenu('Speichern', pageDlExternal(v, [{ label: pageDlReason(o, caps), info: true }])); return; }
-      // Ein Tipp genügt nur für eine tatsächlich geladene MP4; eine bloß behauptete (Adapter/Seitendaten) nie sofort starten.
-      if (o.mp4.length === 1 && !o.hls.length && o.mp4[0].loaded) { await pageDlStartMp4(o.mp4[0]); return; }
-      if (o.hls.length === 1 && !o.mp4.length) { await pageDlPlan(o.hls[0]); return; }
-      // Tatsächlich Geladenes zuerst (MP4 oder Stream); sonst bisherige Reihenfolge (stabile Sortierung)
+      // Immer zuerst die Auswahl, auch bei nur einer Option (kein Sofortstart). Tatsächlich Geladenes zuerst (MP4 oder Stream); sonst bisherige Reihenfolge (stabile Sortierung)
       const items = o.mp4.slice(0, 4).map((x) => ({ loaded: x.loaded, item: { label: 'MP4' + (x.height ? ' · ' + x.height + 'p' : ''), sub: tr('Helfer-App · direkt aufs Handy') + ' · ' +
         tr(hdlEvidenceText(x)), fn: () => pageDlStartMp4(x) } }))
         .concat(o.hls.slice(0, 2).map((x) => ({ loaded: x.loaded, item: { label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
@@ -149,7 +170,7 @@
     if (p.job && pageDlActive(p.job)) { hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = sel.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
     const resume = p.job && p.job.state === 'interrupted' ? p.job : null;
     const go = (opt) => pageDlGo(sel.url, p.planId, opt, resume, x);
-    if (p.options.length === 1) { await go(p.options[0]); return; }   // eine Qualität, ein Ton: direkt
+    // auch bei nur einer Qualität/Tonspur erst die Auswahl (wie im Player); gestartet wird nur per Tipp
     const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
     pageDlMenu(resume ? 'Stream fortsetzen' : 'Stream speichern', p.options.slice(0, 12).map((o) => ({
       label: (resume ? tr('Fortsetzen') + ': ' : '') + (o.height ? o.height + 'p' : tr('Qualität unbekannt')) + ' · ' +

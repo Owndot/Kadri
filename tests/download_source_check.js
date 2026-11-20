@@ -152,8 +152,23 @@ async function verifyProbe(text) {
   seen.canplay(); seen.seeked(); assert.equal(probes, 2, 'probe triggered when media is ready again');
   c2.vp = {}; seen.canplay(); assert.equal(probes, 2, 'replaced player: no probe');
 }
+// ---------- Tipp auf ⬇ im Player: immer nur die Auswahl (dlMenu), nie von selbst Browser-Download, YTDLnis oder Teilen ----------
+function verifyTap(text) {
+  const m = text.match(/    on\(bDl, \(\) => \{[\s\S]*?\n    \}\);|    on\(bDl, [^\n{]+;/);
+  assert.ok(m, 'download tap handler');
+  const calls = [];
+  const rec = (n) => (...a) => { calls.push(n); return a[0]; };
+  const ctx = { on: (el, f) => f(), bDl: {}, dlMenu: rec('dlMenu'), browserSave: rec('browserSave'), toYtdlnis: rec('toYtdlnis'), shareUrl: rec('shareUrl'),
+    dlOut: (f) => { calls.push('dlOut'); f(); }, directUrl: () => url, postUrlFor: () => 'https://site.example/post/1', orig: {}, SHOW_DOWNLOAD: true,
+    onSite: () => true, CONFIG: { ytdlpSites: ['site.example'], downloader: 'ytdlnis' }, hdlShown: () => false, window: { open: rec('open') },
+    browserDownload: rec('browserDownload'), directDownload: rec('directDownload') };
+  vm.runInNewContext(m[0], ctx);
+  assert.deepEqual(calls, ['dlMenu'], 'tap must only open the selection, got ' + calls.join(','));
+}
 (async () => {
 verify(source);
+verifyTap(source);
+console.log('PASS player download tap: selection only (no browser download, no YTDLnis, no share, no navigation)');
 await verifyProbe(source);
 console.log('PASS source readiness: candidate, metadata, failure, switch, HLS/DASH, capture, signed URL and loadeddata');
 console.log('PASS capability probe: temporary unsuitability (caps/find), A->B->A, late/replaced/rejected/unreachable, no storm, ready events');

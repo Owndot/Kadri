@@ -58,9 +58,14 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   check('download request unchanged; no diagnostic data forwarded', a.requests[0].op === 'start' && Object.keys(a.requests[0].args).sort().join(',') === 'name,url');
 
   const b = setup('hls');
-  b.ctx.reply = (op) => op === 'hlsplan' ? { ok: true, value: { planId: 'plan-private-id', options: [{ id: 'option-private-id' }] } }
+  b.ctx.reply = (op) => op === 'hlsplan' ? { ok: true, value: { planId: 'plan-private-id', options: [{ id: 'option-private-id', height: 720, audio: 'muxed' }] } }
     : { ok: true, value: { job: { id: 'job-private-id', kind: 'hls', state: 'interrupted', reason: 'http_404', done: 2, of: 13, phase: '' } } };
+  const bMenus = [];
+  b.ctx.pageDlMenu = (title, items) => bMenus.push(items);
   await b.api.pageDlPlan(b.opt);
+  check('single HLS quality: selection shown first, nothing started by the plan alone',
+    bMenus.length === 1 && bMenus[0].length === 1 && /720p/.test(bMenus[0][0].label) && !b.requests.some((r) => r.op === 'hlsstart'));
+  await bMenus[0][0].fn();
   check('direct HLS preserves HTTP 404 in interrupted state', b.api.diags.length === 1 && b.api.diags[0].reason === 'http_404' && b.api.diags[0].state === 'interrupted');
   text = b.api.hdlDiagText(b.api.diags[0]);
   check('HLS distinguishes successful planning from unknown error resource', /Planung erfolgreich \(erste Option\)/.test(text) && /Ressourcen 2\/13 \(inkl. Init\)/.test(text) && /Phase unbekannt/.test(text));
@@ -204,8 +209,9 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   const buf = (t) => new TextEncoder().encode(t).buffer;
   const hlsWalk = async (loc, statusOf, env = { confirm: () => true }, base = 'https://www.private.invalid/v/master.m3u8') => {
     const h = setup('hls', env);
-    h.ctx.reply = (op) => op === 'hlsplan' ? { ok: true, value: { planId: 'plan-private-id', options: [{ id: 'option-private-id' }] } }
+    h.ctx.reply = (op) => op === 'hlsplan' ? { ok: true, value: { planId: 'plan-private-id', options: [{ id: 'option-private-id', audio: 'muxed' }] } }
       : { ok: true, value: { job: { id: 'job-private-id', kind: 'hls', state: 'interrupted', reason: 'http_403', done: 0, of: 137, phase: '', loc } } };
+    h.ctx.pageDlMenu = (title, items) => items[0].fn();   // Nutzer wählt die eine angebotene Qualität
     h.ctx.mediaRegistry.resolveStream = () => ({ ok: true, url: base, bind: {} });
     h.ctx.probeReply = (o) => {
       const st = statusOf(o);
@@ -278,7 +284,14 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     t.menus[0].length === 1 && /laut Seite, Länge\/Inhalt ungeprüft/.test(t.menus[0][0].sub));
   t = btn([mp4p], []);
   await t.api.onPageDownload();
-  check('single actually loaded MP4: one tap still starts directly', t.requests.some((r) => r.op === 'start') && t.menus.length === 0);
+  check('single actually loaded MP4: selection first, no immediate start', !t.requests.some((r) => r.op === 'start') && t.menus.length === 1 &&
+    t.menus[0].length === 1 && /^MP4 · 360p/.test(t.menus[0][0].label));
+  await t.menus[0][0].fn();
+  check('… helper download starts only after tapping the entry', t.requests.filter((r) => r.op === 'start').length === 1);
+  t = btn([], [hlsL]);
+  await t.api.onPageDownload();
+  check('single stream: selection first, no plan request by the tap alone', t.menus.length === 1 && t.menus[0].length === 1 &&
+    t.menus[0][0].label === 'Stream speichern …' && !t.requests.some((r) => r.op === 'plan-menu' || r.op === 'hlsplan'));
   t = btn([mp4d], [hlsL]);
   await t.api.onPageDownload();
   check('loaded stream ranks before a claimed MP4 and says so', t.menus.length === 1 && t.menus[0][0].label === 'Stream speichern …' &&
@@ -286,5 +299,36 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   t = btn([mp4d], [hlsD]);
   await t.api.onPageDownload();
   check('nothing loaded: previous order (MP4 before stream) unchanged', t.menus.length === 1 && /^MP4/.test(t.menus[0][0].label) && t.menus[0][1].label === 'Stream speichern …');
+  // Alternativen am Seitenknopf: nur die nachweislich abgespielte Videodatei, nur auf ausdrücklichen Tipp
+  const ext = (patch, env) => {
+    const u = setup('mp4'), opened = [], saved = [];
+    Object.assign(u.ctx.active, patch || {});
+    u.ctx.window = { open: (x) => { opened.push(x); return {}; } };
+    u.ctx.browserDownload = async (x) => { saved.push(x); return true; };
+    u.ctx.shareUrl = () => {}; u.ctx.toYtdlnis = () => {};
+    Object.assign(u.ctx, env || {});
+    return Object.assign(u, { items: u.ctx.pageDlExternal(u.ctx.active, []), opened, saved });
+  };
+  let x = ext();
+  check('alternatives: browser save/open and share offered for the played file, nothing done before a tap',
+    x.items.map((i) => i.label).join('|') === 'Im Browser speichern|Im Browser öffnen|Teilen …' && !x.opened.length && !x.saved.length && !x.requests.length);
+  x.items[0].fn(); x.items[1].fn(); await flush();
+  check('… browser actions only on their own entry', x.saved.length === 1 && x.opened.length === 1 && x.saved[0] === x.url && x.opened[0] === x.url);
+  for (const [why, patch] of [['stream (HLS)', { currentSrc: 'https://private.invalid/master.m3u8' }], ['DASH', { currentSrc: 'https://private.invalid/a.mpd?x=1' }],
+    ['MSE/blob', { currentSrc: 'blob:https://private.invalid/1' }], ['no frame yet', { readyState: 1 }], ['media error', { error: { code: 4 } }],
+    ['srcObject', { srcObject: {} }]]) {
+    x = ext(patch);
+    check('alternatives: no browser file for ' + why, !x.items.some((i) => /Im Browser/.test(i.label)));
+  }
+  // ohne Helfer-Kanal: Auswahl statt direktem Sprung zu YTDLnis
+  const nh = setup('mp4'), nhMenus = [];
+  nh.ctx.KADRI_DOWNLOAD = undefined;
+  nh.ctx.SHOW_DOWNLOAD = true; nh.ctx.postUrlFor = () => 'https://private.invalid/post/1';
+  let ytdl = 0;
+  nh.ctx.toYtdlnis = () => { ytdl++; }; nh.ctx.shareUrl = () => {}; nh.ctx.window = { open: () => ({}) }; nh.ctx.browserDownload = async () => true;
+  nh.ctx.pageDlMenu = (title, items) => nhMenus.push(items);
+  nh.ctx.onDownload = () => { ytdl++; };
+  await nh.api.onPageDownload();
+  check('without helper channel: tap shows the selection (YTDLnis first), YTDLnis not opened', nhMenus.length === 1 && nhMenus[0][0].label === 'Mit YTDLnis' && ytdl === 0);
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

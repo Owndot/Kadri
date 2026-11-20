@@ -466,21 +466,9 @@
       if (!items.length) { toast('Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items, keep);
     }
-    // Tipp: der beste Weg von selbst
-    //  1. Seiten, die yt-dlp kennt → YTDLnis (beste Qualität mit Ton)
-    //  2. Helfer-App kann die MP4-Datei speichern → Auswahl (sie startet nur auf ausdrücklichen Tipp)
-    //  3. Videodatei → Download des Browsers
-    //  4. sonst YTDLnis mit dem Link · ohne alles: Hinweis
-    on(bDl, () => {
-      const d = directUrl();
-      let link = '';
-      try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
-      if (link && onSite(CONFIG.ytdlpSites)) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
-      if (hdlShown()) { dlMenu(); return; }   // Helfer-App kann die Datei speichern: Auswahl zeigen, nichts von selbst
-      if (d) { browserSave(d); return; }
-      if (link) { if (CONFIG.downloader === 'share') dlOut(() => shareUrl(link)); else dlOut(() => toYtdlnis(link)); return; }
-      dlMenu();
-    });
+    // Tipp: immer die Auswahl (Helfer-App zuerst, dann YTDLnis, Browser, Teilen) – nie von selbst zur Videodatei
+    // navigieren, keinen Browser-Download und keine andere App starten; gehandelt wird erst auf einen Eintrag.
+    on(bDl, () => dlMenu());
     bDl.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); dlMenu(); });
     // Teilen: der Link zum Video – Beitrag (Instagram/Facebook/TikTok …), sonst die Seite. In einem eingebetteten
     // Fenster fragt das Skript die Hauptseite nach ihrer Adresse (nur für das Fenster, das gerade den Player zeigt).

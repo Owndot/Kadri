@@ -4,14 +4,16 @@
 # Geprüft:
 #  - ⬇ erscheint neben ▶; ohne Kopplung verständliche Erklärung statt eines funktionslosen Knopfs
 #  - HLS (Seite spielt mit hls.js/MSE): ⬇ erkennt den gerade laufenden Stream (Stücke geladen = gebunden), ohne den
-#    Kadri-Player zu öffnen; eine Option → ein Tipp startet; Datei fertig; das Video der Seite läuft weiter
-#  - MP4 (<video src>): ein Tipp startet; Datei fertig; während des Laufs zeigt ⬇ Stand und „Abbrechen“ (kein zweiter Start)
+#    Kadri-Player zu öffnen; ein Tipp zeigt immer zuerst die Auswahl (auch bei einer Option), gestartet wird erst per
+#    Eintrag; Datei fertig; das Video der Seite läuft weiter
+#  - MP4 (<video src>): ein Tipp zeigt die Auswahl (Helfer-App zuerst, „Im Browser speichern/öffnen“, Teilen als
+#    Alternativen), keine Navigation, kein neuer Tab; Start per Eintrag; während des Laufs zeigt ⬇ Stand und „Abbrechen“
 #  - kein sicher zugeordnetes Format (WebM): klarer Grund, keine Anfrage beim Helfer
 #  - Seite sofort nach dem Tipp verlassen (0 ms), Tab-Wechsel: der Download läuft weiter und wird fertig
 #  - Flugmodus mitten im Stream: „Wartet auf Internet“, keine Anfrage ohne Netz, Netz zurück → fertig ohne Zutun,
 #    kein Segment doppelt; Abbruch während des Wartens → nie wieder aufgenommen
 #  - Neustart des Service Workers und des Browsers: Stand bleibt nachvollziehbar
-#  - nie Cookie/Authorization/Referer beim Helfer, keine Adresse in Hinweisen
+#  - nie Cookie/Authorization beim Helfer; Referer nur die Herkunft der Seite; keine Adresse in Hinweisen
 #   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>
 import http.server, threading, time, urllib.parse
 from common import *
@@ -128,6 +130,26 @@ def menu(pg, secs=10):
 def menu_pick(pg, label):
     return pg.evaluate('(l) => { const b = Array.from(%s.querySelectorAll(".dlm .dli")).find(b => b.firstChild.textContent === l); if (b) b.click(); return !!b; }' % R, label)
 def menu_close(pg): pg.evaluate('() => { const b = %s.querySelector(".dlm .dlx"); if (b) b.click(); }' % R)
+ORIGIN = BASE + '/'
+def ref_ok(x): return x.get('down') or x['ref'] == ORIGIN   # Referer nur die Seitenherkunft (ohne Pfad/Query)
+def menu_first(pg):
+    # erster wählbarer Eintrag (kein Hinweis, nicht „Schließen“)
+    return pg.evaluate('() => { const b = %s.querySelector(".dlm .dli:not(.info):not(.dlx)"); if (!b) return ""; const l = b.firstChild.textContent; b.click(); return l; }' % R)
+def tap_save(pg, kind):
+    # ⬇ → Auswahl → Helfer-Eintrag; bei HLS danach Qualität/Ton → erste Option. Liefert die gezeigte erste Auswahl.
+    tap_dl(pg)
+    it = menu(pg)
+    want = 'Stream speichern …' if kind == 'hls' else next((l for l, _ in it if l.startswith('MP4')), '')
+    t0 = len(toasts(pg))
+    if not want or not menu_pick(pg, want): return it
+    if kind == 'hls':
+        end = time.time() + 15
+        while time.time() < end:
+            sub = pg.evaluate('() => { const h = %s.querySelector(".dlm .dlh"); return h ? h.textContent : ""; }' % R)
+            if sub.startswith('Stream'): menu_first(pg); break
+            if any('prüft den Stream' not in t for t in toasts(pg)[t0:]): break   # Plan abgelehnt (Hinweis statt Auswahl)
+            time.sleep(0.2)
+    return it
 def player_open(pg): return pg.evaluate('() => !!%s.querySelector(".vv")' % R)
 def page_playing(pg):
     t0 = pg.evaluate('document.getElementById("v").currentTime'); time.sleep(0.8)
@@ -167,25 +189,47 @@ with sync_playwright() as p:
     menu_close(pg)
     check('Kopplung über die Einstellungsseite', pair_helper(ctx, ext_id, helper) == 'Verbunden')
 
-    # ---------- HLS über ⬇, ohne Player; eine Option → ein Tipp ----------
+    # ---------- HLS über ⬇, ohne Player; auch bei einer Option zuerst die Auswahl ----------
     goto_playing(pg, BASE + '/d/hls.html?n=eins')
+    n0 = len(helper_hits()); pages0 = len(ctx.pages); url0 = pg.url
     tap_dl(pg)
-    check('HLS: ein Tipp prüft den Stream und startet (eine Option, kein Menü)', wait_toast(pg, 'Helfer-App lädt', 20), toasts(pg))
+    it = menu(pg)
+    check('HLS: Tipp zeigt zuerst die Auswahl („Stream speichern …“ oben), keine Anfrage beim Helfer',
+          it and it[0][0] == 'Stream speichern …' and len(helper_hits()) == n0, it)
+    check('… keine Navigation, kein neuer Tab, kein Browser-Angebot für den Stream (MSE)',
+          pg.url == url0 and len(ctx.pages) == pages0 and not any(l.startswith('Im Browser') for l, _ in it), (pg.url, len(ctx.pages), it))
+    menu_pick(pg, 'Stream speichern …')
+    end = time.time() + 15; head = ''
+    while time.time() < end and not head.startswith('Stream'):
+        head = pg.evaluate('() => { const h = %s.querySelector(".dlm .dlh"); return h ? h.textContent : ""; }' % R); time.sleep(0.2)
+    sub = menu(pg)
+    check('HLS: auch bei einer Qualität erst die Auswahl (Qualität und Ton), noch kein Segment', head.startswith('Stream') and sub and SEGS() == 0, (head, sub))
+    menu_first(pg)
+    check('HLS: Start erst nach Tipp auf die Option', wait_toast(pg, 'Helfer-App lädt', 20), toasts(pg))
     check('HLS: Datei fertig beim Helfer', wait_files(helper, 1), files(helper))
     check('HLS: Kadri-Player nie geöffnet, Video der Seite läuft weiter', not player_open(pg) and page_playing(pg))
     hh = helper_hits()
-    check('HLS: Helfer lud Listen und alle 12 Segmente, ohne Cookie/Authorization/Referer',
-          SEGS() == 12 and all(not x['cookie'] and not x['auth'] and not x['ref'] for x in hh), [x['path'] for x in hh])
+    check('HLS: Helfer lud Listen und alle 12 Segmente, ohne Cookie/Authorization, Referer nur die Seitenherkunft',
+          SEGS() == 12 and all(not x['cookie'] and not x['auth'] and ref_ok(x) for x in hh), [(x['path'], x['ref']) for x in hh])
     check('Keine Adresse oder Token in Hinweisen', not any('127.0.0.1' in t or 'SECRET' in t for t in toasts(pg)), toasts(pg))
 
     # ---------- MP4 über ⬇: ein Tipp; während des Laufs Stand + Abbrechen statt zweitem Start ----------
     before = len(files(helper)); n0 = len(helper_hits())
     goto_playing(pg, BASE + '/d/mp4.html?n=eins')
+    pages0 = len(ctx.pages); url0 = pg.url
     tap_dl(pg)
-    check('MP4: ein Tipp startet direkt', wait_toast(pg, 'Helfer-App lädt', 20), toasts(pg))
+    it = menu(pg)
+    labels = [l for l, _ in it]
+    check('MP4: Tipp zeigt die Auswahl, Helfer-App zuerst, Browser/Teilen als Alternativen, nichts gestartet',
+          labels and labels[0].startswith('MP4') and 'Im Browser speichern' in labels and 'Im Browser öffnen' in labels and 'Teilen …' in labels
+          and len(helper_hits()) == n0, it)
+    pg.wait_for_timeout(1500)
+    check('MP4: keine Navigation zur Videodatei, kein neuer Tab', pg.url == url0 and len(ctx.pages) == pages0, (pg.url, len(ctx.pages)))
+    menu_pick(pg, labels[0])
+    check('MP4: Start erst nach Tipp auf den Helfer-Eintrag', wait_toast(pg, 'Helfer-App lädt', 20), toasts(pg))
     check('MP4: Datei fertig', wait_files(helper, before + 1), files(helper))
     mp4hits = [x for x in helper_hits()[n0:] if x['path'] == '/d/clip.mp4']
-    check('MP4: genau ein Abruf der Datei durch den Helfer, ohne Cookie/Referer', len(mp4hits) == 1 and not mp4hits[0]['cookie'] and not mp4hits[0]['ref'], mp4hits)
+    check('MP4: genau ein Abruf der Datei durch den Helfer, ohne Cookie, Referer nur die Seitenherkunft', len(mp4hits) == 1 and not mp4hits[0]['cookie'] and ref_ok(mp4hits[0]), mp4hits)
     check('MP4: Video der Seite läuft weiter, Player zu', page_playing(pg) and not player_open(pg))
 
     # ---------- Proven diagnostic gaps: real HTTP failures, never a claim about site-a's cause ----------
@@ -229,7 +273,7 @@ with sync_playwright() as p:
         HITS.clear()
         STATE.update(fail_path=target, fail_after=after, redirect=redirect)
         before = len(files(helper))
-        tap_dl(pg)
+        tap_save(pg, media)
         end = time.time() + 20
         anon = ''
         while time.time() < end:
@@ -242,7 +286,7 @@ with sync_playwright() as p:
         check(label + ': no confidential URL, token, job id or title', not re.search(r'127\.0\.0\.1|8791|https?:|/d/|SECRET|sig=|token=|Direkt |[a-f0-9]{24,}', anon), anon)
         check(label + ': no publication after HTTP 404', len(files(helper)) == before)
         rejected = [x for x in helper_hits() if x.get('status') == 404]
-        check(label + ': protocol capture proves 404 and excludes credentials', bool(rejected) and all(not x['cookie'] and not x['auth'] and not x['ref'] for x in helper_hits()), rejected)
+        check(label + ': protocol capture proves 404 and excludes credentials', bool(rejected) and all(not x['cookie'] and not x['auth'] and ref_ok(x) for x in helper_hits()), rejected)
         if media == 'hls':
             check(label + ': error stage honest; no master used as failed-segment probe',
                   ('Phase hlsplan' in anon if after == 0 and target.endswith('index.m3u8') else 'Phase unbekannt' in anon)
@@ -262,7 +306,7 @@ with sync_playwright() as p:
     STATE['slow'] = 0.15
     before = len(files(helper))
     goto_playing(pg, BASE + '/d/hls.html?n=verlassen')
-    tap_dl(pg)
+    tap_save(pg, 'hls')
     wait_toast(pg, 'Helfer-App prüft den Stream', 10)
     pg.wait_for_timeout(0)
     t0 = time.time()
@@ -279,7 +323,7 @@ with sync_playwright() as p:
     STATE['slow'] = 0.2
     before = len(files(helper)); s0 = SEGS()
     goto_playing(pg, BASE + '/d/hls.html?n=flugmodus')
-    tap_dl(pg)
+    tap_save(pg, 'hls')
     wait_toast(pg, 'Helfer-App lädt', 20)
     t0 = time.time()
     while time.time() - t0 < 15 and SEGS() - s0 < 4: time.sleep(0.05)
@@ -302,7 +346,7 @@ with sync_playwright() as p:
     STATE['slow'] = 0.2
     before = len(files(helper)); s0 = SEGS()
     goto_playing(pg, BASE + '/d/hls.html?n=abbruch')
-    tap_dl(pg)
+    tap_save(pg, 'hls')
     wait_toast(pg, 'Helfer-App lädt', 20)
     t0 = time.time()
     while time.time() - t0 < 15 and SEGS() - s0 < 3: time.sleep(0.05)
@@ -328,7 +372,7 @@ with sync_playwright() as p:
     STATE['slow'] = 0.2
     before = len(files(helper))
     goto_playing(pg, BASE + '/d/hls.html?n=worker')
-    tap_dl(pg)
+    tap_save(pg, 'hls')
     wait_toast(pg, 'Helfer-App lädt', 20)
     check('Service Worker mitten im Download beendet', stop_worker(ctx, pg, sw))
     check('… Download läuft im Helfer weiter und wird fertig', wait_files(helper, before + 1), files(helper))

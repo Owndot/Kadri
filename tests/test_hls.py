@@ -139,8 +139,10 @@ with sync_playwright() as p:
     fl = files(helper)
     check('… Datei beim Helfer (Name = Seitentitel)', any(f.startswith('HLS_Stream_Test.mp4:') for f in fl), fl)
     hh = helper_hits()
-    check('… Helfer: Init + alle 12 Segmente einmal, ohne Cookie/Authorization/Referer',
-          sum(1 for x in hh if x['path'].endswith('.m4s')) == 12 and all(not x['cookie'] and not x['auth'] and not x['ref'] for x in hh), len(hh))
+    # Referer: genau die Herkunft der Seite (ohne Pfad/Query) – nie Cookie/Authorization
+    check('… Helfer: Init + alle 12 Segmente einmal, ohne Cookie/Authorization, Referer nur die Seitenherkunft',
+          sum(1 for x in hh if x['path'].endswith('.m4s')) == 12 and all(not x['cookie'] and not x['auth'] and x['ref'] == 'http://127.0.0.1:8791/' for x in hh),
+          (len(hh), sorted(set(x['ref'] for x in hh))))
     check('Keine Adresse oder Token in Hinweisen/Menü', not any('127.0.0.1' in t or 'SECRET' in t for t in toasts(pg)) and
           not any('SECRET' in l + s for l, s in menu_items(pg)))
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R); time.sleep(0.6)
