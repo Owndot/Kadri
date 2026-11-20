@@ -108,9 +108,11 @@
   // (keine privaten Ziele, Weiterleitungen dorthin gesperrt); den Browser-User-Agent setzt der Browser dort immer.
   //   A ohne Cookies und Referer
   //   B mit zulässigem Referer (mediaReferrer: dieselbe Herkunft voll, sonst nur die Herkunft der Seite), ohne Cookies
-  //   C wie B plus Browsersitzung – nur wo die bestehende Regel Cookies erlaubt (gleiche Basisdomain wie die Seite);
-  //     sonst nicht durchgeführt
-  // Ergebnis ausschließlich Statuscodes bzw. feste Codes – nie Adresse, Kopfzeilen oder Antwortinhalt.
+  //   C wie B plus Browsersitzung – nur wo die bestehende Regel Cookies erlaubt (gleiche Basisdomain wie die Seite)
+  //     UND erst nach ausdrücklicher Bestätigung (nativer Dialog der Erweiterung, isolierte Welt: die Seite kann ihn weder
+  //     auslösen noch beantworten); ohne Bestätigung, bei Ablehnung oder bei Seite im Hintergrund nicht durchgeführt
+  // Ergebnis ausschließlich Statuscodes bzw. feste Codes – nie Adresse, Kopfzeilen, Cookies oder Antwortinhalt; nichts
+  // davon wird gespeichert oder protokolliert.
   // HLS: nur, wenn der Helfer die gewählte Liste selbst als Fehlerstelle meldet (hdlDiagFailure); sonst ist die fehlerhafte
   // Ressource unbekannt und die Hauptliste wäre KEIN Vergleich.
   const HDL_PROBE_MAX = 262144;
@@ -128,6 +130,15 @@
       } catch (e) { end('nicht möglich'); }
     });
   }
+  // Ausdrückliche Zustimmung für Variante C (Browsersitzung): nur sichtbare Seite, fester Text ohne Adresse.
+  function hdlDiagConfirmSession() {
+    try {
+      if (document.hidden || typeof confirm !== 'function') return false;
+      return confirm('Kadri-Diagnose: Der Download ist mit einem HTTP-Fehler fehlgeschlagen.\n\n' +
+        'Dieselbe Adresse zusätzlich MIT der Browsersitzung dieser Seite (Cookies) abrufen? Angezeigt wird nur der ' +
+        'Statuscode; Cookies und Inhalte werden weder angezeigt noch gespeichert.') === true;
+    } catch (e) { return false; }
+  }
   function hdlDiagProbe(d) {
     const u = hdlDiagUrl.get(d), x = gmXhr();
     if (d.probe) return;
@@ -140,8 +151,16 @@
     (async () => {
       const a = await hdlDiagProbeOne(x, u, {}, true);
       const b = ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, true) : 'kein zulässiger Referer';
-      const c = !session ? 'nicht zulässig (andere Seite)' : ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, false) : await hdlDiagProbeOne(x, u, {}, false);
-      d.probe = 'A ohne Cookies/Referer ' + a + ' · B mit Referer, ohne Cookies ' + b + ' · C mit Browsersitzung ' + c;
+      const ab = 'A ohne Cookies/Referer ' + a + ' · B mit Referer, ohne Cookies ' + b;
+      let c = 'nicht zulässig (andere Seite)';
+      if (session) {
+        d.probe = ab + ' · C mit Browsersitzung: wartet auf Bestätigung';
+        if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
+        c = hdlDiagConfirmSession() === true
+          ? (ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, false) : await hdlDiagProbeOne(x, u, {}, false))
+          : 'nicht ausgeführt (nicht bestätigt)';
+      }
+      d.probe = ab + ' · C mit Browsersitzung ' + c;
     })().catch(() => { d.probe = 'nicht möglich'; }).then(() => {
       hdlDiagUrl.delete(d);
       if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }

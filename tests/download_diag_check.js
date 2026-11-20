@@ -26,6 +26,8 @@ function setup(kind = 'mp4', env = {}) {
     mediaReferrer: () => (env.ref === undefined ? 'https://private.invalid/page' : env.ref),
     baseDomain: (h) => String(h).split('.').slice(-2).join('.'), location: { hostname: env.page || 'www.private.invalid' },
     SHOW_DOWNLOAD: false,
+    // Variante C nur nach Bestätigung: Aufrufe und Texte des Dialogs werden festgehalten
+    confirms: [], confirm: (msg) => { ctx.confirms.push(msg); return typeof env.confirm === 'function' ? env.confirm(msg) : false; },
     KADRI_DOWNLOAD: async (op, args) => { requests.push({ op, args }); return ctx.reply(op, args); },
     reply: () => ({ ok: true, value: { job: { id: 'job-private-id', state: 'running', ...(kind === 'hls' ? { kind, done: 0, of: 0 } : {}) } } }) };
   vm.createContext(ctx);
@@ -37,7 +39,7 @@ function setup(kind = 'mp4', env = {}) {
 }
 const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) => setImmediate(r)); };
 (async () => {
-  const a = setup();
+  const a = setup('mp4', { confirm: () => true });
   await a.api.pageDlStartMp4(a.opt);
   check('direct MP4 creates a diagnostic without opening the player', a.api.diags.length === 1);
   a.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'http_404' });
@@ -93,8 +95,9 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
       text.includes('Planungsschritt ' + phase) && text.includes('Listen verarbeitet ' + playlists) &&
       text.includes('Medienabrufe noch nicht begonnen') && !/private|PRIVATE|SECRET/.test(text));
     // Nur wenn der Helfer die gewählte Liste selbst als Fehlerstelle meldet, ist sie die richtige Vergleichsressource
-    if (phase === 'source_fetch') check('HLS source_fetch: the selected playlist is compared in three plain GETs',
-      h.probes.length === 3 && h.probes.every((o) => o.url === h.url && !o.headers.Range) && /Browser-Vergleich/.test(text) && /A ohne Cookies\/Referer HTTP 206/.test(text));
+    if (phase === 'source_fetch') check('HLS source_fetch: the selected playlist is compared (A, B; C only after confirmation)',
+      h.probes.length === 2 && h.probes.every((o) => o.url === h.url && !o.headers.Range && o.anonymous === true) && /Browser-Vergleich/.test(text) &&
+      /A ohne Cookies\/Referer HTTP 206/.test(text) && /C mit Browsersitzung nicht ausgeführt \(nicht bestätigt\)/.test(text));
     else check('HLS ' + phase + ': failed resource unknown, no substitute probe', h.probes.length === 0 && !/Browser-Vergleich/.test(text));
   }
   for (const diag of [{ v: 1, phase: 'https://private.invalid/SECRET', playlists: 0 },
@@ -152,21 +155,21 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   let tx = x1.api.hdlDiagText(x1.api.diags[0]);
   check('other site: no session request, C reported as not permitted', x1.probes.length === 2 && x1.probes.every((o) => o.anonymous === true) &&
     /C mit Browsersitzung nicht zulässig \(andere Seite\)/.test(tx));
-  const x2 = setup('mp4', { ref: '' });
+  const x2 = setup('mp4', { ref: '', confirm: () => true });
   await x2.api.pageDlStartMp4(x2.opt);
   x2.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'http_404' });
   await flush();
   tx = x2.api.hdlDiagText(x2.api.diags[0]);
   check('no permitted Referer: B not sent, C with session but without Referer',
     x2.probes.length === 2 && /B mit Referer, ohne Cookies kein zulässiger Referer/.test(tx) && x2.probes[1].anonymous === false && JSON.stringify(x2.probes[1].headers) === '{}');
-  const x3 = setup('mp4');
+  const x3 = setup('mp4', { confirm: () => true });
   x3.ctx.probeReply = (o) => (o.anonymous ? o.onerror({ error: 'nicht erlaubt: Adresse im eigenen Netz' }) : o.ontimeout({}));
   await x3.api.pageDlStartMp4(x3.opt);
   x3.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'http_404' });
   await flush();
   tx = x3.api.hdlDiagText(x3.api.diags[0]);
   check('errors become fixed codes only', /A ohne Cookies\/Referer gesperrt \(Netzschutz\)/.test(tx) && /C mit Browsersitzung Zeitüberschreitung/.test(tx) && !/eigenen Netz/.test(tx));
-  const x4 = setup('mp4');
+  const x4 = setup('mp4', { confirm: () => true });
   x4.ctx.probeReply = (o) => o.onreadystatechange({ readyState: 2, status: 403 });
   await x4.api.pageDlStartMp4(x4.opt);
   x4.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'http_403' });
@@ -175,6 +178,24 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   check('status taken from response headers; no URL, Referer or token in the shareable text',
     /A ohne Cookies\/Referer HTTP 403 · B mit Referer, ohne Cookies HTTP 403 · C mit Browsersitzung HTTP 403/.test(tx) && !/private|PRIVATE|token=|https:|\.invalid|Referer:/.test(x4.ctx.scrub(tx)));
 
+  // Variante C nie automatisch: ohne Bestätigung, bei Ablehnung und bei Seite im Hintergrund keine Anfrage mit Sitzung
+  for (const [name, env, hidden, asked] of [['no confirmation available', {}, false, true], ['declined', { confirm: () => false }, false, true],
+    ['page in background', { confirm: () => true }, true, false]]) {
+    const y = setup('mp4', env);
+    y.ctx.document.hidden = hidden;
+    await y.api.pageDlStartMp4(y.opt);
+    y.api.hdlDiagUpdate({ id: 'job-private-id', state: 'failed', reason: 'http_404' });
+    await flush();
+    const ty = y.api.hdlDiagText(y.api.diags[0]);
+    check('C not run (' + name + '): only anonymous A/B requests, fixed text',
+      y.probes.length === 2 && y.probes.every((o) => o.anonymous === true) && /C mit Browsersitzung nicht ausgeführt \(nicht bestätigt\)/.test(ty) &&
+      y.ctx.confirms.length === (asked ? 1 : 0));
+  }
+  check('confirmation asked once, before the session request, with a fixed text without address',
+    a.ctx.confirms.length === 1 && !/private|PRIVATE|token|https?:|\.invalid/.test(a.ctx.confirms[0]) && /Browsersitzung/.test(a.ctx.confirms[0]));
+  check('no Cookie header is ever set by Kadri; no cookie text in the diagnostic',
+    [a, x2, x3, x4].every((t) => t.probes.every((o) => !Object.keys(o.headers).some((k) => /cookie/i.test(k)))) &&
+    !/cookie=|Cookie:|Set-Cookie/i.test(a.api.hdlDiagText(a.api.diags[0])));
   // ⬇ am Video: kein Sofortstart einer nur behaupteten MP4; tatsächlich Geladenes zuerst
   const btn = (mp4, hls) => {
     const t = setup('mp4'), menus = [];
