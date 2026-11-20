@@ -62,7 +62,7 @@ with sync_playwright() as p:
     check('… Einstellungen mit „Helper-App“', 'Helper-App' in names2, names2)
     close_menu(pg)
     dl2 = dl_menu()
-    check('… Helfer ohne Downloads: Download-Menü ohne Helfer-Wege, Browser-Wege da', dl2 and 'Mit dem Helper' not in dl2 and 'Über den Browser laden' not in dl2 and 'Mit der Helfer-App speichern' not in dl2 and 'Im Browser speichern' in dl2, dl2)
+    check('… Helfer ohne Downloads: Download-Menü ohne Helfer-Wege, Browser-Wege da', dl2 and 'Mit dem Helper' not in dl2 and 'Über den Browser laden' not in dl2 and 'Mit Helper herunterladen' not in dl2 and 'Im Browser herunterladen' in dl2, dl2)
     time.sleep(3.0)
     check('… Lebenszeichen erreichen das Gerät', helper.device()['beats'] > d2['beats'])
     pg.evaluate('() => %s.querySelector("button[aria-label=Schließen]").click()' % R)

@@ -64,19 +64,24 @@
     if (!/^https?:/i.test(u) || v.srcObject || v.readyState < 2 || v.error) return '';
     return /\.(m3u8|mpd)(\?|#|$)/i.test(u) ? '' : u;
   }
-  // Alternativen, nur auf ausdrücklichen Tipp (wie im Player): YTDLnis, Browser-Download, im Browser öffnen, Teilen
+  // Alternativen, nur auf ausdrücklichen Tipp (wie im Player): YTDLnis, Browser-Download, im Browser öffnen, Teilen.
+  // „Im Browser herunterladen“ nur, wenn der Browser die Datei sicher als Download behandelt: Datei derselben Herkunft wie
+  // die Seite (dort gilt das download-Attribut). Bei fremden Servern ignoriert der Browser es und öffnet die Datei als
+  // Seite – dann gibt es diesen Eintrag nicht, nur das ausdrücklich so benannte „Im Browser öffnen“.
   function pageDlExternal(v, items) {
     let link = '';
     try { link = SHOW_DOWNLOAD ? postUrlFor(v) : ''; } catch (e) {}
     const d = pageDlDirect(v);
     if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', fn: () => toYtdlnis(link) });
-    if (d) {
-      items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => {
+    if (d && sameOrigin(d)) {
+      items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => {
         toast('Download wird vorbereitet …');
         browserDownload(d).then((ok) => toast(ok ? 'Download läuft im Browser – du kannst die Seite verlassen'
           : 'Die Seite sperrt den Download'));
       } });
-      items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
+    }
+    if (d) {
+      items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', fn: () => {
         const w = window.open(d, '_blank');
         if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
       } });
@@ -122,9 +127,11 @@
       const n = o.mp4.length + o.hls.length;
       if (!n) { pageDlMenu('Speichern', pageDlExternal(v, [{ label: pageDlReason(o, caps), info: true }])); return; }
       // Immer zuerst die Auswahl, auch bei nur einer Option (kein Sofortstart). Tatsächlich Geladenes zuerst (MP4 oder Stream); sonst bisherige Reihenfolge (stabile Sortierung)
-      const items = o.mp4.slice(0, 4).map((x) => ({ loaded: x.loaded, item: { label: 'MP4' + (x.height ? ' · ' + x.height + 'p' : ''), sub: tr('Helfer-App · direkt aufs Handy') + ' · ' +
-        tr(hdlEvidenceText(x)), fn: () => pageDlStartMp4(x) } }))
-        .concat(o.hls.slice(0, 2).map((x) => ({ loaded: x.loaded, item: { label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
+      // Direkter Download über die Helfer-App: je MP4-Variante ein Eintrag (Qualität in der Unterzeile), Streams mit
+      // Qualitäts-/Tonauswahl; kein neuer Tab, keine Navigation
+      const items = o.mp4.slice(0, 4).map((x) => ({ loaded: x.loaded, item: { label: 'Mit Helper herunterladen', sub: 'MP4' + (x.height ? ' · ' + x.height + 'p' : '') + ' · ' +
+        tr('direkt in die Helfer-App · kein neuer Tab') + ' · ' + tr(hdlEvidenceText(x)), fn: () => pageDlStartMp4(x) } }))
+        .concat(o.hls.slice(0, 2).map((x) => ({ loaded: x.loaded, item: { label: 'Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
           tr(hdlEvidenceText(x)), fn: () => pageDlPlan(x) } })))
         .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).map((e) => e.item);
       pageDlMenu('Speichern', pageDlExternal(v, items));

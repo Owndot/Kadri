@@ -50,7 +50,7 @@ class M(http.server.BaseHTTPRequestHandler):
 msrv = http.server.ThreadingHTTPServer(('127.0.0.1', 8791), M); msrv.daemon_threads = True
 threading.Thread(target=msrv.serve_forever, daemon=True).start()
 PAGE = 'http://127.0.0.1:8791/s/plain.html'
-ITEM = 'Stream speichern …'
+ITEM = 'Stream mit Helper herunterladen …'
 
 def dl_menu(pg):
     pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }))' % R); time.sleep(0.4)
@@ -123,7 +123,7 @@ with sync_playwright() as p:
     open_player(pg, PAGE); watch_toasts(pg)
     items = wait_menu(pg, lambda it: any(l == ITEM for l, _ in it), 20)
     check('Eintrag „%s“ im Download-Menü (gespielter Stream)' % ITEM, any(l == ITEM for l, _ in items), items)
-    check('… Unterzeile: Qualität und Ton wählen, diese Wiedergabe', any(l == ITEM and 'Qualität und Ton' in s and 'diese Wiedergabe' in s for l, s in items), items)
+    check('… Unterzeile: als MP4, Qualität und Ton wählen, diese Wiedergabe', any(l == ITEM and 'Qualität und Ton' in s and 'diese Wiedergabe' in s for l, s in items), items)
     check('Menü öffnen fragt den Helfer noch nicht nach einem Plan', not helper_hits(), helper_hits())
     ok = pick(pg, ITEM)
     check('Tipp auf „%s“ ausgeführt' % ITEM, ok)

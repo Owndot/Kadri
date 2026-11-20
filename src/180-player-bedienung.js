@@ -438,10 +438,10 @@
           // Ist der Eintrag nachweislich das gesehene Video oder nur von der Seite zugeordnet? (siehe selectDownloads)
           // P4b: Streams – erst Plan (Qualität/Ton wählen), dann Start. Tatsächlich Geladenes (MP4 oder Stream) zuerst,
           // sonst bisherige Reihenfolge (stabile Sortierung).
-          can.slice(0, 4).map((o) => ({ loaded: o.loaded, item: { label: 'Mit der Helfer-App speichern',
-            sub: tr('direkt aufs Handy · ohne Anmeldung der Seite') + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' +
+          can.slice(0, 4).map((o) => ({ loaded: o.loaded, item: { label: 'Mit Helper herunterladen',
+            sub: 'MP4' + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' + tr('direkt in die Helfer-App · kein neuer Tab') + ' · ' +
               tr(hdlEvidenceText(o)), fn: () => hdlStart(o) } }))
-            .concat(streams.slice(0, 2).map((o) => ({ loaded: o.loaded, item: { label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
+            .concat(streams.slice(0, 2).map((o) => ({ loaded: o.loaded, item: { label: 'Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
               tr(hdlEvidenceText(o)), fn: () => hlsPlanMenu(o) } })))
             .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).forEach((e) => items.push(e.item));
         }
@@ -454,9 +454,10 @@
         else if (opts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: MP4 nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
       }
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
-      if (d && !browserFailed) items.push({ label: 'Im Browser speichern', sub: 'Download des Browsers', fn: () => browserSave(d) });
+      // Browser-Download nur bei einer Datei derselben Herkunft (sonst öffnet der Browser sie als Seite, siehe 105)
+      if (d && !browserFailed && sameOrigin(d)) items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => browserSave(d) });
       if (d) {
-        items.push({ label: 'Im Browser öffnen', sub: 'dort ⋮ → Herunterladen', fn: () => {
+        items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', fn: () => {
           const w = window.open(d, '_blank');
           if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
         } });

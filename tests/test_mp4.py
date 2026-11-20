@@ -84,7 +84,7 @@ threading.Thread(target=msrv.serve_forever, daemon=True).start()
 helper_hits = lambda p: [x for x in MHITS if x['path'] == p and not x['browser']]
 page = lambda src, login=False: B + 'mp4.html?' + ('login=1&' if login else '') + 'src=' + urllib.parse.quote(src)
 
-ITEM = 'Mit der Helfer-App speichern'
+ITEM = 'Mit Helper herunterladen'
 def dl_menu(pg):
     pg.evaluate('() => %s.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }))' % R); time.sleep(0.4)
     return pg.evaluate('() => Array.from(%s.querySelectorAll(".vmenu.on .vmi")).map(b => [b.firstChild.textContent, b.querySelector("small") ? b.querySelector("small").textContent : ""])' % R)
@@ -151,7 +151,9 @@ with sync_playwright() as p:
     player(pg, page('/videos/pub.mp4?sig=SECRET-A'))
     time.sleep(1.5)
     items = [l for l, _ in dl_menu(pg)]; close_menu(pg)
-    check('ohne Kopplung: kein Eintrag „%s“, Browser-Wege wie bisher' % ITEM, ITEM not in items and 'Im Browser speichern' in items, items)
+    # Datei von einem anderen Server (127.0.0.1:8791, Seite :8790): kein irreführender Browser-Download, nur „Im Browser öffnen“
+    check('ohne Kopplung: kein Eintrag „%s“; fremder Server: nur „Im Browser öffnen“, kein „Im Browser herunterladen“' % ITEM,
+          ITEM not in items and 'Im Browser öffnen' in items and 'Im Browser herunterladen' not in items and 'Im Browser speichern' not in items, items)
     check('… nichts beim Helfer angefragt', not [x for x in MHITS if not x['browser']] and files(helper) == [])
     close_player(pg)
     check('Kopplung über die Einstellungsseite', pair_helper(ctx, ext_id, helper) == 'Verbunden')

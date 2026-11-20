@@ -6,7 +6,7 @@
 #  - HLS (Seite spielt mit hls.js/MSE): ⬇ erkennt den gerade laufenden Stream (Stücke geladen = gebunden), ohne den
 #    Kadri-Player zu öffnen; ein Tipp zeigt immer zuerst die Auswahl (auch bei einer Option), gestartet wird erst per
 #    Eintrag; Datei fertig; das Video der Seite läuft weiter
-#  - MP4 (<video src>): ein Tipp zeigt die Auswahl (Helfer-App zuerst, „Im Browser speichern/öffnen“, Teilen als
+#  - MP4 (<video src>): ein Tipp zeigt die Auswahl („Mit Helper herunterladen“ zuerst, „Im Browser herunterladen/öffnen“, Teilen als
 #    Alternativen), keine Navigation, kein neuer Tab; Start per Eintrag; während des Laufs zeigt ⬇ Stand und „Abbrechen“
 #  - kein sicher zugeordnetes Format (WebM): klarer Grund, keine Anfrage beim Helfer
 #  - Seite sofort nach dem Tipp verlassen (0 ms), Tab-Wechsel: der Download läuft weiter und wird fertig
@@ -139,7 +139,7 @@ def tap_save(pg, kind):
     # ⬇ → Auswahl → Helfer-Eintrag; bei HLS danach Qualität/Ton → erste Option. Liefert die gezeigte erste Auswahl.
     tap_dl(pg)
     it = menu(pg)
-    want = 'Stream speichern …' if kind == 'hls' else next((l for l, _ in it if l.startswith('MP4')), '')
+    want = 'Stream mit Helper herunterladen …' if kind == 'hls' else next((l for l, _ in it if l == 'Mit Helper herunterladen'), '')
     t0 = len(toasts(pg))
     if not want or not menu_pick(pg, want): return it
     if kind == 'hls':
@@ -194,11 +194,11 @@ with sync_playwright() as p:
     n0 = len(helper_hits()); pages0 = len(ctx.pages); url0 = pg.url
     tap_dl(pg)
     it = menu(pg)
-    check('HLS: Tipp zeigt zuerst die Auswahl („Stream speichern …“ oben), keine Anfrage beim Helfer',
-          it and it[0][0] == 'Stream speichern …' and len(helper_hits()) == n0, it)
+    check('HLS: Tipp zeigt zuerst die Auswahl („Stream mit Helper herunterladen …“ oben), keine Anfrage beim Helfer',
+          it and it[0][0] == 'Stream mit Helper herunterladen …' and len(helper_hits()) == n0, it)
     check('… keine Navigation, kein neuer Tab, kein Browser-Angebot für den Stream (MSE)',
           pg.url == url0 and len(ctx.pages) == pages0 and not any(l.startswith('Im Browser') for l, _ in it), (pg.url, len(ctx.pages), it))
-    menu_pick(pg, 'Stream speichern …')
+    menu_pick(pg, 'Stream mit Helper herunterladen …')
     end = time.time() + 15; head = ''
     while time.time() < end and not head.startswith('Stream'):
         head = pg.evaluate('() => { const h = %s.querySelector(".dlm .dlh"); return h ? h.textContent : ""; }' % R); time.sleep(0.2)
@@ -220,9 +220,10 @@ with sync_playwright() as p:
     tap_dl(pg)
     it = menu(pg)
     labels = [l for l, _ in it]
-    check('MP4: Tipp zeigt die Auswahl, Helfer-App zuerst, Browser/Teilen als Alternativen, nichts gestartet',
-          labels and labels[0].startswith('MP4') and 'Im Browser speichern' in labels and 'Im Browser öffnen' in labels and 'Teilen …' in labels
-          and len(helper_hits()) == n0, it)
+    check('MP4: Tipp zeigt die Auswahl, „Mit Helper herunterladen“ zuerst (MP4 · Qualität), Browser (gleiche Herkunft)/Öffnen/Teilen als Alternativen, nichts gestartet',
+          labels and labels[0] == 'Mit Helper herunterladen' and it[0][1].startswith('MP4 · ') and 'Im Browser herunterladen' in labels and 'Im Browser öffnen' in labels
+          and 'Teilen …' in labels and len(helper_hits()) == n0, it)
+    check('MP4: Einträge unterscheiden Herunterladen und bloßes Öffnen', any(l == 'Im Browser öffnen' and 'kein Download' in s for l, s in it), it)
     pg.wait_for_timeout(1500)
     check('MP4: keine Navigation zur Videodatei, kein neuer Tab', pg.url == url0 and len(ctx.pages) == pages0, (pg.url, len(ctx.pages)))
     menu_pick(pg, labels[0])

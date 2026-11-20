@@ -285,20 +285,20 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   t = btn([mp4p], []);
   await t.api.onPageDownload();
   check('single actually loaded MP4: selection first, no immediate start', !t.requests.some((r) => r.op === 'start') && t.menus.length === 1 &&
-    t.menus[0].length === 1 && /^MP4 · 360p/.test(t.menus[0][0].label));
+    t.menus[0].length === 1 && t.menus[0][0].label === 'Mit Helper herunterladen' && /^MP4 · 360p · direkt in die Helfer-App · kein neuer Tab/.test(t.menus[0][0].sub));
   await t.menus[0][0].fn();
   check('… helper download starts only after tapping the entry', t.requests.filter((r) => r.op === 'start').length === 1);
   t = btn([], [hlsL]);
   await t.api.onPageDownload();
   check('single stream: selection first, no plan request by the tap alone', t.menus.length === 1 && t.menus[0].length === 1 &&
-    t.menus[0][0].label === 'Stream speichern …' && !t.requests.some((r) => r.op === 'plan-menu' || r.op === 'hlsplan'));
+    t.menus[0][0].label === 'Stream mit Helper herunterladen …' && /als MP4 · Qualität und Ton wählen/.test(t.menus[0][0].sub) && !t.requests.some((r) => r.op === 'plan-menu' || r.op === 'hlsplan'));
   t = btn([mp4d], [hlsL]);
   await t.api.onPageDownload();
-  check('loaded stream ranks before a claimed MP4 and says so', t.menus.length === 1 && t.menus[0][0].label === 'Stream speichern …' &&
-    /läuft gerade \(Stücke geladen\)/.test(t.menus[0][0].sub) && /^MP4/.test(t.menus[0][1].label));
+  check('loaded stream ranks before a claimed MP4 and says so', t.menus.length === 1 && t.menus[0][0].label === 'Stream mit Helper herunterladen …' &&
+    /läuft gerade \(Stücke geladen\)/.test(t.menus[0][0].sub) && t.menus[0][1].label === 'Mit Helper herunterladen' && /^MP4/.test(t.menus[0][1].sub));
   t = btn([mp4d], [hlsD]);
   await t.api.onPageDownload();
-  check('nothing loaded: previous order (MP4 before stream) unchanged', t.menus.length === 1 && /^MP4/.test(t.menus[0][0].label) && t.menus[0][1].label === 'Stream speichern …');
+  check('nothing loaded: previous order (MP4 before stream) unchanged', t.menus.length === 1 && t.menus[0][0].label === 'Mit Helper herunterladen' && t.menus[0][1].label === 'Stream mit Helper herunterladen …');
   // Alternativen am Seitenknopf: nur die nachweislich abgespielte Videodatei, nur auf ausdrücklichen Tipp
   const ext = (patch, env) => {
     const u = setup('mp4'), opened = [], saved = [];
@@ -306,12 +306,15 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     u.ctx.window = { open: (x) => { opened.push(x); return {}; } };
     u.ctx.browserDownload = async (x) => { saved.push(x); return true; };
     u.ctx.shareUrl = () => {}; u.ctx.toYtdlnis = () => {};
+    u.ctx.sameOrigin = () => true;   // Datei derselben Herkunft wie die Seite
     Object.assign(u.ctx, env || {});
     return Object.assign(u, { items: u.ctx.pageDlExternal(u.ctx.active, []), opened, saved });
   };
   let x = ext();
-  check('alternatives: browser save/open and share offered for the played file, nothing done before a tap',
-    x.items.map((i) => i.label).join('|') === 'Im Browser speichern|Im Browser öffnen|Teilen …' && !x.opened.length && !x.saved.length && !x.requests.length);
+  check('alternatives (same origin): browser download, open and share offered for the played file, nothing done before a tap',
+    x.items.map((i) => i.label).join('|') === 'Im Browser herunterladen|Im Browser öffnen|Teilen …' && !x.opened.length && !x.saved.length && !x.requests.length);
+  check('… entries say clearly: download vs. only open (new tab, no download)', /Download-Manager des Browsers/.test(x.items[0].sub) &&
+    /^nur öffnen: neuer Tab, kein Download/.test(x.items[1].sub));
   x.items[0].fn(); x.items[1].fn(); await flush();
   check('… browser actions only on their own entry', x.saved.length === 1 && x.opened.length === 1 && x.saved[0] === x.url && x.opened[0] === x.url);
   for (const [why, patch] of [['stream (HLS)', { currentSrc: 'https://private.invalid/master.m3u8' }], ['DASH', { currentSrc: 'https://private.invalid/a.mpd?x=1' }],
@@ -320,12 +323,21 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     x = ext(patch);
     check('alternatives: no browser file for ' + why, !x.items.some((i) => /Im Browser/.test(i.label)));
   }
+  x = ext({}, { sameOrigin: () => false });
+  check('alternatives (other server): no misleading browser download – only "Im Browser öffnen" and share',
+    x.items.map((i) => i.label).join('|') === 'Im Browser öffnen|Teilen …');
+  // Helfer-Download: kein neuer Tab, keine Navigation
+  t = btn([mp4p], []);
+  let opens = 0; t.ctx.window = { open: () => { opens++; return {}; } };
+  await t.api.onPageDownload(); await t.menus[0][0].fn();
+  check('helper download: started via the helper, never window.open', t.requests.some((r) => r.op === 'start') && opens === 0);
   // ohne Helfer-Kanal: Auswahl statt direktem Sprung zu YTDLnis
   const nh = setup('mp4'), nhMenus = [];
   nh.ctx.KADRI_DOWNLOAD = undefined;
   nh.ctx.SHOW_DOWNLOAD = true; nh.ctx.postUrlFor = () => 'https://private.invalid/post/1';
   let ytdl = 0;
   nh.ctx.toYtdlnis = () => { ytdl++; }; nh.ctx.shareUrl = () => {}; nh.ctx.window = { open: () => ({}) }; nh.ctx.browserDownload = async () => true;
+  nh.ctx.sameOrigin = () => false;
   nh.ctx.pageDlMenu = (title, items) => nhMenus.push(items);
   nh.ctx.onDownload = () => { ytdl++; };
   await nh.api.onPageDownload();
