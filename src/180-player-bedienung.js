@@ -379,7 +379,7 @@
       const args = resume ? { id: resume.id, planId, option: x.id } : { planId, option: x.id, name: (pageTitle() || 'Video').slice(0, 100) };
       helperDl(op, args).then((r) => {
         st.hdl.busy = false;
-        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), null, r.value.job, null);
+        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, null);
         else hdlDiagFailure(info, r);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }

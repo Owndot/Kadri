@@ -120,7 +120,7 @@
       played: seconds(v.played), err: v.error ? v.error.code : 0, paused: !!v.paused };
   }
   function pageDlStarted(r, u, info, local) {
-    if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), info.stream ? null : u, r.value.job, local);
+    if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, local);
     else hdlDiagFailure(info, r);
     if (!r) { toast('Helfer-App nicht erreichbar'); return; }
     if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }

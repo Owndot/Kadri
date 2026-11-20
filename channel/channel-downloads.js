@@ -55,6 +55,9 @@
     return s || 'Video';
   }
 
+  // HLS: Orte, an denen der Helfer einen HTTP-Fehler melden kann (Hauptliste, Medienliste, Init, Segment)
+  const HLS_LOCS = ['master', 'video_list', 'audio_list', 'video_init', 'audio_init', 'video_segment', 'audio_segment'];
+
   // storage: { get(): Promise<array|undefined>, set(array): Promise } · digest(text): Promise<hex> · random(): hex(32)
   function createDownloads({ channel, storage, digest, random, now = () => Date.now(), setTimer = (f, ms) => setTimeout(f, ms) }) {
     const pending = new Map();   // id → URL, nur solange der Start unbestätigt ist (nie gespeichert)
@@ -85,7 +88,8 @@
     const view = (j) => Object.assign({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at },
       j.wait ? { wait: j.wait } : {},
       j.check && !TERMINAL.has(j.state) ? { check: j.check } : {},
-      j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {});
+      j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {},
+      j.kind === 'hls' && j.loc ? { loc: j.loc } : {});
 
     // Antwort des Helfers in den Auftrag übernehmen (nur bekannte Felder und Werte).
     function apply(j, r) {
@@ -116,6 +120,10 @@
         j.done = Number.isSafeInteger(r.done) && r.done >= 0 ? r.done : j.done || 0;
         j.of = Number.isSafeInteger(r.of) && r.of >= 0 ? r.of : j.of || 0;
         j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
+        // Fehlerort des ersten HTTP-Fehlers (Helfer: at/at_index/at_variant/at_audio) – nur feste Codes und Positionsnummern
+        const n = (x, max) => Number.isSafeInteger(x) && x >= -1 && x <= max;
+        j.loc = HLS_LOCS.includes(r.at) && n(r.at_index, 100000) && n(r.at_variant, 64) && n(r.at_audio, 64)
+          ? { at: r.at, index: r.at_index, variant: r.at_variant, audio: r.at_audio } : null;
       }
       j.seen = now();
       if (j.check) j.check = '';   // P4c-3: der Helfer hat geantwortet

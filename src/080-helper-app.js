@@ -93,6 +93,7 @@
     if (d.type === 'hls') {
       d.done = Number.isSafeInteger(job.done) && job.done >= 0 ? job.done : 0;
       d.of = Number.isSafeInteger(job.of) && job.of >= 0 ? job.of : 0;
+      d.loc = hdlLocValid(job.loc) || d.loc || null;   // erster gemeldeter Fehlerort bleibt für die Diagnose
     }
     if ((d.state === 'failed' || d.state === 'interrupted') && previous !== d.state + ':' + d.reason) {
       d.failAfter = Math.round((Date.now() - d.at) / 1000);
@@ -115,7 +116,75 @@
   // davon wird gespeichert oder protokolliert.
   // HLS: nur, wenn der Helfer die gewählte Liste selbst als Fehlerstelle meldet (hdlDiagFailure); sonst ist die fehlerhafte
   // Ressource unbekannt und die Hauptliste wäre KEIN Vergleich.
-  const HDL_PROBE_MAX = 262144;
+  const HDL_PROBE_MAX = 262144, HDL_LIST_MAX = 2097152;
+  // Fehlerort aus dem Helfer (über Kadris Hintergrund): nur bekannte Codes und begrenzte Positionsnummern
+  const HDL_LOC_TEXT = { master: 'Hauptliste', video_list: 'Video-Medienliste', audio_list: 'Audio-Medienliste', video_init: 'Video-Init',
+    audio_init: 'Audio-Init', video_segment: 'Video-Segment', audio_segment: 'Audio-Segment' };
+  function hdlLocValid(l) {
+    if (!l || typeof l !== 'object' || !Object.prototype.hasOwnProperty.call(HDL_LOC_TEXT, l.at)) return null;
+    if (![l.index, l.variant, l.audio].every((n) => Number.isSafeInteger(n) && n >= -1 && n <= 100000)) return null;
+    return { at: l.at, index: l.index, variant: l.variant, audio: l.audio };
+  }
+  const hdlLocText = (l) => HDL_LOC_TEXT[l.at] + (/_segment$/.test(l.at) && l.index >= 0 ? ' ' + (l.index + 1) : '') +
+    (l.at !== 'master' && l.variant >= 0 && !/^audio/.test(l.at) ? ' (Variante ' + (l.variant + 1) + ')' : '') +
+    (/^audio/.test(l.at) && l.audio >= 0 ? ' (Audiospur ' + (l.audio + 1) + ')' : '');
+  // HLS-Liste wie der Helfer lesen (Reihenfolge: Varianten EXT-X-STREAM-INF, Audiospuren EXT-X-MEDIA TYPE=AUDIO,
+  // Init EXT-X-MAP, Segmente) und relativ zur Adresse nach Weiterleitungen auflösen. Nur Adressen, keine Bewertung.
+  function hdlParseList(text, base) {
+    const ls = String(text).replace(/^\uFEFF/, '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l);
+    if (ls[0] !== '#EXTM3U') return null;
+    const abs = (r) => { try { return new URL(r, base).href; } catch (e) { return null; } };
+    const out = { variants: [], audio: [], segs: [], map: null };
+    let pend = false, inf = false;
+    for (const l of ls.slice(1)) {
+      if (l[0] !== '#') { if (pend) { out.variants.push(abs(l)); pend = false; } else if (inf) { out.segs.push(abs(l)); inf = false; } continue; }
+      const a = l.slice(l.indexOf(':') + 1);
+      if (l.startsWith('#EXT-X-STREAM-INF:')) pend = true;
+      else if (l.startsWith('#EXT-X-MEDIA:') && /(?:^|,)TYPE=AUDIO(?:,|$)/.test(a)) { const m = /(?:^|,)URI="([^"]*)"/.exec(a); out.audio.push(m ? abs(m[1]) : null); }
+      else if (l.startsWith('#EXT-X-MAP:')) { const m = /(?:^|,)URI="([^"]*)"/.exec(a); out.map = m ? abs(m[1]) : null; }
+      else if (l.startsWith('#EXTINF:')) inf = true;
+    }
+    return out;
+  }
+  // Liste begrenzt (2 MiB, 15 s) über Kadris Hintergrund laden – Ergebnis nur intern: Text und Adresse nach Weiterleitungen
+  function hdlDiagGetList(x, u, headers, anonymous) {
+    return new Promise((resolve) => {
+      let req = null, fin = false;
+      const end = (v) => { if (fin) return; fin = true; try { if (req) req.abort(); } catch (e) {} resolve(v); };
+      try {
+        req = x({ method: 'GET', url: u, headers: headers, anonymous: anonymous, timeout: 15000, responseType: 'arraybuffer',
+          onprogress: (e) => { if (e && e.loaded > HDL_LIST_MAX) end({ err: 'abgebrochen (Größe)' }); },
+          onload: (r) => {
+            if (!r || r.status !== 200) { end({ err: 'HTTP ' + ((r && r.status) || '?') }); return; }
+            let t = '';
+            try { t = new TextDecoder('utf-8').decode(new Uint8Array(r.response)); } catch (e) { end({ err: 'nicht lesbar' }); return; }
+            end({ text: t, url: (r && r.finalUrl) || u });
+          },
+          onerror: (r) => end({ err: /^nicht erlaubt/.test(String((r && r.error) || '')) ? 'gesperrt (Netzschutz)' : 'Netzwerkfehler' }),
+          ontimeout: () => end({ err: 'Zeitüberschreitung' }) });
+      } catch (e) { end({ err: 'nicht möglich' }); }
+    });
+  }
+  // Die vom Helfer gemeldete Ressource aus der Hauptliste nachbilden (gleiche Anfrageart wie der anschließende Vergleich)
+  async function hdlDiagResolve(x, master, loc, hdr, anonymous) {
+    if (loc.at === 'master') return { url: master };
+    const m = await hdlDiagGetList(x, master, hdr(master), anonymous);
+    if (m.err) return { err: 'Hauptliste ' + m.err };
+    const pm = hdlParseList(m.text, m.url);
+    if (!pm) return { err: 'nicht nachbildbar' };
+    let ml = m, pl = pm;
+    if (pm.variants.length) {
+      const list = /^audio/.test(loc.at) ? pm.audio[loc.audio] : pm.variants[loc.variant];
+      if (!list) return { err: 'nicht nachbildbar' };
+      if (/_list$/.test(loc.at)) return { url: list };
+      ml = await hdlDiagGetList(x, list, hdr(list), anonymous);
+      if (ml.err) return { err: 'Medienliste ' + ml.err };
+      pl = hdlParseList(ml.text, ml.url);
+      if (!pl) return { err: 'nicht nachbildbar' };
+    } else if (/^audio/.test(loc.at) || /_list$/.test(loc.at)) return { err: 'nicht nachbildbar' };
+    const res = /_init$/.test(loc.at) ? pl.map : pl.segs[loc.index];
+    return res ? { url: res } : { err: 'nicht nachbildbar' };
+  }
   function hdlDiagProbeOne(x, u, headers, anonymous) {
     return new Promise((resolve) => {
       let req = null, fin = false;
@@ -142,23 +211,36 @@
   function hdlDiagProbe(d) {
     const u = hdlDiagUrl.get(d), x = gmXhr();
     if (d.probe) return;
-    if (d.type === 'hls' && d.stage !== 'hlsplan') { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
+    // HLS-Auftrag: nur mit gemeldetem Fehlerort; die Ressource wird aus der Hauptliste der Seite nachgebildet
+    const walk = d.type === 'hls' && d.stage !== 'hlsplan';
+    if (walk && !d.loc) { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
     if (!x || !u) { d.probe = 'nicht möglich'; return; }
     d.probe = 'läuft';
-    let ref = '', session = false;
-    try { ref = typeof mediaReferrer === 'function' ? mediaReferrer(u) : ''; } catch (e) { ref = ''; }
-    try { session = typeof baseDomain === 'function' && baseDomain(new URL(u).hostname) === baseDomain(location.hostname); } catch (e) { session = false; }
+    const refOf = (v) => { try { return typeof mediaReferrer === 'function' ? mediaReferrer(v) || '' : ''; } catch (e) { return ''; } };
+    const sameSite = (v) => { try { return typeof baseDomain === 'function' && baseDomain(new URL(v).hostname) === baseDomain(location.hostname); } catch (e) { return false; } };
+    // mode: 'none' (A), 'ref' (B, Referer Pflicht), 'opt' (C, Referer wenn zulässig); anonymous false nur bei C
+    const run = async (mode, anonymous) => {
+      const hdr = (v) => { const r = mode === 'none' ? '' : refOf(v); return r ? { Referer: r } : {}; };
+      let target = u;
+      if (walk) {
+        const t = await hdlDiagResolve(x, u, d.loc, hdr, anonymous);
+        if (t.err) return { text: t.err };
+        target = t.url;
+      }
+      if (mode === 'ref' && !refOf(target)) return { text: 'kein zulässiger Referer', target };
+      return { text: await hdlDiagProbeOne(x, target, hdr(target), anonymous), target };
+    };
     (async () => {
-      const a = await hdlDiagProbeOne(x, u, {}, true);
-      const b = ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, true) : 'kein zulässiger Referer';
-      const ab = 'A ohne Cookies/Referer ' + a + ' · B mit Referer, ohne Cookies ' + b;
+      const a = await run('none', true);
+      const b = await run('ref', true);
+      const ab = (walk ? 'Ressource ' + hdlLocText(d.loc) + ': ' : '') + 'A ohne Cookies/Referer ' + a.text + ' · B mit Referer, ohne Cookies ' + b.text;
+      const target = a.target || b.target || '';
       let c = 'nicht zulässig (andere Seite)';
-      if (session) {
+      if (!target) c = 'nicht nachbildbar';
+      else if (sameSite(target)) {
         d.probe = ab + ' · C mit Browsersitzung: wartet auf Bestätigung';
         if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
-        c = hdlDiagConfirmSession() === true
-          ? (ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, false) : await hdlDiagProbeOne(x, u, {}, false))
-          : 'nicht ausgeführt (nicht bestätigt)';
+        c = hdlDiagConfirmSession() === true ? (await run('opt', false)).text : 'nicht ausgeführt (nicht bestätigt)';
       }
       d.probe = ab + ' · C mit Browsersitzung ' + c;
     })().catch(() => { d.probe = 'nicht möglich'; }).then(() => {
@@ -207,7 +289,7 @@
       (d.check ? ' · Statusabfrage ' + d.check : '') +
       (type === 'hls' ? ' · Planung ' + (d.planned ? 'erfolgreich (erste Option)' : 'unbekannt') +
         (d.planPhase ? ' · Ressourcen 0 (Planung)' : ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?') +
-        ' · genaue Fehlerressource/Segmentzahl unbekannt') : '') +
+        (d.loc ? ' · Fehlerort ' + hdlLocText(d.loc) : ' · genaue Fehlerressource/Segmentzahl unbekannt')) : '') +
       ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
       ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
       ' · Identität ' + (d.identity === 'played' ? 'diese Wiedergabe' : d.identity === 'declared' ? 'laut Seite' : '?') +

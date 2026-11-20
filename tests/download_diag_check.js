@@ -16,7 +16,7 @@ function setup(kind = 'mp4', env = {}) {
   const opt = { ctx: {}, sourceId: source.sourceId, revision: 7, identity: 'played' };
   const v = { isConnected: true, currentSrc: url, readyState: 4, videoWidth: 640, videoHeight: 360,
     buffered: { length: 1, start: () => 0, end: () => 8 }, played: { length: 1, start: () => 0, end: () => 2 }, paused: false };
-  const ctx = { URL, Date, WeakMap, CONFIG: {}, document: { hidden: false }, active: v,
+  const ctx = { URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v,
     setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout() {}, toast() {}, tr: (x) => x,
     pageTitle: () => 'PRIVATE-TITLE', fmtTime: () => '1:00',
     mediaRegistry: { snapshot: () => [source], resolveSelection: () => ({ ok: true, url }), resolveStream: () => ({ ok: true, url, bind: {} }) },
@@ -196,6 +196,67 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   check('no Cookie header is ever set by Kadri; no cookie text in the diagnostic',
     [a, x2, x3, x4].every((t) => t.probes.every((o) => !Object.keys(o.headers).some((k) => /cookie/i.test(k)))) &&
     !/cookie=|Cookie:|Set-Cookie/i.test(a.api.hdlDiagText(a.api.diags[0])));
+  // HLS-Auftrag: der Helfer meldet den Fehlerort (feste Codes/Nummern); Kadri bildet genau diese Ressource aus der
+  // Hauptliste der Seite nach und vergleicht A/B/(C nach Bestätigung). Synthetische Listen, keine echten Medien.
+  const MASTER = '#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="de",URI="aud/a.m3u8"\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="x",URI="sub/x.m3u8"\n' +
+    '#EXT-X-STREAM-INF:BANDWIDTH=1,AUDIO="a"\nvid/low.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2,AUDIO="a"\nvid/high.m3u8\n';
+  const MEDIA = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg0.m4s\n#EXTINF:4,\nseg1.m4s\n#EXT-X-ENDLIST\n';
+  const buf = (t) => new TextEncoder().encode(t).buffer;
+  const hlsWalk = async (loc, statusOf, env = { confirm: () => true }, base = 'https://www.private.invalid/v/master.m3u8') => {
+    const h = setup('hls', env);
+    h.ctx.reply = (op) => op === 'hlsplan' ? { ok: true, value: { planId: 'plan-private-id', options: [{ id: 'option-private-id' }] } }
+      : { ok: true, value: { job: { id: 'job-private-id', kind: 'hls', state: 'interrupted', reason: 'http_403', done: 0, of: 137, phase: '', loc } } };
+    h.ctx.mediaRegistry.resolveStream = () => ({ ok: true, url: base, bind: {} });
+    h.ctx.probeReply = (o) => {
+      const st = statusOf(o);
+      if (/\.m3u8$/.test(o.url) && st === 200) return o.onload({ status: 200, finalUrl: o.url, response: buf(/master/.test(o.url) ? MASTER : MEDIA) });
+      return o.onreadystatechange ? (o.onreadystatechange({ readyState: 2, status: st }), o.onload({ status: st })) : o.onload({ status: st });
+    };
+    await h.api.pageDlPlan(h.opt);
+    await flush(); await flush();
+    return { h, text: h.api.hdlDiagText(h.api.diags[0]) };
+  };
+  let w = await hlsWalk({ at: 'video_segment', index: 1, variant: 1, audio: 0 },
+    (o) => (/seg1\.m4s$/.test(o.url) ? (o.headers.Referer ? 200 : 403) : 200));
+  const segReq = w.h.probes.filter((o) => /seg1\.m4s$/.test(o.url));
+  check('HLS segment: exactly the reported segment of the reported variant is compared (A, B, C)',
+    segReq.length === 3 && segReq.every((o) => o.url === 'https://www.private.invalid/v/vid/seg1.m4s') &&
+    w.h.probes.some((o) => o.url === 'https://www.private.invalid/v/vid/high.m3u8') && !w.h.probes.some((o) => /low\.m3u8|seg0|init\.mp4/.test(o.url)));
+  check('HLS segment: location and per-variant result shown',
+    /Fehlerort Video-Segment 2 \(Variante 2\)/.test(w.text) &&
+    /Ressource Video-Segment 2 \(Variante 2\): A ohne Cookies\/Referer HTTP 403 · B mit Referer, ohne Cookies HTTP 200 · C mit Browsersitzung HTTP 200/.test(w.text));
+  check('HLS segment: list requests use the same request type as the variant',
+    w.h.probes.filter((o) => /\.m3u8$/.test(o.url) && o.anonymous === false).length === 2 && w.h.probes.filter((o) => /\.m3u8$/.test(o.url) && o.headers.Referer).length === 4);
+  check('HLS: no address, path, file name, token or Referer value in the shareable text',
+    !/private|PRIVATE|token|https?:|\.invalid|m3u8|m4s|init\.mp4|vid\/|aud\/|Referer:/.test(w.h.ctx.scrub(w.text)) && !/m3u8|m4s|vid\//.test(w.text));
+  w = await hlsWalk({ at: 'audio_init', index: -1, variant: 0, audio: 0 }, (o) => (/aud\/init\.mp4$/.test(o.url) ? 403 : 200));
+  check('HLS audio init: audio rendition list and its EXT-X-MAP',
+    w.h.probes.filter((o) => o.url === 'https://www.private.invalid/v/aud/init.mp4').length === 3 && /Fehlerort Audio-Init \(Audiospur 1\)/.test(w.text) &&
+    /A ohne Cookies\/Referer HTTP 403 · B mit Referer, ohne Cookies HTTP 403 · C mit Browsersitzung HTTP 403/.test(w.text));
+  w = await hlsWalk({ at: 'master', index: -1, variant: 0, audio: -1 }, () => 403);
+  check('HLS master: only the master itself is requested', w.h.probes.length === 3 && w.h.probes.every((o) => /master\.m3u8$/.test(o.url)) &&
+    /Fehlerort Hauptliste/.test(w.text) && /Ressource Hauptliste: A ohne Cookies\/Referer HTTP 403/.test(w.text));
+  w = await hlsWalk({ at: 'video_list', index: -1, variant: 0, audio: 0 }, (o) => (/low\.m3u8$/.test(o.url) ? 412 : 200));
+  check('HLS video list: master read, then the reported variant list compared',
+    w.h.probes.filter((o) => /low\.m3u8$/.test(o.url)).length === 3 && /Video-Medienliste \(Variante 1\): A ohne Cookies\/Referer HTTP 412/.test(w.text));
+  w = await hlsWalk({ at: 'video_segment', index: 0, variant: 0, audio: 0 }, (o) => (/master/.test(o.url) && !o.headers.Referer ? 403 : 200));
+  check('HLS: chain stops where a list fails, per variant',
+    /A ohne Cookies\/Referer Hauptliste HTTP 403 · B mit Referer, ohne Cookies HTTP 200/.test(w.text) && !w.h.probes.some((o) => /seg0/.test(o.url) && !o.headers.Referer));
+  w = await hlsWalk({ at: 'video_segment', index: 99, variant: 0, audio: 0 }, () => 200);
+  check('HLS: index outside the page list → not reproducible, nothing guessed',
+    /A ohne Cookies\/Referer nicht nachbildbar · B mit Referer, ohne Cookies nicht nachbildbar · C mit Browsersitzung nicht nachbildbar/.test(w.text) &&
+    !w.h.probes.some((o) => /\.m4s$/.test(o.url)) && w.h.ctx.confirms.length === 0);
+  w = await hlsWalk({ at: 'video_segment', index: 1, variant: 0, audio: 0 }, () => 200, {});
+  check('HLS: C never without confirmation', w.h.probes.every((o) => o.anonymous === true) && /C mit Browsersitzung nicht ausgeführt \(nicht bestätigt\)/.test(w.text));
+  w = await hlsWalk({ at: 'video_segment', index: 1, variant: 0, audio: 0 }, () => 200, { confirm: () => true, page: 'www.other.example' });
+  check('HLS: C not permitted for another site', w.h.ctx.confirms.length === 0 && /C mit Browsersitzung nicht zulässig \(andere Seite\)/.test(w.text));
+  for (const bad of [{ at: 'https://x.invalid/seg', index: 1, variant: 0, audio: 0 }, { at: 'video_segment', index: 'x', variant: 0, audio: 0 },
+    { at: 'video_segment', index: 1.5, variant: 0, audio: 0 }, { at: 'video_segment', index: 1, variant: 0 }, 'video_segment']) {
+    w = await hlsWalk(bad, () => 200);
+    check('HLS: malformed location dropped at the page boundary (' + JSON.stringify(bad).slice(0, 30) + ')',
+      w.h.probes.length === 0 && /nicht durchgeführt \(HLS-Ressource unbekannt\)/.test(w.text) && !/x\.invalid/.test(w.text));
+  }
+
   // ⬇ am Video: kein Sofortstart einer nur behaupteten MP4; tatsächlich Geladenes zuerst
   const btn = (mp4, hls) => {
     const t = setup('mp4'), menus = [];

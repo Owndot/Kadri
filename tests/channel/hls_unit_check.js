@@ -231,6 +231,18 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     Object.assign(w.helper.jobs.get(r.job.id), { state: 'interrupted', reason: 'http_403', done: 4 });
     const st = await w.dl.status(r.job.id);
     check('Unterbrochen: Hinweis auf Fortsetzen', st.job.state === 'interrupted' && NS.describeDownload(st.job).label.includes('fortsetzen'), JSON.stringify(st));
+    check('Unterbrochen ohne Fehlerort: kein Ort weitergegeben', !('loc' in st.job), JSON.stringify(st));
+    // Fehlerort des Helfers: nur feste Codes und begrenzte Nummern werden übernommen
+    Object.assign(w.helper.jobs.get(r.job.id), { at: 'video_segment', at_index: 3, at_variant: 1, at_audio: 0 });
+    const sl = await w.dl.status(r.job.id);
+    check('Fehlerort übernommen (Code und Nummern)', JSON.stringify(sl.job.loc) === '{"at":"video_segment","index":3,"variant":1,"audio":0}', JSON.stringify(sl));
+    for (const bad of [{ at: 'https://x.invalid/seg' }, { at: 'video_segment', at_index: 'x' }, { at: 'video_segment', at_index: 2.5 },
+      { at: 'video_segment', at_index: 1e9 }, { at: 'video_segment', at_variant: -2 }]) {
+      Object.assign(w.helper.jobs.get(r.job.id), { at: 'video_segment', at_index: 3, at_variant: 1, at_audio: 0 }, bad);
+      const sb = await w.dl.status(r.job.id);
+      check('Fehlerort verworfen: ' + JSON.stringify(bad), !('loc' in sb.job) && !JSON.stringify(sb).includes('x.invalid'), JSON.stringify(sb));
+    }
+    for (const k of ['at', 'at_index', 'at_variant', 'at_audio']) delete w.helper.jobs.get(r.job.id)[k];
     const URL2 = URL1.replace('SECRET123', 'NEWTOKEN');
     const p2 = await w.dl.hlsPlan(URL1, BIND);
     check('Neuer Plan derselben Quelle nennt den unterbrochenen Auftrag', p2.job && p2.job.id === r.job.id && p2.job.state === 'interrupted');
