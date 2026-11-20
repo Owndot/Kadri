@@ -84,7 +84,7 @@ function world(hooks) {
       const j = helper.jobs.get(m.id);
       return j ? Object.assign({ ok: true, id: m.id, reason: '' }, j) : { ok: true, id: m.id, state: 'unknown' };
     },
-    async status() { return helper.hlsCaps ? { ok: true, v: 3, hls: { v: 1, profiles: ['ts-avc-aac'], opus: false } } : { ok: true, v: 3 }; },
+    async status() { return helper.hlsCaps ? { ok: true, v: 3, hls: Object.assign({ v: 1, profiles: ['ts-avc-aac'], opus: false }, helper.ctxCaps ? { ctx: 1 } : {}) } : { ok: true, v: 3 }; },
   };
   const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); mem.writes.push(JSON.stringify(v)); } };
   const digest = async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex');
@@ -298,5 +298,48 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
   check('Bindung passt zur strengen Nachrichtenform', !!NS.downloadMessage('hlsplan', { url: rs.url, bind: rs.bind }));
   check('Auflösung: veraltete Revision abgelehnt', reg.resolveStream(c, a.sourceId, a.revision + 1).reason === 'stale-revision');
   check('Auflösung: verschlüsselter Stream abgelehnt', reg.resolveStream(c, snap.find((x) => x.protection === 'encrypted').sourceId, 1).reason === 'protected');
+  // ---------- Anfragekontext bei HLS: hlsplan (auch beim Neuplanen) mit ref/ua, hlsstart nie; Ableitung im Service ----------
+  {
+    const UA = 'Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+    const CTX = { ref: 'https://site.example/', ua: UA };
+    check('hlsplan mit ref/ua in genau der Helfer-Form', JSON.stringify(dm('hlsplan', Object.assign({ url: URL1, bind: BIND }, CTX))) ===
+      JSON.stringify({ op: 'hlsplan', v: 1, url: URL1, bind: BIND, ref: CTX.ref, ua: UA }));
+    check('hlsstart mit ref abgelehnt', dm('hlsstart', { id: ID, planId: PLAN, option: OPT, bind: BIND, ref: CTX.ref }) === null);
+    check('hlsplan mit Pfad im ref abgelehnt', dm('hlsplan', { url: URL1, bind: BIND, ref: 'https://site.example/watch' }) === null);
+    let stale = true;
+    const w = world({ hlsstart: (m) => { if (stale) { stale = false; return { ok: false, id: m.id, state: 'rejected', reason: 'plan_stale' }; } return undefined; } });
+    w.helper.ctxCaps = true;
+    const p = await w.dl.hlsPlan(URL1, BIND, CTX);
+    await w.dl.hlsStart(p.planId, p.options[0].id, 'x');
+    const plansSent = ops(w, 'hlsplan');
+    check('HLS: Plan und Neuplanung (plan_stale) mit ref und ua', plansSent.length === 2 && plansSent.every((x) => x.a.ref === CTX.ref && x.a.ua === UA), JSON.stringify(plansSent.map((x) => x.a)));
+    check('HLS: hlsstart nie mit Kontext', ops(w, 'hlsstart').every((x) => x.a.ref === undefined && x.a.ua === undefined));
+    check('HLS: Kontext nie gespeichert', w.mem.writes.every((x) => !x.includes('site.example') && !x.includes('Mozilla')));
+    const old = world();   // Helfer ohne "ctx":1
+    const p2 = await old.dl.hlsPlan(URL1, BIND, CTX);
+    check('HLS: Helfer ohne ctx:1 → hlsplan ohne ref/ua (bisheriger Weg)', p2.planId && ops(old, 'hlsplan').every((x) => x.a.ref === undefined && x.a.ua === undefined));
+
+    // Service: Kontext stammt aus sender.url (vom Browser gesetzt) und navigator.userAgent – nie aus der Nachricht
+    let receive;
+    const got = [];
+    const fakeDl = { start: async (u, n, c) => { got.push(['start', c]); return { job: { id: ID, state: 'running' }, existing: false }; },
+      hlsPlan: async (u, b, c) => { got.push(['hlsplan', c]); return { planId: PLAN, duration: 1, options: [], job: null }; } };
+    const serviceNS = Object.assign({}, NS, { createDownloads: () => fakeDl, createTransport: () => ({}), createStore: () => ({}), createChannel: () => ({}), idbBackend: () => ({}) });
+    const context = { KadriChannel: serviceNS, wasm_bindgen: () => Promise.resolve(), URL, navigator: { userAgent: UA },
+      chrome: { runtime: { id: 'test-extension', getURL: (x) => 'chrome-extension://test-extension/' + x, onMessage: { addListener: (f) => { receive = f; } } }, storage: { local: {} } } };
+    context.self = context;
+    vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../channel/channel-service.js'), 'utf8'), context);
+    const tab = { id: 'test-extension', tab: { id: 1 }, url: 'https://www.page.example/watch/123?token=SECRET#t' };
+    const ask = (m, sender) => new Promise((resolve) => receive(m, sender || tab, resolve));
+    const r1 = await ask({ t: 'kadri-download', op: 'hlsplan', url: URL1, bind: BIND });
+    const r2 = await ask({ t: 'kadri-download', op: 'start', url: URL1, name: 'x' });
+    check('Service: hlsplan/start mit Herkunft der Seite und Browser-UA (ohne Pfad/Query)', r1.ok && r2.ok && got.length === 2 &&
+      got.every(([, c]) => JSON.stringify(c) === JSON.stringify({ ref: 'https://www.page.example/', ua: UA })), JSON.stringify(got));
+    const forged = await ask({ t: 'kadri-download', op: 'start', url: URL1, ref: 'https://evil.example/' });
+    const forged2 = await ask({ t: 'kadri-download', op: 'hlsplan', url: URL1, bind: BIND, ua: 'x' });
+    check('Service: ref/ua aus der Nachricht abgelehnt', !forged.ok && !forged2.ok && got.length === 2);
+    const fromHttpFile = await ask({ t: 'kadri-download', op: 'start', url: URL1 }, { id: 'test-extension', tab: { id: 1 }, url: 'file:///x' });
+    check('Service: Nicht-Web-Absender wie bisher abgelehnt', !fromHttpFile.ok && got.length === 2);
+  }
   summary('hls-unit');
 })().catch((e) => { console.error(e); process.exit(1); });

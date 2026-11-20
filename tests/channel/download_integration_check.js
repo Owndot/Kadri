@@ -163,6 +163,35 @@ async function main() {
     check('Weder Speicher noch Texte noch Helfer-Ereignisse enthalten URL, Pfad oder Token',
       !/SECRET-TOKEN|pub\.mp4|login\.mp4|10\.1\.2\.3|127\.0\.0\.1/.test(all), all.match(/SECRET-TOKEN[^"]*|pub\.mp4|10\.1\.2\.3/g));
     check('Journal: höchstens 20 Aufträge, Kennungen statt URLs', s.mem.jobs.length <= 20 && s.mem.jobs.every((j) => /^[0-9a-f]{32}$/.test(j.id) && /^[0-9a-f]{64}$/.test(j.key) && !('url' in j)));
+
+    // ---------- Server verlangt den Referer der Seitenherkunft (Gerätefall: ohne 404, mit 200) ----------
+    {
+      const UA = 'Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+      check('Helfer mit HLS-Engine (meldet "ctx":1)', (await h.cmd('hls on')) === 'HLS on');
+      const s3 = setup();
+      await s3.channel.pair(await h.code());
+      // wie im Service (channel-service.js): status = Status-JSON des Helfers (nicht der Kopplungszustand)
+      s3.dl = NS.createDownloads({
+        channel: { download: (op, a) => s3.channel.download(op, a), status: () => s3.channel.command('status') },
+        storage: { get: async () => s3.mem.jobs && JSON.parse(JSON.stringify(s3.mem.jobs)), set: async (v) => { s3.mem.jobs = JSON.parse(JSON.stringify(v)); s3.mem.writes.push(JSON.stringify(v)); } },
+        digest: async (u) => crypto.createHash('sha256').update('salt\n' + u).digest('hex'),
+        random: () => crypto.randomBytes(16).toString('hex'),
+      });
+      const caps = await s3.dl.capabilities();
+      check('… Fähigkeit Anfragekontext gemeldet', caps.ctx === true, JSON.stringify(caps));
+      const refUrl = m.url('/videos/ref.mp4', 'ref=1&sig=SECRET-TOKEN-9');
+      const n0 = await s3.dl.start(refUrl, 'Ohne Referer');
+      const f0 = await until(s3.dl, n0.job.id, (j) => j.state === 'failed' || j.state === 'done');
+      check('Ohne Kontext: 404 wie am Gerät (bisheriger Weg unverändert)', f0.job.state === 'failed' && f0.job.reason === 'http_404', JSON.stringify(f0.job));
+      const at = m.hits.length;
+      const r9 = await s3.dl.start(refUrl, 'Mit Referer', { ref: 'http://site.example/', ua: UA });
+      const d9 = await until(s3.dl, r9.job.id, (j) => j.state === 'done' || j.state === 'failed');
+      check('Mit Seitenherkunft als Referer: fertig, volle Größe', d9.job.state === 'done' && d9.job.bytes === m.size, JSON.stringify(d9.job));
+      const hits9 = m.hits.slice(at).filter((x) => x.path === '/videos/ref.mp4');
+      check('… jede Anfrage des Helfers: genau die Herkunft als Referer, Browser-UA, nie Cookie/Authorization',
+        hits9.length > 0 && hits9.every((x) => x.referer === 'http://site.example/' && x.ua === UA && !x.cookie && !x.auth), JSON.stringify(hits9));
+      check('… Kontext nicht in Kadris Speicher', s3.mem.writes.every((x) => !x.includes('site.example') && !x.includes('Mozilla')));
+    }
   } finally {
     await h.stop();
     await m.close();

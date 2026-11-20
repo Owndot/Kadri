@@ -12,9 +12,12 @@
 //      {t:'kadri-download', op, …} – direkte MP4-Downloads (Phase C3, channel/channel-downloads.js): start/find aus
 //                                   Kadris Inhaltsskript (nur nach Tipp des Nutzers), status/cancel/caps auch aus dem
 //                                   Menü, list nur aus dem Menü. Feste Felder; nur die URL der Datei und ein Name gehen
-//                                   (verschlüsselt) zum Helfer – keine Cookies, Header oder Referer.
-//  - Kein Weg zum alten Helfer-Protokoll (X-EVP-Key, Port 47811); keine Cookies, Header oder Medien im Kanal. Einzige
-//    URL im Kanal: die der MP4-Datei, die der Nutzer selbst zum Speichern antippt (dlstart, verschlüsselt).
+//                                   (verschlüsselt) zum Helfer, bei start/hlsplan dazu der Anfragekontext: Herkunft der
+//                                   Seite (aus sender.url, nicht aus der Nachricht) als Referer und der User-Agent des
+//                                   Browsers – keine Cookies, keine anderen Header.
+//  - Kein Weg zum alten Helfer-Protokoll (X-EVP-Key, Port 47811); keine Cookies, Header oder Medien im Kanal. URLs im
+//    Kanal: die der Datei bzw. des Streams, die der Nutzer selbst zum Speichern antippt (dlstart/hlsplan, verschlüsselt),
+//    und als Referer nur die Herkunft der Seite (ohne Pfad/Query).
 (function (root) {
   'use strict';
   const NS = root.KadriChannel;
@@ -59,15 +62,18 @@
   const ID = /^[0-9a-f]{32}$/;
   // Nur Kadris Inhaltsskript (in einem Tab) oder das Menü; je Befehl genau diese Felder.
   const fromTab = (sender) => own(sender) && !!sender.tab && typeof sender.url === 'string' && /^https?:/.test(sender.url);
+  // Anfragekontext eines Auftrags: Seitenherkunft aus dem Absender (vom Browser gesetzt, nicht aus der Nachricht) und
+  // der User-Agent dieses Browsers; streng geprüft (NS.requestContext), ungültige Teile entfallen.
+  const pageContext = (s) => NS.requestContext(s.url, typeof navigator !== 'undefined' ? navigator.userAgent : '');
   const DL = {
-    start: { keys: ['url', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.start(m.url, m.name) },
+    start: { keys: ['url', 'name'], ok: (s) => fromTab(s), run: (m, s) => downloads.start(m.url, m.name, pageContext(s)) },
     find: { keys: ['url'], ok: (s) => fromTab(s), run: (m) => downloads.find(m.url) },
     status: { keys: ['id'], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: (m) => downloads.status(m.id) },
     cancel: { keys: ['id'], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: (m) => downloads.cancel(m.id) },
     caps: { keys: [], ok: (s) => fromTab(s) || isPage(s, 'popup.html'), run: () => downloads.capabilities() },
     list: { keys: [], ok: (s) => isPage(s, 'popup.html'), run: () => downloads.list() },
     // P4b: HLS-Streams – nur aus Kadris Inhaltsskript und nur nach Tipp (Plan, Start, Fortsetzen)
-    hlsplan: { keys: ['url', 'bind'], ok: (s) => fromTab(s), run: (m) => downloads.hlsPlan(m.url, m.bind) },
+    hlsplan: { keys: ['url', 'bind'], ok: (s) => fromTab(s), run: (m, s) => downloads.hlsPlan(m.url, m.bind, pageContext(s)) },
     hlsstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.hlsStart(m.planId, m.option, m.name) },
     hlsresume: { keys: ['id', 'planId', 'option'], ok: (s) => fromTab(s), run: (m) => downloads.hlsResume(m.id, m.planId, m.option) },
   };
@@ -100,7 +106,7 @@
       if (!d || !d.ok(sender) || !dlValid(m, d)) { reply({ ok: false, error: { kind: 'refused', message: 'refused' } }); return; }
       // Antworten mit festen Texten (Zustand, Fortschritt, Fehler) – nie Server-Text oder die URL.
       const text = (j) => (j && j.id ? Object.assign(j, NS.describeDownload(j)) : j);
-      d.run(m).then((value) => {
+      d.run(m, sender).then((value) => {
         if (value && value.job) text(value.job); else if (Array.isArray(value)) value.forEach(text); else if (value && value.id) text(value);
         if (value && value.error) value.message = NS.downloadErrorText(value.error);
         reply({ ok: true, value });

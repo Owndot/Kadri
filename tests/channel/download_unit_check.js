@@ -421,5 +421,61 @@ const starts = (w) => w.sent.filter((s) => s.op === 'dlstart');
     check('P4c-3: Startet mit gescheiterter Abfrage → Grund statt „Startet …“', d({ state: 'starting', check: 'timeout' }).label === 'Start nicht bestätigt – Helfer-App antwortet nicht');
     check('P4c-3: ohne Grund bleibt „Startet …“ (Antwort steht noch aus)', d({ state: 'starting' }).label === 'Startet …');
   }
+  // ---------- Anfragekontext (Referer der Seitenherkunft, Browser-UA): Form, Ableitung, Weitergabe nur an "ctx":1-Helfer ----------
+  {
+    const UA = 'Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+    const rc = NS.requestContext;
+    check('Kontext: nur Herkunft (Pfad, Query, Fragment entfernt; Host klein)', JSON.stringify(rc('https://WWW.Site.example/a/b?token=SECRET#x', UA)) === JSON.stringify({ ref: 'https://www.site.example/', ua: UA }));
+    check('Kontext: Zugangsdaten entfernt, Port bleibt', rc('http://user:pw@site.example:8080/p', null).ref === 'http://site.example:8080/' && !JSON.stringify(rc('http://user:pw@site.example:8080/p', null)).includes('pw'));
+    check('Kontext: Standardport entfällt', rc('https://site.example:443/x', null).ref === 'https://site.example/');
+    check('Kontext: nur http(s)', rc('file:///x', null) === null && rc('chrome-extension://abc/x.html', null) === null && rc('blob:https://site.example/1', null) === null);
+    check('Kontext: IP-v6-Literal → kein Referer', rc('https://[::1]/x', null) === null);
+    check('Kontext: UA mit Anführungszeichen/Backslash/Steuerzeichen/Nicht-ASCII/fremder Form entfällt',
+      ['Mozilla/5.0 (a"b)', 'Mozilla/5.0 (a\\b)', 'Mozilla/5.0 (a\r\nCookie: x)', 'Mozilla/5.0 (ä)', 'Helper/1', 'Mozilla/5.0 (' + 'x'.repeat(500)]
+        .every((u) => rc('https://site.example/', u).ua === undefined));
+    const ok = { id: ID, url: URL1, ref: 'https://site.example/', ua: UA };
+    check('dlstart mit ref/ua in genau der Helfer-Form', JSON.stringify(dm('dlstart', ok)) === JSON.stringify({ op: 'dlstart', id: ID, url: URL1, ref: 'https://site.example/', ua: UA }));
+    for (const [what, a, op] of [
+      ['ref mit Pfad', { id: ID, url: URL1, ref: 'https://site.example/x' }], ['ref mit Query', { id: ID, url: URL1, ref: 'https://site.example/?a=1' }],
+      ['ref ohne Schrägstrich', { id: ID, url: URL1, ref: 'https://site.example' }], ['ref mit Zugangsdaten', { id: ID, url: URL1, ref: 'https://u:p@site.example/' }],
+      ['ref groß geschrieben', { id: ID, url: URL1, ref: 'https://Site.example/' }], ['ref Port 0', { id: ID, url: URL1, ref: 'https://site.example:0/' }],
+      ['ref Port > 65535', { id: ID, url: URL1, ref: 'https://site.example:70000/' }], ['ref ftp', { id: ID, url: URL1, ref: 'ftp://site.example/' }],
+      ['ua fremde Form', { id: ID, url: URL1, ua: 'curl/8' }], ['ua mit Zeilenumbruch', { id: ID, url: URL1, ua: 'Mozilla/5.0 (a\nb)' }],
+      ['ref bei dlstatus', { id: ID, ref: 'https://site.example/' }, 'dlstatus'], ['ua bei dlcancel', { id: ID, ua: UA }, 'dlcancel'],
+    ]) check('abgelehnt: ' + what, dm(op || 'dlstart', a) === null);
+
+    // Verwaltung: Schein-Helfer mit/ohne "ctx":1
+    const run = async (statusReply) => {
+      const mem = { jobs: undefined, writes: [] }, sent = [];
+      let n = 0, statusCalls = 0, lose = 1;
+      const channel = {
+        async download(op, a) {
+          sent.push({ op, a: JSON.parse(JSON.stringify(a)) });
+          const m = NS.downloadMessage(op, a);
+          if (!m) throw err('input');
+          if (op === 'dlstart' && lose-- > 0) throw err('timeout');                 // Antwort verloren → unbestätigt
+          if (op === 'dlstatus') return { ok: true, id: m.id, state: sent.filter((x) => x.op === 'dlstart').length > 1 ? 'running' : 'unknown' };
+          return { ok: true, id: m.id, state: 'running', bytes: 0, total: 1000, reason: '' };
+        },
+      };
+      if (statusReply !== undefined) channel.status = async () => { statusCalls++; if (statusReply instanceof Error) throw statusReply; return statusReply; };
+      const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); mem.writes.push(JSON.stringify(v)); } };
+      const timers = [];
+      const dl = NS.createDownloads({ channel, storage, digest: async (u) => crypto.createHash('sha256').update(u).digest('hex'), setTimer: (f) => timers.push(f), random: () => (++n).toString(16).padStart(32, '0') });
+      const r = await dl.start(URL1, 'Clip', { ref: 'https://site.example/', ua: UA });
+      await dl.status(r.job.id);                                                     // Nachprüfung: dlstart mit derselben Kennung erneut
+      return { sent, mem, statusCalls, r };
+    };
+    const yes = await run({ ok: true, hls: { v: 1, ctx: 1 } });
+    const st = yes.sent.filter((x) => x.op === 'dlstart');
+    check('MP4: Helfer mit ctx:1 bekommt ref und ua', st.length === 2 && st.every((x) => x.a.ref === 'https://site.example/' && x.a.ua === UA), JSON.stringify(st));
+    check('MP4: erneutes dlstart (Antwort verloren) mit derselben Kennung UND demselben Kontext', st[0].a.id === st[1].a.id && JSON.stringify(st[0].a) === JSON.stringify(st[1].a));
+    check('MP4: dlstatus ohne Kontext', yes.sent.filter((x) => x.op === 'dlstatus').every((x) => x.a.ref === undefined && x.a.ua === undefined));
+    check('MP4: Kontext nie gespeichert', yes.mem.writes.every((w) => !w.includes('site.example') && !w.includes('Mozilla')));
+    for (const [what, reply] of [['ohne ctx-Feld', { ok: true, hls: { v: 1 } }], ['alter Helfer ohne hls', { ok: true }], ['Status-Fehler', err('timeout')], ['kein Status', undefined]]) {
+      const no = await run(reply);
+      check('MP4: ' + what + ' → dlstart ohne ref/ua (bisheriger Weg)', no.sent.filter((x) => x.op === 'dlstart').every((x) => x.a.ref === undefined && x.a.ua === undefined) && no.r.job.id, JSON.stringify(no.sent));
+    }
+  }
   summary('download_unit');
 })().catch((e) => { console.log('FAIL crash — ' + (e && e.stack)); process.exitCode = 1; });

@@ -1,7 +1,9 @@
 // Kadri – direkte MP4-Downloads über die Helfer-App (Phase C3), im Hintergrund der Chrome-/Vivaldi-Fassung.
 //
 // Einziger Weg: der verschlüsselte Kanal (channel.download → dlstart/dlstatus/dlcancel, Noise KK). Übertragen werden
-// nur Kennung, URL und optionaler Name; keine Cookies, Header, Referer oder Browser-Zugangsdaten. Ist der Helfer nicht
+// nur Kennung, URL und optionaler Name, dazu – nur bei Helfern mit "ctx":1 – der Anfragekontext des Auftrags: die
+// Herkunft der Seite als Referer (ohne Pfad/Query) und der User-Agent des Browsers. Nie Cookies, andere Header oder
+// Browser-Zugangsdaten. Der Kontext bleibt nur im Arbeitsspeicher (wie die URL), nie in storage.local. Ist der Helfer nicht
 // gekoppelt oder nicht erreichbar, gibt es keinen anderen Weg (kein Klartext, kein Browser-Download als Ersatz).
 //
 // Aufträge (höchstens MAX_JOBS) liegen in storage.local, damit sie einen Neustart des Service Workers oder des Browsers
@@ -60,7 +62,7 @@
 
   // storage: { get(): Promise<array|undefined>, set(array): Promise } · digest(text): Promise<hex> · random(): hex(32)
   function createDownloads({ channel, storage, digest, random, now = () => Date.now(), setTimer = (f, ms) => setTimeout(f, ms) }) {
-    const pending = new Map();   // id → URL, nur solange der Start unbestätigt ist (nie gespeichert)
+    const pending = new Map();   // id → { url, ctx }, nur solange der Start unbestätigt ist (nie gespeichert)
     // P4b: Pläne des Helfers (hlsplan), nur im Arbeitsspeicher: planId → { key, url, bind, options, at }. Die URL bleibt
     // hier, solange der Plan gilt (10 min), damit ein abgelaufener Plan einmal neu erstellt werden kann – nie gespeichert.
     const plans = new Map();
@@ -70,6 +72,23 @@
     let chain = Promise.resolve();
     const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
     let caps = null;
+    let ctxCaps = null;   // { at, ok }: meldet der Helfer "ctx":1 (Anfragekontext)? 60 s zwischengespeichert
+
+    // Anfragekontext nur an Helfer, die ihn annehmen (alte Helfer lehnten das ganze dlstart/hlsplan ab). Ohne Antwort
+    // oder ohne Feld: ohne Kontext senden – wie bisher.
+    async function contextFor(ctx) {
+      if (!ctx || (!ctx.ref && !ctx.ua) || typeof channel.status !== 'function') return null;
+      if (!ctxCaps || now() - ctxCaps.at >= 60_000) {
+        let ok = false;
+        try { const st = await channel.status(); ok = !!(st && st.hls && st.hls.v === 1 && st.hls.ctx === 1); } catch (e) { ok = false; }
+        ctxCaps = { at: now(), ok };
+      }
+      if (!ctxCaps.ok) return null;
+      const c = {};
+      if (typeof ctx.ref === 'string') c.ref = ctx.ref;
+      if (typeof ctx.ua === 'string') c.ua = ctx.ua;
+      return c;
+    }
 
     async function load() {
       const l = await storage.get();
@@ -137,8 +156,8 @@
 
     // dlstart mit der gespeicherten Kennung. War nur die Sitzung beim Helfer abgelaufen (Neustart der App), kam der
     // Befehl sicher nicht an: genau einmal mit neuer Sitzung und DERSELBEN Kennung wiederholen.
-    async function send(j, url) {
-      const args = j.named ? { id: j.id, url, name: j.name } : { id: j.id, url };
+    async function send(j, url, ctx) {
+      const args = Object.assign(j.named ? { id: j.id, url, name: j.name } : { id: j.id, url }, ctx || {});
       try { return apply(j, await channel.download('dlstart', args)); }
       catch (e) {
         if (!(e && e.kind === 'stale-session' && e.notSent)) throw e;
@@ -147,21 +166,22 @@
     }
 
     // Start durch den Nutzer. Dieselbe Datei läuft schon (oder ist unbestätigt) → derselbe Auftrag.
-    function start(rawUrl, rawName) {
+    function start(rawUrl, rawName, rawCtx) {
       return serial(async () => {
         const url = normalizeUrl(rawUrl);
         if (!url) { const e = new Error('input'); e.kind = 'input'; throw e; }
+        const ctx = await contextFor(rawCtx);
         const key = await digest(url);
         const jobs = await load();
         const same = jobs.find((x) => x.key === key && !FINAL.has(x.state));
-        if (same && await stillActive(jobs, same)) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, url); return { job: view(same), existing: true }; }
+        if (same && await stillActive(jobs, same)) { if (same.state !== 'cancelling' && !pending.has(same.id)) pending.set(same.id, { url, ctx }); return { job: view(same), existing: true }; }
         const named = rawName != null && String(rawName).trim() !== '';
         const j = { id: random(), key, name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '', at: now(), seen: 0 };
         jobs.unshift(j);                 // neuester zuerst (bei gleicher Zeit bleibt die Reihenfolge, sort ist stabil)
         await save(jobs);                // erst gespeichert, dann gesendet: die Kennung überlebt jeden Abbruch
-        pending.set(j.id, url);
+        pending.set(j.id, { url, ctx });
         try {
-          await send(j, url);
+          await send(j, url, ctx);
         } catch (e) {
           if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); followUp(j.id); return { job: view(j), existing: false }; }
           pending.delete(j.id);
@@ -221,12 +241,12 @@
             catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : (e.reason || 'not_started'); hlsPending.delete(id); } }
           } else { j.state = 'failed'; j.reason = 'not_started'; hlsPending.delete(id); }
         } else if (s === 'unknown') {
-          const url = pending.get(id);
+          const p = pending.get(id);
           // unknown ist kein terminaler Zustand: ein früher gesendeter Start kann noch eintreffen.
           // Die gespeicherte Abbruchabsicht bleibt; insbesondere niemals dlstart erneut senden.
           if (j.state === 'cancelling') { pending.delete(id); }
-          else if (url) {
-            try { await send(j, url); }   // dieselbe Kennung: der Helfer startet höchstens einmal
+          else if (p) {
+            try { await send(j, p.url, p.ctx); }   // dieselbe Kennung (und derselbe Kontext): der Helfer startet höchstens einmal
             catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : 'not_started'; pending.delete(id); } }
           } else { j.state = 'failed'; j.reason = 'not_started'; }
         }
@@ -320,16 +340,17 @@
 
     // hlsplan: Optionen (Qualität, Ton) für einen vom Nutzer gewählten Stream. Antwort ohne Adressen; dazu ein
     // laufender oder unterbrochener Auftrag derselben Quelle (zum Fortsetzen).
-    function hlsPlan(rawUrl, bind) {
+    function hlsPlan(rawUrl, bind, rawCtx) {
       return serial(async () => {
         const url = normalizeUrl(rawUrl);
         if (!url) { const e = new Error('input'); e.kind = 'input'; throw e; }
+        const ctx = await contextFor(rawCtx);
         const key = await digest(url);
         // Fortsetz-Schlüssel ohne Abfrage: dieselbe Quelle mit neuem Zugangs-Token (abgelaufene Adresse) wiederfinden.
         // Nur für das Angebot „Fortsetzen“; ob die Listen wirklich gleich sind, prüft der Helfer (Form-Fingerabdruck,
         // sonst lädt er neu). Doppelte Starts erkennt weiterhin nur der volle Schlüssel.
         const skey = await digest('hls-resume\n' + url.split(/[?#]/)[0]);
-        const r = await channel.download('hlsplan', { url, bind });
+        const r = await channel.download('hlsplan', Object.assign({ url, bind }, ctx || {}));
         if (r && r.ok === false) {
           // Helfer lehnt ab: mit Grund (Live, verschlüsselt, Netzgrenze …) – ohne Grund ist es ein Helfer ohne HLS
           const ok = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason);
@@ -339,7 +360,7 @@
         }
         const p = planOf(r);
         if (!p) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }
-        keepPlan(Object.assign({ key, skey, url, bind, at: now() }, p));
+        keepPlan(Object.assign({ key, skey, url, bind, ctx, at: now() }, p));
         const all = await load();
         for (const x of all) if (x.kind === 'hls' && (x.key === key || x.skey === skey) && !TERMINAL.has(x.state)) await stillActive(all, x);
         const job = all.find((x) => x.key === key && x.kind === 'hls' && !TERMINAL.has(x.state)) ||
@@ -357,10 +378,10 @@
         const stale = (e && e.kind === 'plan-rejected' && e.reason === 'plan_stale') || (e && e.kind === 'stale-session' && e.notSent);
         if (!stale) throw e;
         const want = plan.options.find((o) => o.id === option);
-        const fresh = planOf(await channel.download('hlsplan', { url: plan.url, bind: plan.bind }));
+        const fresh = planOf(await channel.download('hlsplan', Object.assign({ url: plan.url, bind: plan.bind }, plan.ctx || {})));
         const again = fresh && want && fresh.options.find((o) => sameOption(o, want));
         if (!again) { const e2 = new Error('plan-changed'); e2.kind = 'plan-rejected'; e2.reason = 'plan_changed'; throw e2; }
-        const np = Object.assign({ key: plan.key, skey: plan.skey, url: plan.url, bind: plan.bind, at: now() }, fresh);
+        const np = Object.assign({ key: plan.key, skey: plan.skey, url: plan.url, bind: plan.bind, ctx: plan.ctx, at: now() }, fresh);
         keepPlan(np);
         return apply(j, await channel.download('hlsstart', args(np, again.id)));
       }
@@ -423,10 +444,15 @@
         let value;
         try {
           const r = await channel.download('dlstatus', { id: PROBE_ID });
-          value = { reachable: true, supported: r.ok === true && r.state === 'unknown', hls: false };
+          value = { reachable: true, supported: r.ok === true && r.state === 'unknown', hls: false, ctx: false };
           // P4b: HLS nur, wenn der Helfer es im Status meldet (alte Helfer: kein Feld → kein Angebot)
           if (value.supported && typeof channel.status === 'function') {
-            try { const st = await channel.status(); value.hls = !!(st && st.hls && st.hls.v === 1); } catch (e) { value.hls = false; }
+            try {
+              const st = await channel.status();
+              value.hls = !!(st && st.hls && st.hls.v === 1);
+              value.ctx = value.hls && st.hls.ctx === 1;
+              ctxCaps = { at: now(), ok: value.ctx };
+            } catch (e) { value.hls = false; }
           }
         } catch (e) { value = { reachable: false, supported: false, hls: false, error: e.kind || 'error' }; }
         if (value.reachable) caps = { at: now(), value };

@@ -15,7 +15,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // /s/<name>/master.m3u8 · v0.m3u8 (Video) · a.m3u8 (Ton) · v0_<n>.ts / a_<n>.ts. Jede Ressourcenzeile trägt ?t=<token>;
 // ein anderes Token → 403 (abgelaufene Adresse). Starker ETag je Segment, If-Range (bytes=0-0) → 206.
 function hlsServer() {
-  const st = { token: 'T1', delay: 0, manifestDelay: 0, hits: [], changed: false, fault: null };
+  const st = { token: 'T1', delay: 0, manifestDelay: 0, hits: [], changed: false, fault: null, requireRef: null };
   const seg = (name) => crypto.createHash('sha256').update(name).digest();   // 32 B, deterministisch
   const body = (n) => Buffer.concat(new Array(64).fill(seg(n)));            // 2 KiB je Segment
   const N = 6;
@@ -36,8 +36,10 @@ function hlsServer() {
     const u = new URL(req.url, 'http://x');
     const m = /^\/s\/[a-z0-9]+\/([a-z0-9_.]+)$/.exec(u.pathname);
     st.hits.push({ path: u.pathname, method: req.method, cookie: req.headers.cookie || '', auth: req.headers.authorization || '', referer: req.headers.referer || '',
-      range: req.headers.range || '', ifRange: req.headers['if-range'] || '' });
+      range: req.headers.range || '', ifRange: req.headers['if-range'] || '', ua: req.headers['user-agent'] || '' });
     if (!m) { res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
+    // Hotlink-Schutz (Gerätefall): ohne Referer der Seitenherkunft 404 – Listen, Init und Segmente
+    if (st.requireRef && req.headers.referer !== st.requireRef) { st.hits[st.hits.length - 1].status = 404; res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
     if (u.searchParams.get('t') !== st.token) { res.writeHead(403, { 'Content-Length': '0' }); res.end(); return; }
     const f = m[1];
     // Deliberate, per-resource HTTP responses; no real site data involved.
@@ -261,6 +263,30 @@ async function main() {
       check(label + ': no publication', (await files(h)).length === before);
       if (redirect) check('redirect chain captured as 302 then 404', hits.some(x => x.status === 302) && hits.some(x => x.path.endsWith('/gone.ts') && x.status === 404));
       m.fault = null;
+    }
+
+    // ---------- Server verlangt den Referer der Seitenherkunft (Gerätefall: ohne 404, mit 200) ----------
+    {
+      const UA = 'Mozilla/5.0 (Linux; Android 15; SM-S931B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+      const ctx = { ref: 'http://site.example/', ua: UA };
+      const s4 = setup();
+      await s4.channel.pair(await h.code());
+      check('Helfer meldet "ctx":1', (await s4.dl.capabilities()).ctx === true);
+      m.fault = null; m.requireRef = ctx.ref;
+      let e0 = null;
+      try { await s4.dl.hlsPlan(m.url('refless'), BIND); } catch (x) { e0 = x; }
+      check('Ohne Kontext: Hauptliste 404, kein Plan (bisheriger Weg unverändert)', e0 && e0.kind === 'plan' && e0.reason === 'http_404', e0 && (e0.kind + ' ' + e0.reason));
+      const at = m.hits.length, before = (await files(h)).length;
+      const p = await s4.dl.hlsPlan(m.url('withref'), BIND, ctx);
+      const r = await s4.dl.hlsStart(p.planId, p.options[0].id, 'Mit Referer');
+      const d = await until(s4.dl, r.job.id, (j) => j.state === 'done' || j.state === 'failed' || j.state === 'interrupted');
+      check('Mit Seitenherkunft als Referer: Stream gespeichert', d.job.state === 'done' && (await files(h)).length === before + 1, JSON.stringify(d.job));
+      const hits = m.hits.slice(at);
+      check('… Hauptliste, Video-/Tonliste und Segmente abgerufen', ['master.m3u8', 'v0.m3u8', 'a.m3u8'].every((f) => hits.some((x) => x.path.endsWith('/' + f))) && hits.some((x) => /\.ts$/.test(x.path)));
+      check('… jede Anfrage: genau die Herkunft als Referer, Browser-UA, kein 404, nie Cookie/Authorization',
+        hits.every((x) => x.referer === ctx.ref && x.ua === UA && x.status !== 404 && !x.cookie && !x.auth), JSON.stringify(hits.slice(0, 3)));
+      check('… Kontext nicht in Kadris Speicher', s4.mem.writes.every((x) => !x.includes('site.example') && !x.includes('Mozilla')));
+      m.requireRef = null;
     }
   } finally {
     await h.stop();

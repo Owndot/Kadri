@@ -53,6 +53,36 @@
   const DL_ID = /^[0-9a-f]{32}$/;
   const DL_URL = /^https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+$/;
   const DL_NAME_BAD = /[\\"\u0000-\u001f\u007f-\u009f\u2028\u2029]|[\ud800-\udbff](?![\udc00-\udfff])|(?:^|[^\ud800-\udbff])[\udc00-\udfff]/;
+  // Anfragekontext je Auftrag (nur dlstart/hlsplan, nur an Helfer mit "ctx":1): ref = Herkunft der Seite
+  // (http(s)://host[:port]/ – ohne Pfad, Query, Fragment, Zugangsdaten), ua = User-Agent des Browsers. Dieselben Regeln
+  // wie beim Helfer (RequestContext.java); keine Cookies, keine Authorization, keine anderen Header.
+  const CTX_REF = /^https?:\/\/[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:[1-9][0-9]{0,4})?\/$/;
+  const CTX_UA = /^Mozilla\/5\.0 \([\x20\x21\x23-\x5b\x5d-\x7e]{1,500}$/;   // druckbares ASCII ohne Anführungszeichen und Backslash
+  const refValid = (r) => {
+    if (typeof r !== 'string' || r.length > 300 || !CTX_REF.test(r)) return false;
+    const port = /:(\d+)\/$/.exec(r.slice(r.indexOf('//') + 2));
+    return !port || Number(port[1]) <= 65535;
+  };
+  const uaValid = (u) => typeof u === 'string' && u.length <= 512 && CTX_UA.test(u);
+  // Kontext aus Seiten-URL und Browser-UA: nur gültige Teile; null, wenn nichts übrig bleibt.
+  function requestContext(pageUrl, userAgent) {
+    let ref = null;
+    try {
+      const u = new URL(String(pageUrl));
+      if (u.protocol === 'http:' || u.protocol === 'https:') ref = u.origin + '/';
+    } catch (e) { ref = null; }
+    const c = {};
+    if (refValid(ref)) c.ref = ref;
+    if (uaValid(userAgent)) c.ua = userAgent;
+    return c.ref || c.ua ? c : null;
+  }
+  // Optionale Felder ref/ua an eine Nachricht hängen: jedes vorhandene muss gültig sein, sonst null.
+  function withContext(m, a) {
+    if (a.ref !== undefined) { if (!refValid(a.ref)) return null; m.ref = a.ref; }
+    if (a.ua !== undefined) { if (!uaValid(a.ua)) return null; m.ua = a.ua; }
+    return m;
+  }
+
   // P4b: HLS. bind = {player, gen, rev} aus Kadris Quellen-Registry (Player-Kennung, Medien-Epoche, Revision der Quelle).
   const HLS_PLAYER = /^[A-Za-z0-9_-]{1,64}$/;
   const HLS_PLAN = /^[0-9a-f]{32}$/, HLS_OPTION = /^[0-9a-f]{24}$/;
@@ -70,10 +100,10 @@
     const bind = hlsBind(a.bind);
     if (!bind) return null;
     if (op === 'hlsplan') {
-      if (!keys.every((k) => k === 'url' || k === 'bind')) return null;
+      if (!keys.every((k) => k === 'url' || k === 'bind' || k === 'ref' || k === 'ua')) return null;
       const url = typeof a.url === 'string' ? a.url : '';
       if (!url || url.length > 2048 || !DL_URL.test(url)) return null;   // (wie bei dlstart)
-      return { op, v: 1, url, bind };
+      return withContext({ op, v: 1, url, bind }, a);
     }
     if (!keys.every((k) => k === 'id' || k === 'planId' || k === 'option' || k === 'bind' || k === 'name')) return null;
     if (typeof a.id !== 'string' || !DL_ID.test(a.id) || typeof a.planId !== 'string' || !HLS_PLAN.test(a.planId) ||
@@ -91,14 +121,14 @@
     if (!a || typeof a !== 'object' || typeof a.id !== 'string' || !DL_ID.test(a.id)) return null;
     const keys = Object.keys(a);
     if (op === 'dlstatus' || op === 'dlcancel') return keys.every((k) => k === 'id') ? { op, id: a.id } : null;
-    if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name')) return null;
+    if (op !== 'dlstart' || !keys.every((k) => k === 'id' || k === 'url' || k === 'name' || k === 'ref' || k === 'ua')) return null;
     if (typeof a.url !== 'string' || a.url.length > 2048 || !DL_URL.test(a.url)) return null;
     const m = { op, id: a.id, url: a.url };
     if (a.name !== undefined) {
       if (typeof a.name !== 'string' || a.name.length > 120 || DL_NAME_BAD.test(a.name)) return null;
       m.name = a.name;
     }
-    return m;
+    return withContext(m, a);
   }
 
   class ChannelError extends Error {
@@ -309,6 +339,7 @@
   NS.createChannel = createChannel;
   NS.controlMessage = controlMessage;
   NS.downloadMessage = downloadMessage;
+  NS.requestContext = requestContext;
   NS.hlsBindValid = (b) => !!hlsBind(b);
   NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);

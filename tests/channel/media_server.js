@@ -3,6 +3,7 @@
 //   rate=<Bytes/s>  langsam (für Fortschritt, Abbruch, Neustarts) – nur für Anfragen OHNE Browser-Kopfzeilen (Helfer)
 //   auth=1          403 ohne Cookie „sess=…“ (Seite verlangt die Anmeldung des Browsers)
 //   type=<mime>     anderer Content-Type
+//   ref=1           404 ohne Referer „http://site.example/“ (Hotlink-Schutz: Server verlangt die Seitenherkunft)
 // Jede Anfrage wird mit Cookie/Authorization/Referer/User-Agent aufgezeichnet (hits).
 'use strict';
 const fs = require('fs');
@@ -21,6 +22,9 @@ function start(port = 0) {
     hits.push({ path: u.pathname, query: u.search, browser, cookie: req.headers.cookie || '', auth: req.headers.authorization || '',
       referer: req.headers.referer || '', ua: req.headers['user-agent'] || '', range: req.headers.range || '' });
     if (!u.pathname.endsWith('.mp4')) { res.writeHead(404, { 'Content-Length': '0' }); res.end(); return; }
+    if (u.searchParams.get('ref') === '1' && req.headers.referer !== 'http://site.example/') {
+      res.writeHead(404, { 'Content-Length': '0' }); res.end(); return;
+    }
     if (u.searchParams.get('auth') === '1' && !/(^|;\s*)sess=/.test(req.headers.cookie || '')) {
       res.writeHead(403, { 'Content-Type': 'text/plain', 'Content-Length': '9' }); res.end('forbidden'); return;
     }
