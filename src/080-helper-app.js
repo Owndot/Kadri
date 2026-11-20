@@ -38,8 +38,14 @@
       loaded: !!(e && e.browser === 'loaded'), current: !!(e && e.revision === o.revision) };
   }
   const hdlDiagCode = (s) => typeof s === 'string' && /^[a-z0-9_-]{1,40}$/.test(s) ? s : '';
+  // Beleg einer Auswahl in festen Worten (Download-Menüs): gesehene Wiedergabe, tatsächlich geladener Stream oder nur
+  // von der Seite/dem Adapter behauptet.
+  const hdlEvidenceText = (x) => (x && x.identity === 'played' ? 'diese Wiedergabe'
+    : x && x.loaded ? 'läuft gerade (Stücke geladen)' : 'laut Seite, Länge/Inhalt ungeprüft');
   // Fehler vor einer Auftragskennung (z. B. hlsplan): ebenfalls behalten, ohne künstlichen Downloadauftrag.
-  function hdlDiagFailure(info, r) {
+  // url (optional, nur hlsplan): die gewählte Liste – nur für den Browser-Vergleich, wenn der Helfer genau sie als
+  // Fehlerstelle meldet; sie verlässt die Seite nicht und wird nach dem Vergleich vergessen.
+  function hdlDiagFailure(info, r, url) {
     const d = Object.assign({ at: Date.now(), state: 'rejected', failAfter: 0 }, info,
       { reason: hdlDiagCode(r && r.error && (r.error.reason || r.error.kind)) || 'unreachable' });
     const diag = r && r.error && r.error.diag;
@@ -52,6 +58,11 @@
     d.failAfter = Math.max(0, Math.round((Date.now() - d.at) / 1000));
     hdlDiags.unshift(d);
     while (hdlDiags.length > 4) hdlDiags.pop();
+    // Nur wenn die fehlgeschlagene Ressource feststeht: die gewählte Liste selbst (Planungsschritt source_fetch, 0 Listen)
+    if (url && d.stage === 'hlsplan' && d.planPhase === 'source_fetch' && d.playlists === 0 && /^http_\d{3}$/.test(d.reason)) {
+      hdlDiagUrl.set(d, url);
+      hdlDiagProbe(d);
+    }
     if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
     return d;
   }
@@ -91,24 +102,50 @@
     if (HDL_TERMINAL.indexOf(d.state) >= 0 && d.probe !== 'läuft') hdlDiagUrl.delete(d);
     if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
   }
+  // Browser-Vergleich nach einem HTTP-Fehler des Helfers: genau die Adresse, an der der Helfer scheiterte, in drei
+  // vergleichbaren Varianten nacheinander. Je eine normale GET-Anfrage (kein Range), abgebrochen bei den Antwort-
+  // Kopfzeilen (kein Inhalt; zusätzlich höchstens 256 KiB und 15 s). Alles über Kadris Hintergrund mit dessen Netzschutz
+  // (keine privaten Ziele, Weiterleitungen dorthin gesperrt); den Browser-User-Agent setzt der Browser dort immer.
+  //   A ohne Cookies und Referer
+  //   B mit zulässigem Referer (mediaReferrer: dieselbe Herkunft voll, sonst nur die Herkunft der Seite), ohne Cookies
+  //   C wie B plus Browsersitzung – nur wo die bestehende Regel Cookies erlaubt (gleiche Basisdomain wie die Seite);
+  //     sonst nicht durchgeführt
+  // Ergebnis ausschließlich Statuscodes bzw. feste Codes – nie Adresse, Kopfzeilen oder Antwortinhalt.
+  // HLS: nur, wenn der Helfer die gewählte Liste selbst als Fehlerstelle meldet (hdlDiagFailure); sonst ist die fehlerhafte
+  // Ressource unbekannt und die Hauptliste wäre KEIN Vergleich.
+  const HDL_PROBE_MAX = 262144;
+  function hdlDiagProbeOne(x, u, headers, anonymous) {
+    return new Promise((resolve) => {
+      let req = null, fin = false;
+      const end = (v) => { if (fin) return; fin = true; try { if (req) req.abort(); } catch (e) {} resolve(v); };
+      try {
+        req = x({ method: 'GET', url: u, headers: headers, anonymous: anonymous, timeout: 15000, responseType: 'arraybuffer',
+          onreadystatechange: (r) => { if (r && r.readyState >= 2 && r.status) end('HTTP ' + r.status); },
+          onprogress: (e) => { if (e && e.loaded > HDL_PROBE_MAX) end('abgebrochen (Größe)'); },
+          onload: (r) => end('HTTP ' + ((r && r.status) || '?')),
+          onerror: (r) => end(/^nicht erlaubt/.test(String((r && r.error) || '')) ? 'gesperrt (Netzschutz)' : 'Netzwerkfehler'),
+          ontimeout: () => end('Zeitüberschreitung') });
+      } catch (e) { end('nicht möglich'); }
+    });
+  }
   function hdlDiagProbe(d) {
     const u = hdlDiagUrl.get(d), x = gmXhr();
     if (d.probe) return;
-    // Der Helfer meldet keine fehlerhafte HLS-Adresse. Ein Abruf der Hauptliste wäre KEIN Segmentvergleich.
-    if (d.type === 'hls') { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
+    if (d.type === 'hls' && d.stage !== 'hlsplan') { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
     if (!x || !u) { d.probe = 'nicht möglich'; return; }
     d.probe = 'läuft';
-    let req = null, fin = false;
-    const end = (v) => {
-      if (fin) return; fin = true; d.probe = v; hdlDiagUrl.delete(d);
-      try { if (req) req.abort(); } catch (e) {}
+    let ref = '', session = false;
+    try { ref = typeof mediaReferrer === 'function' ? mediaReferrer(u) : ''; } catch (e) { ref = ''; }
+    try { session = typeof baseDomain === 'function' && baseDomain(new URL(u).hostname) === baseDomain(location.hostname); } catch (e) { session = false; }
+    (async () => {
+      const a = await hdlDiagProbeOne(x, u, {}, true);
+      const b = ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, true) : 'kein zulässiger Referer';
+      const c = !session ? 'nicht zulässig (andere Seite)' : ref ? await hdlDiagProbeOne(x, u, { Referer: ref }, false) : await hdlDiagProbeOne(x, u, {}, false);
+      d.probe = 'A ohne Cookies/Referer ' + a + ' · B mit Referer, ohne Cookies ' + b + ' · C mit Browsersitzung ' + c;
+    })().catch(() => { d.probe = 'nicht möglich'; }).then(() => {
+      hdlDiagUrl.delete(d);
       if (typeof hdlDiagChanged === 'function') { try { hdlDiagChanged(); } catch (e) {} }
-    };
-    try {
-      req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0' }, anonymous: true, timeout: 15000, responseType: 'arraybuffer',
-        onreadystatechange: (r) => { if (r && r.readyState === 2 && r.status) end('HTTP ' + r.status); },
-        onload: (r) => end('HTTP ' + ((r && r.status) || '?')), onerror: () => end('Netzwerkfehler'), ontimeout: () => end('Zeitüberschreitung') });
-    } catch (e) { end('nicht möglich'); }
+    });
   }
   // Nach einem Fehler: Lädt der Browser im eigenen Player DIESELBE Adresse ohne Fehler weiter? Kein zusätzlicher Abruf –
   // nur gepufferte Sekunden und Fehlercode des Videoelements, jetzt und 20 s später. Hinweis, kein Beweis (der Browser
@@ -160,7 +197,7 @@
         ', gepuffert ' + d.play.buf + ' s, gespielt ' + d.play.played + ' s' + (d.play.err ? ', Medienfehler ' + d.play.err : '') : '') +
       ' · Alter beim Start ' + (d.ageSec >= 0 ? d.ageSec + ' s' : '?') + (d.existing ? ' · Auftrag bestand schon' : '') +
       ' · Auswahl noch aktuell ' + (d.current === true ? 'ja' : d.current === false ? 'nein' : '?') +
-      (d.probe ? ' · Browser ohne Cookies/Referer: ' + d.probe : '') + (d.after ? ' · nach dem Fehler: ' + d.after : '');
+      (d.probe ? ' · Browser-Vergleich (Browser-User-Agent): ' + d.probe : '') + (d.after ? ' · nach dem Fehler: ' + d.after : '');
   }
   // Einen früher gespeicherten Kopplungsschlüssel des alten Ports nicht weiter aufbewahren.
   try { if (typeof GM_getValue === 'function' && typeof GM_setValue === 'function' && GM_getValue('helperKey', '')) GM_setValue('helperKey', ''); } catch (e) {}

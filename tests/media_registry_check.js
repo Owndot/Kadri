@@ -17,7 +17,7 @@ function load(modelText, regText) {
     location: { href: 'https://site.example/watch/1' }, crypto: { getRandomValues: (a) => a } };
   vm.createContext(ctx);
   vm.runInContext(modelText + '\n' + regText.replace('const mediaRegistry = createMediaRegistry();', '') +
-    '\nthis.api = { createMediaRegistry, mediaValidObservation, mediaKindOf, mediaDownloadState, selectDownloads, MEDIA_LIMITS };', ctx);
+    '\nthis.api = { createMediaRegistry, mediaValidObservation, mediaKindOf, mediaDownloadState, selectDownloads, selectStreams, MEDIA_LIMITS };', ctx);
   ctx.mk = () => ctx.api.createMediaRegistry({ random: () => 'id' + (++n).toString(16).padStart(6, '0'), docKey: () => ctx.location.href.split('#')[0] });
   return ctx;
 }
@@ -93,6 +93,32 @@ function verify(modelText, regText) {
   const pl = reg.observe(ctx, obs('https://cdn.example/played.mp4', { browser: 'loaded', provenance: { kind: 'player', origin: 'own-player' },
     association: { state: 'bound', evidence: ['own-player-loaded'] } }));
   eq(A.selectDownloads(reg.snapshot(ctx), { supported: true }).find((o) => o.sourceId === pl.sourceId).identity, 'played', 'browser-loaded MP4 is this playback');
+  // Samsung-Test: eine nur vom Adapter behauptete 1080p-MP4 (nie geladen, HTTP 404) stand vor dem Tatsächlichen.
+  // Tatsächlich geladene Quellen stehen jetzt vor bloß behaupteten Varianten – auch vor einer höheren behaupteten Höhe.
+  {
+    const elS = new FakeVideo(), cS = reg.contextFor(elS);
+    const claimed = reg.observe(cS, obs('https://cdn.example/claimed-1080.mp4', { provenance: { kind: 'adapter', origin: 'site-adapter' },
+      association: { state: 'bound', evidence: ['adapter-variant-set', 'single-video'] }, quality: { status: 'claimed', value: { height: 1080 }, evidenceIds: ['adapter-quality'] } }));
+    const loaded = reg.observe(cS, obs('https://cdn.example/played-360.mp4', { browser: 'loaded', provenance: { kind: 'player', origin: 'own-player' },
+      association: { state: 'bound', evidence: ['own-player-loaded'] }, quality: { status: 'observed', value: { height: 360 }, evidenceIds: ['decoded-frame'] } }));
+    const sel = A.selectDownloads(reg.snapshot(cS), { supported: true });
+    eq(sel.map((o) => [o.sourceId, o.loaded]), [[loaded.sourceId, true], [claimed.sourceId, false]], 'loaded MP4 ranks before a higher claimed adapter MP4');
+    eq(sel.find((o) => o.sourceId === claimed.sourceId).state, 'attemptable', 'claimed adapter MP4 stays attemptable (no working download removed)');
+    const elT = new FakeVideo(), cT = reg.contextFor(elT);
+    const a1 = reg.observe(cT, obs('https://cdn.example/a-720.mp4', { provenance: { kind: 'adapter', origin: 'site-adapter' },
+      association: { state: 'bound', evidence: ['adapter-variant-set', 'single-video'] }, quality: { status: 'claimed', value: { height: 720 }, evidenceIds: ['adapter-quality'] } }));
+    const a2 = reg.observe(cT, obs('https://cdn.example/a-1080.mp4', { provenance: { kind: 'adapter', origin: 'site-adapter' },
+      association: { state: 'bound', evidence: ['adapter-variant-set', 'single-video'] }, quality: { status: 'claimed', value: { height: 1080 }, evidenceIds: ['adapter-quality'] } }));
+    eq(A.selectDownloads(reg.snapshot(cT), { supported: true }).map((o) => o.sourceId), [a2.sourceId, a1.sourceId], 'without loaded sources the height order is unchanged');
+    const hm = reg.observe(cS, obs('https://cdn.example/master.m3u8', { role: 'master', provenance: { kind: 'network', origin: 'start-timing' },
+      association: { state: 'ambiguous', evidence: ['start-timing'] } }));
+    const hs = reg.observe(cS, obs('https://cdn.example/live-media.m3u8', { role: 'media-playlist', provenance: { kind: 'network', origin: 'segments-loaded' },
+      association: { state: 'bound', evidence: ['segments-loaded'] } }));
+    const st = A.selectStreams(reg.snapshot(cS), { hls: true });
+    eq(st.find((o) => o.sourceId === hs.sourceId).loaded, true, 'HLS with loaded segments counts as actually loaded');
+    eq(st.find((o) => o.sourceId === hm.sourceId).loaded, false, 'unbound HLS is not loaded');
+    eq(st[0].sourceId, hs.sourceId, 'loaded media playlist ranks before an unloaded master');
+  }
   // ---------- merge never downgrades evidence; knowledge never jumps ----------
   const b2 = reg.observe(ctx, obs(signed, { association: { state: 'unbound', evidence: [] }, provenance: { kind: 'network', origin: 'recent' } }));
   eq([b2.sourceId, reg.snapshot(ctx).find((s) => s.sourceId === r1.sourceId).association.state], [r1.sourceId, 'bound'], 'same URL in same player merges; binding kept');
@@ -171,6 +197,8 @@ if (process.argv.includes('--mutations')) {
     [registrySrc, 'p.sources.set(sourceId, s); p.byUrl.set(v.url, sourceId); urls.set(sourceId, v.url);', 'p.sources.set(sourceId, s); p.byUrl.set(v.url, sourceId); urls.set(sourceId, v.url.split("?")[0]);'], // query cut
     [registrySrc, "if (ASSOC_RANK[v.association.state] > ASSOC_RANK[s.association.state])", 'if (true)'],       // binding downgraded
     [registrySrc, 'return { sources: list, ids:', 'list.sort(); return { sources: list, ids:'],                    // playback order changed
+    [model, "out.sort((a, b) => (Number(b.loaded) - Number(a.loaded)) || (b.height - a.height) || (a.i - b.i));", 'out.sort((a, b) => (b.height - a.height) || (a.i - b.i));'], // claimed height before loaded
+    [model, "(s.kind === 'hls' && s.association.state === 'bound' && s.association.evidence.indexOf('segments-loaded') >= 0)", 'false'],          // loaded segments ignored
   ];
   let n = 0;
   for (const [text, a, b] of muts) {

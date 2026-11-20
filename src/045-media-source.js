@@ -96,12 +96,17 @@
     if (s.browser === 'failed') return { state: 'candidate', reason: 'browser-failed' };
     return { state: 'attemptable', reason: null };
   }
-  // Auswahl für das Download-Menü: nur MP4-Einträge, beste bekannte Höhe zuerst. caps: { supported, active }.
+  // Auswahl für das Download-Menü: nur MP4-Einträge; tatsächlich geladene zuerst, danach beste bekannte Höhe. caps: { supported, active }.
   // Reine Funktion über einem Snapshot – kein Netzabruf, keine Medien-Probe.
   // identity trennt belegte Gleichheit von bloßer Zuordnung (Gerätetest R2: eine am Element genannte MP4 hatte 12 s, der
   // laufende Stream 60 s): 'played' = genau diese Datei hat der Browser in diesem Player geladen und Bilder daraus gezeigt
   // (browser: loaded) – sie IST das gesehene Video; 'declared' = die Seite ordnet sie dem Video zu (<source>, src,
   // Seitendaten, Adapter), Inhalt und Länge sind nicht geprüft. Kein Abruf, um das zu klären.
+  // loaded: der Browser hat genau diese Quelle tatsächlich geladen (MP4: browser loaded; HLS zusätzlich: Stücke genau
+  // dieses Streams geladen, "segments-loaded"). Tatsächlich Geladenes steht vor bloß behaupteten Varianten (Adapter,
+  // Seitendaten) – auch vor einer höheren, nur behaupteten Qualität (Samsung-Test: behauptete 1080p-MP4 → HTTP 404).
+  const mediaSourceLoaded = (s) => s.browser === 'loaded' ||
+    (s.kind === 'hls' && s.association.state === 'bound' && s.association.evidence.indexOf('segments-loaded') >= 0);
   function selectDownloads(snapshot, caps) {
     const out = [];
     (snapshot || []).forEach((s, i) => {
@@ -111,9 +116,9 @@
       if (d.state === 'attemptable' && caps && caps.active === s.sourceId) d = { state: 'active', reason: null };
       const h = s.quality.status !== 'unknown' && s.quality.value.height ? s.quality.value.height : 0;
       out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, height: h, quality: s.quality.status,
-        identity: s.browser === 'loaded' ? 'played' : 'declared', i: i });
+        identity: s.browser === 'loaded' ? 'played' : 'declared', loaded: mediaSourceLoaded(s), i: i });
     });
-    out.sort((a, b) => (b.height - a.height) || (a.i - b.i));
+    out.sort((a, b) => (Number(b.loaded) - Number(a.loaded)) || (b.height - a.height) || (a.i - b.i));
     out.forEach((x) => { delete x.i; });
     return out;
   }
@@ -129,7 +134,7 @@
     if (s.association.state === 'bound') return { state: 'attemptable', reason: null };
     return { state: 'candidate', reason: s.association.state === 'ambiguous' ? 'ambiguous' : 'not-bound' };
   }
-  // Auswahl „Stream speichern …“: gebundene Haupt-/Medienlisten; Hauptliste vor Medienliste, die gerade gespielte zuerst.
+  // Auswahl „Stream speichern …“: gebundene Haupt-/Medienlisten; tatsächlich geladene zuerst, Hauptliste vor Medienliste.
   function selectStreams(snapshot, caps) {
     const out = [];
     (snapshot || []).forEach((s, i) => {
@@ -137,9 +142,9 @@
       let d = mediaStreamState(s);
       if (d.state === 'attemptable' && !(caps && caps.hls)) d = { state: 'unavailable', reason: 'helper-unavailable' };
       out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, role: s.role,
-        identity: s.browser === 'loaded' ? 'played' : 'declared', i: i });
+        identity: s.browser === 'loaded' ? 'played' : 'declared', loaded: mediaSourceLoaded(s), i: i });
     });
-    const rank = (x) => (x.identity === 'played' ? 0 : 2) + (x.role === 'master' ? 0 : 1);
+    const rank = (x) => (x.loaded ? 0 : 2) + (x.role === 'master' ? 0 : 1);
     out.sort((a, b) => (rank(a) - rank(b)) || (a.i - b.i));
     out.forEach((x) => { delete x.i; });
     return out;

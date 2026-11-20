@@ -354,7 +354,7 @@
       const info = Object.assign(hdlDiagInfo(o, sel.url), { stream: true, stage: 'hlsplan' });
       helperDl('hlsplan', { url: sel.url, bind: sel.bind }).then((r) => {
         st.hdl.busy = false;
-        if (!r || !r.ok || !r.value || !Array.isArray(r.value.options)) hdlDiagFailure(info, r);
+        if (!r || !r.ok || !r.value || !Array.isArray(r.value.options)) hdlDiagFailure(info, r, sel.url);
         if (vp !== st) return;
         if (!r) { toast('Helfer-App nicht erreichbar'); return; }
         if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
@@ -436,12 +436,14 @@
         } else {
           // je auswählbare MP4 ein Eintrag (beste bekannte Qualität zuerst); keine Qualitätsangabe = unbekannt
           // Ist der Eintrag nachweislich das gesehene Video oder nur von der Seite zugeordnet? (siehe selectDownloads)
-          can.slice(0, 4).forEach((o) => items.push({ label: 'Mit der Helfer-App speichern',
+          // P4b: Streams – erst Plan (Qualität/Ton wählen), dann Start. Tatsächlich Geladenes (MP4 oder Stream) zuerst,
+          // sonst bisherige Reihenfolge (stabile Sortierung).
+          can.slice(0, 4).map((o) => ({ loaded: o.loaded, item: { label: 'Mit der Helfer-App speichern',
             sub: tr('direkt aufs Handy · ohne Anmeldung der Seite') + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' +
-              tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => hdlStart(o) }));
-          // P4b: Streams – erst Plan (Qualität/Ton wählen), dann Start; je Stream ein Eintrag, die gespielte zuerst
-          streams.slice(0, 2).forEach((o) => items.push({ label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
-              tr(o.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => hlsPlanMenu(o) }));
+              tr(hdlEvidenceText(o)), fn: () => hdlStart(o) } }))
+            .concat(streams.slice(0, 2).map((o) => ({ loaded: o.loaded, item: { label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
+              tr(hdlEvidenceText(o)), fn: () => hlsPlanMenu(o) } })))
+            .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).forEach((e) => items.push(e.item));
         }
       } else if (st.hdl.ok) {
         // erkannt, aber nicht über die Helfer-App: verständlich sagen warum – ohne Adresse

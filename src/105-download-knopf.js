@@ -97,13 +97,15 @@
       }
       const n = o.mp4.length + o.hls.length;
       if (!n) { pageDlMenu('Speichern', pageDlExternal(v, [{ label: pageDlReason(o, caps), info: true }])); return; }
-      if (o.mp4.length === 1 && !o.hls.length) { await pageDlStartMp4(o.mp4[0]); return; }   // eindeutig: ein Tipp genügt
+      // Ein Tipp genügt nur für eine tatsächlich geladene MP4; eine bloß behauptete (Adapter/Seitendaten) nie sofort starten.
+      if (o.mp4.length === 1 && !o.hls.length && o.mp4[0].loaded) { await pageDlStartMp4(o.mp4[0]); return; }
       if (o.hls.length === 1 && !o.mp4.length) { await pageDlPlan(o.hls[0]); return; }
-      const items = [];
-      o.mp4.slice(0, 4).forEach((x) => items.push({ label: 'MP4' + (x.height ? ' · ' + x.height + 'p' : ''), sub: tr('Helfer-App · direkt aufs Handy') + ' · ' +
-        tr(x.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => pageDlStartMp4(x) }));
-      o.hls.slice(0, 2).forEach((x) => items.push({ label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
-        tr(x.identity === 'played' ? 'diese Wiedergabe' : 'laut Seite, Länge/Inhalt ungeprüft'), fn: () => pageDlPlan(x) }));
+      // Tatsächlich Geladenes zuerst (MP4 oder Stream); sonst bisherige Reihenfolge (stabile Sortierung)
+      const items = o.mp4.slice(0, 4).map((x) => ({ loaded: x.loaded, item: { label: 'MP4' + (x.height ? ' · ' + x.height + 'p' : ''), sub: tr('Helfer-App · direkt aufs Handy') + ' · ' +
+        tr(hdlEvidenceText(x)), fn: () => pageDlStartMp4(x) } }))
+        .concat(o.hls.slice(0, 2).map((x) => ({ loaded: x.loaded, item: { label: 'Stream speichern …', sub: tr('Helfer-App · Qualität und Ton wählen') + ' · ' +
+          tr(hdlEvidenceText(x)), fn: () => pageDlPlan(x) } })))
+        .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).map((e) => e.item);
       pageDlMenu('Speichern', pageDlExternal(v, items));
     } finally {
       pageDl.busy = false;
@@ -142,7 +144,7 @@
     toast('Helfer-App prüft den Stream …');
     const r = await helperDl('hlsplan', { url: sel.url, bind: sel.bind });
     if (!r) { hdlDiagFailure(info, r); toast('Helfer-App nicht erreichbar'); return; }
-    if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
+    if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r, sel.url); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
     const p = r.value;
     if (p.job && pageDlActive(p.job)) { hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = sel.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
     const resume = p.job && p.job.state === 'interrupted' ? p.job : null;

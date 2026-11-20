@@ -224,7 +224,7 @@
     'Helfer-App: Stream nicht sicher zugeordnet': 'Helper app: stream not reliably matched', 'Helfer-App: Stream geschützt': 'Helper app: stream protected',
     'verschlüsselt (DRM/AES) – nicht speicherbar': 'encrypted (DRM/AES) – cannot be saved',
     'direkt aufs Handy · ohne Anmeldung der Seite': 'straight to the phone · without the site login',
-    'diese Wiedergabe': 'this playback',
+    'diese Wiedergabe': 'this playback', 'läuft gerade (Stücke geladen)': 'playing now (segments loaded)',
     'laut Seite, Länge/Inhalt ungeprüft': 'per page, length/content unverified',
     'Download abbrechen': 'Cancel download',
     'Helfer-App hört sofort auf und löscht die Teil-Datei': 'the helper app stops at once and deletes the partial file',
