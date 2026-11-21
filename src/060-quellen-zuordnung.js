@@ -287,6 +287,8 @@
   //    Stücke unter anderen Adressen (eigene Umleitung, Blob, Proxy) → keine Treffer → ambiguous.
   //  - SegmentBase/Einzeldatei (Byte-Bereiche derselben Datei): keine Stückfolge erkennbar → ambiguous (nicht-pruefbar).
   //  - Kein Startzeitpunkt bekannt (Kadri erst nach dem Laden im Fenster gestartet): gezählt wird ab dem letzten Seitenwechsel.
+  // Zeitpunkt, ab dem Abrufe zum aktuellen Medium dieses Videos zählen (Bindung und Diagnose gleich)
+  const dashFromOf = (v) => Math.max(navAt, (startAt.get(v) || 0) - 3000);
   function dashBindingFor(v) {
     const list = [], seen = new Set();
     dashInfo.forEach((p, key) => { if (p.dash && !p.dash.error && !seen.has(p)) { seen.add(p); list.push({ key: key, p: p }); } });
@@ -296,7 +298,7 @@
     const res = dashBindDecision({
       manifests: list.map((e) => ({ key: e.key, hits: e.p.dashHits || [], duration: e.p.dash.type === 'static' ? e.p.dash.duration : 0,
         checkable: !!(e.p.dashIdx && e.p.dashIdx.reps.length) })),
-      from: Math.max(navAt, (startAt.get(v) || 0) - 3000), now: Date.now(), video: { duration: v.duration, othersPlaying: others } });
+      from: dashFromOf(v), now: Date.now(), video: { duration: v.duration, othersPlaying: others } });
     return { list: list, res: res };
   }
   function timingMatch(v) {

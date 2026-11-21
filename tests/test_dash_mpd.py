@@ -17,7 +17,13 @@ with sync_playwright() as p:
     pg.add_script_tag(content=SRC + '\nwindow.__sum = (t) => { const s = dashManifestSummary(t); return { s: s, ok: mediaManifestOk(s) }; };'
                       '\nwindow.__ok = (m) => mediaManifestOk(m);'
                       '\nwindow.__idx = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u); return { reps: ix.reps.length, single: ix.single,'
-                      ' m: keys.map((k) => dashMatchSegment(ix, dashUrlKey(k))) }; };')
+                      ' m: keys.map((k) => dashMatchSegment(ix, dashUrlKey(k))) }; };'
+                      '\nwindow.__cls = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u); return keys.map((k) => dashDiagClassify(ix, dashUrlKey(k))); };'
+                      # wie dashHit (040) + dashBindingFor (060): nur dashMatchSegment erzeugt Treffer – die Diagnose-Stufen nie
+                      '\nwindow.__bindVia = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u), now = 1e6, hits = [];'
+                      ' keys.forEach((k, i) => { const m = dashMatchSegment(ix, dashUrlKey(k)); if (m && !m.init) hits.push({ rep: m.rep, idx: m.idx, t: now - 3000 + i * 100 }); });'
+                      ' const r = dashBindDecision({ manifests: [{ key: "A", hits: hits, duration: 0, checkable: ix.reps.length > 0 }], from: 0, now: now, video: { duration: NaN, othersPlaying: false } }).A;'
+                      ' return { state: r.state, reason: r.reason, hits: r.hits, cls: keys.map((k) => dashDiagClassify(ix, dashUrlKey(k))) }; };')
     def run(text):
         r = pg.evaluate('(t) => window.__sum(t)', text)
         return r['s'], r['ok']
@@ -123,6 +129,37 @@ with sync_playwright() as p:
           r['reps'] == 0 and r['single'] == 2 and r['m'][0] is None, r)
     r = idx('vod-webm-vp9-opus.mpd', M, ['https://cdn.example/v/video_720.webm'])
     check('WebM On-Demand (SegmentBase): ebenso nicht prüfbar', r['reps'] == 0 and r['single'] == 3 and r['m'][0] is None, r)
+
+    # ---------- Diagnose Stufe 1: stufenweiser Abgleich (dashDiagClassify) – rein diagnostisch, nie Bindung ----------
+    def cls(text, url, keys): return pg.evaluate('([t, u, k]) => window.__cls(t, u, k)', [text, url, keys])
+    C = 'https://cdn.example/v/'
+    r = cls(fx('vod-number-ffmpeg.mpd'), M, [C + 'chunk-stream0-00001.m4s', C + 'chunk-stream0-00001.m4s?tok=1', 'https://other.example/v/chunk-stream0-00001.m4s',
+                                            C + 'chunk-stream0-00000.m4s', C + 'init-stream0.m4s', C + 'init-stream0.m4s?tok=1', 'https://other.example/v/init-stream0.m4s',
+                                            C + 'chunk-stream0-00001.mp4', C + 'thumb.jpg', M])
+    check('Diagnose-Abgleich $Number$: exakt / nur Query abweichend / gleicher Pfad anderer Host / Nummer unter startNumber / Init exakt, Query, Host / kein Treffer',
+          r == ['exact', 'query', 'host', 'number', 'init', 'init-query', 'init-host', 'none', 'none', 'none'], r)
+    r = cls(fx('vod-timeline-avc-aac.mpd'), M, [C + 'video/0/76800.m4s', C + 'video/0/76801.m4s', C + 'video/0/76800.m4s?x=1', 'https://cdn2.example/v/video/0/0.m4s',
+                                               C + 'video/9/0.m4s', C + 'audio/de/init.mp4?s=2'])
+    check('Diagnose-Abgleich $Time$ + Zeitleiste: Zeit nicht in der Zeitleiste → „Nummer/Zeitleiste abweichend“; Query, Host; unbekannte Darstellung → kein Treffer',
+          r == ['exact', 'number', 'query', 'host', 'none', 'init-query'], r)
+    r = cls(fx('vod-segmentlist.mpd'), M, [C + 'media/v360/seg-2.m4s', C + 'media/v360/seg-2.m4s?x=1', 'https://cdn2.example/v/media/v360/seg-2.m4s', C + 'media/v360/seg-99.m4s'])
+    check('Diagnose-Abgleich SegmentList: exakt / nur Query / anderer Host; nicht gelistete Datei → kein Treffer', r == ['exact', 'query', 'host', 'none'], r)
+    r = cls(QV, M, [C + 'seg001.m4s?video=A', C + 'seg001.m4s?video=B', C + 'seg001.m4s', C + 'init.mp4?video=B'])
+    check('Diagnose-Abgleich Identität in der Query (?video=A): andere oder fehlende Query nur „Query abweichend“, Init ebenso', r == ['exact', 'query', 'query', 'init-query'], r)
+    r = cls(QN, M, [C + 'chunk.m4s?v=A&n=5', C + 'chunk.m4s?v=B&n=5', C + 'chunk.m4s?v=A&n=0', C + 'chunk.m4s?n=5&v=A'])
+    check('Diagnose-Abgleich Nummer in der Query: andere Identität/umsortiert → Query abweichend; n=0 unter startNumber 1 → Nummer abweichend',
+          r == ['exact', 'query', 'number', 'query'], r)
+    def bindVia(text, keys): return pg.evaluate('([t, u, k]) => window.__bindVia(t, u, k)', [text, M, keys])
+    for what, keys, want in (('nur Query abweichend', [C + 'chunk-stream0-%05d.m4s?tok=1' % i for i in range(1, 13)], 'query'),
+                             ('gleicher Pfad, anderer Host', ['https://other.example/v/chunk-stream0-%05d.m4s' % i for i in range(1, 13)], 'host')):
+        r = bindVia(fx('vod-number-ffmpeg.mpd'), keys)
+        check('12 Folgestücke „%s“: Diagnose zählt sie (%s), Bindung bleibt ambiguous (keine-treffer) – unscharfe Stufen binden nie' % (what, want),
+              r['state'] == 'ambiguous' and r['reason'] == 'keine-treffer' and r['hits'] == 0 and r['cls'] == [want] * 12, r)
+    r = bindVia(fx('vod-timeline-avc-aac.mpd'), [C + 'video/0/%d.m4s' % (i * 76800 + 1) for i in range(12)])
+    check('12 Stücke mit passendem Muster, aber Zeiten außerhalb der Zeitleiste: Diagnose „Nummer/Zeitleiste abweichend“, Bindung ambiguous (keine-treffer)',
+          r['state'] == 'ambiguous' and r['reason'] == 'keine-treffer' and r['cls'] == ['number'] * 12, r)
+    r = bindVia(fx('vod-number-ffmpeg.mpd'), [C + 'chunk-stream0-%05d.m4s' % i for i in range(1, 13)])
+    check('Gegenprobe: 12 exakte Folgestücke → bound (stueckfolge)', r['state'] == 'bound' and r['reason'] == 'stueckfolge' and r['cls'] == ['exact'] * 12, r)
 
     # ---------- Angriffe und Grenzen: nur ein Fehlercode, keine erfundenen Angaben ----------
     for name, text, err in [('DOCTYPE mit Entitäten-Bombe', fx('bad-doctype-entities.mpd'), 'doctype'),

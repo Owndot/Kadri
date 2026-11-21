@@ -64,7 +64,7 @@
     let p = '';
     try { p = new URL(u, location.href).pathname.toLowerCase(); } catch (e) { return '-'; }
     const m = /\.([a-z0-9]{1,5})$/.exec(p), x = m ? m[1] : '';
-    return !x ? 'ohne-endung' : /^(m3u8|mpd)$/.test(x) ? 'liste' : /^(ts|m4s|m4v|m4a|aac|cmfv|cmfa)$/.test(x) ? 'stueck' : x === 'mp4' ? 'mp4' :
+    return !x ? 'ohne-endung' : /^(m3u8|mpd)$/.test(x) ? 'liste' : /^(ts|m4s|m4v|m4a|aac|cmfv|cmfa)$/.test(x) ? 'stueck' : x === 'mp4' ? 'mp4' : x === 'webm' ? 'webm' :
       /^(jpe?g|png|gif|webp|ico|bmp|svg)$/.test(x) ? 'bild' : /^(txt|json|js|html?|php|css|xml)$/.test(x) ? 'text' : 'andere';
   };
   const anonCount = (o) => Object.keys(o).sort().map((k) => k + ' ×' + o[k]).join(', ') || '-';
@@ -133,8 +133,44 @@
             ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
             ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')');
         });
+        // Stufe-1-Diagnose: jeder vom Beobachter seit dem Videostart gemeldete Abruf stufenweise gegen dieses MPD
+        // (src/038 dashDiagClassify). Nur Zählungen; nur „exakt“ ist Bindungsevidenz, die übrigen Stufen sind rein diagnostisch.
+        const from = dashFromOf(v);
+        b.list.forEach((e, i) => {
+          const c = { exact: 0, query: 0, host: 0, number: 0, none: 0, init: 0, 'init-query': 0, 'init-host': 0 };
+          let n = 0, noneMedia = 0;
+          recentRes.forEach((x) => {
+            if (x.t < from) return;
+            n++;
+            let k = 'none';
+            try { if (e.p.dashIdx) k = dashDiagClassify(e.p.dashIdx, x.k); } catch (er) {}
+            c[k] = (c[k] || 0) + 1;
+            if (k === 'none' && /^(xmlhttprequest|fetch|other|video|audio)$/.test(x.it || '')) noneMedia++;
+          });
+          L.push('DASH-Abgleich ' + (i + 1) + '/' + b.list.length + ' (Beobachter-Abrufe seit Videostart ' + n +
+            (recentRes.length >= 800 && recentRes[0].t > from ? ', ältere nicht mehr gespeichert' : '') + '): Stücke exakt ' + c.exact +
+            ' · nur Query abweichend ' + c.query + ' · gleicher Pfad, anderer Host ' + c.host + ' · Muster passt, Nummer/Zeitleiste abweichend ' + c.number +
+            ' · kein struktureller Treffer ' + c.none + ' (davon xhr/fetch/other/Medien ' + noneMedia + ') · Init exakt ' + c.init +
+            ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Bindung zählt nur exakt');
+        });
       } catch (e) {}
     } else L.push('Video-Element: keines');
+    // Beobachter (PerformanceObserver, laufend mitgezählt) – getrennt vom Zeitleisten-Puffer unten (beim Aufruf gelesen)
+    try {
+      const st = v ? startAt.get(v) : 0, from = v ? dashFromOf(v) : Infinity, since = {};
+      let ns = 0, cand = 0;
+      obsRes.log.forEach((x) => {
+        if (x.t < from) return;
+        ns++;
+        const k = x.a + ':' + x.x;
+        since[k] = (since[k] || 0) + 1;
+        if (/^(xhr|fetch|other|video|audio)$/.test(x.a) && /^(ohne-endung|stueck|mp4|webm|andere)$/.test(x.x)) cand++;
+      });
+      L.push('Ladevorgänge hier (Beobachter, laufend gezählt, Hauptthread dieses Fensters): gesamt ' + obsRes.n + ' (' + anonCount(obsRes.total) + ')' +
+        (v ? ' · seit Videostart' + (st ? '' : ' (Start unbekannt, seit Seitenwechsel)') + ' ' + ns + (obsRes.dropped && obsRes.log.length && obsRes.log[0].t > from ? ', ältere verworfen' : '') +
+          ' (Art:Endung: ' + anonCount(since) + ') · Medien-Kandidaten seit Videostart ' + cand : '') +
+        ' · nicht sichtbar: Abrufe aus Workern, anderen Fenstern, WebSocket/WebRTC');
+    } catch (e) {}
     let rs = [];
     try { rs = performance.getEntriesByType('resource'); } catch (e) {}
     const now = performance.now(), cls = {};
@@ -143,7 +179,7 @@
       const k = (e.initiatorType === 'xmlhttprequest' ? 'xhr' : e.initiatorType) + ':' + anonExt(e.name);
       cls[k] = (cls[k] || 0) + 1;
     });
-    L.push('Ladevorgänge hier (letzte 2 min, Art:Endung): ' + anonCount(cls) + ' · Zeitleiste ' + rs.length + (rs.length >= 250 ? ' (voll – Neueres fehlt evtl.)' : ''));
+    L.push('Ladevorgänge hier (Zeitleisten-Puffer, beim Aufruf gelesen, letzte 2 min, Art:Endung): ' + anonCount(cls) + ' · Zeitleiste ' + rs.length + (rs.length >= 250 ? ' (voll – Neueres fehlt evtl.)' : ''));
   }
   function diagAnon() {
     const L = [];

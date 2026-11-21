@@ -3,6 +3,8 @@
 # Fälle: BaseURL-Kette (MPD ohne Endung, nur Content-Type), SegmentTimeline ($Time$), SegmentList, Namensraum-Präfix
 # (dash:MPD), MPD unter einer .m3u8-Adresse (Inhalt schlägt Adresse), konkurrierende MPDs, zu wenige Stücke, Stücke aus
 # einem Web-Worker (unsichtbar → ambiguous), kein MPD (feed mit eingebettetem dash:MPD → verworfen), Medienwechsel.
+# Diagnose Stufe 1: Beobachter-Zählung (getrennt vom Zeitleisten-Puffer) und stufenweiser MPD-Abgleich – Stücke mit
+# abweichender Query, gleichem Pfad auf anderem Host oder Zeiten außerhalb der Zeitleiste werden gezählt, binden aber nie.
 # Geprüft über den Hinweis im Download-Menü (kein Angebot!) und die anonymisierte Diagnose (Treffer, Grund).
 #   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>   (vorher: node tools/build.js --test)
 import os, re, time, json, threading, http.server, urllib.parse
@@ -38,6 +40,10 @@ CASES = {
     # Identität über die Query: zwei MPDs mit gleichem Pfad, andere Query; Stücke gleichen Pfads mit ?video=A
     'qtwo':    {'mpd': ['/y/q/manifest.mpd?video=A', '/y/q/manifest.mpd?video=B'], 'play': 'num:/y/q/:?video=A'},
     'qwrong':  {'mpd': ['/y/q/manifest.mpd?video=A'], 'play': 'num:/y/q/:?video=B'},
+    # Diagnose Stufe 1 (nur Zählung, nie Bindung): Query angehängt / anderer Host, gleicher Pfad / Zeiten neben der Zeitleiste
+    'dq':      {'mpd': ['/y/c/manifest'], 'play': 'num:/y/segs/:?tok=1'},
+    'dhost':   {'mpd': ['/y/c/manifest'], 'play': 'num:/y/segs/', 'host': 'http://localhost:8791'},
+    'dnum':    {'mpd': ['/y/t/manifest.mpd'], 'play': 'toff:/y/t/'},
 }
 MPDS = {'/y/c/manifest': mpd(TPL_NUM, base='/y/segs/'), '/y/t/manifest.mpd': mpd(TPL_TIME), '/y/l/manifest.mpd': mpd(LIST),
         '/y/p/manifest': mpd(TPL_NUM.replace('<Seg', '<dash:Seg').replace('<Rep', '<dash:Rep'), base='/y/segs/', prefix='dash'),
@@ -47,8 +53,8 @@ MPDS = {'/y/c/manifest': mpd(TPL_NUM, base='/y/segs/'), '/y/t/manifest.mpd': mpd
 PAGE = '''<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>DASH</title></head>
 <body style="margin:0;background:#000"><video id=v muted autoplay playsinline style="width:100%%;height:100vh;display:block"></video><script>
 const C = %s, v = document.getElementById("v");
-const name = (p, i) => { const [k, b, q] = p.split(":"); return b + (k === "time" ? String(Math.round(i * 5120)) + ".m4s" : k === "list" ? "a-" + i + ".m4s" : "seg" + String(i).padStart(3, "0") + ".m4s") + (q || ""); };
-const initOf = (p) => p.split(":")[1] + "init.mp4" + (p.split(":")[2] || "");
+const name = (p, i) => { const [k, b, q] = p.split(":"); return (C.host || "") + b + (k === "time" ? String(Math.round(i * 5120)) + ".m4s" : k === "toff" ? String(Math.round(i * 5120) + 7) + ".m4s" : k === "list" ? "a-" + i + ".m4s" : "seg" + String(i).padStart(3, "0") + ".m4s") + (q || ""); };
+const initOf = (p) => (C.host || "") + p.split(":")[1] + "init.mp4" + (p.split(":")[2] || "");
 const WORKER = "onmessage = async (e) => { const r = await fetch(e.data); postMessage(await r.arrayBuffer()); };";
 const viaWorker = (u) => new Promise((res) => { const w = window.__w || (window.__w = new Worker(URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }))));
   w.onmessage = (e) => res(e.data); w.postMessage(new URL(u, location.href).href); });
@@ -92,7 +98,7 @@ class M(http.server.BaseHTTPRequestHandler):
         if body is None:
             self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
         self.send_response(200); self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store'); self.end_headers()
+        self.send_header('Cache-Control', 'no-store'); self.send_header('Access-Control-Allow-Origin', '*'); self.end_headers()
         try: self.wfile.write(body)
         except Exception: pass
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8791), M); srv.daemon_threads = True
@@ -143,7 +149,17 @@ with sync_playwright() as p:
         wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
         pg.evaluate(js('const b = Array.from(r.querySelectorAll(".diag button")).find((x) => x.textContent === "Schließen"); if (b) b.click(); return true;'))
         return got[0]
-    def lines(dg): return [l for l in dg.split('\n') if 'dash:' in l or 'DASH' in l or 'MPD-Texte' in l]
+    def lines(dg): return [l for l in dg.split('\n') if 'dash:' in l or 'DASH' in l or 'MPD-Texte' in l or l.startswith('Ladevorg')]
+    def abg(seg=0, q=0, host=0, num=0, init=0, iq=0, ih=0):   # Zeile „DASH-Abgleich“ (Diagnose Stufe 1) mit genau diesen Zahlen
+        return ('): Stücke exakt %d · nur Query abweichend %d · gleicher Pfad, anderer Host %d · Muster passt, Nummer/Zeitleiste abweichend %d · kein struktureller Treffer '
+                % (seg, q, host, num)), ('· Init exakt %d · Init nur Query abweichend %d · Init anderer Host %d · für die Bindung zählt nur exakt' % (init, iq, ih))
+    def has_abg(dg, **kw):
+        a, b = abg(**kw)
+        return any(l.startswith('DASH-Abgleich 1/1 (Beobachter-Abrufe seit Videostart ') and a in l and l.endswith(b) for l in dg.split('\n'))
+    def obs(dg):   # (gesamt, seit Videostart, Medien-Kandidaten) aus der Beobachter-Zeile; getrennte Zeile für den Zeitleisten-Puffer
+        m = re.search(r'^Ladevorgänge hier \(Beobachter, laufend gezählt, Hauptthread dieses Fensters\): gesamt (\d+) \(.*\) · seit Videostart (\d+) \(Art:Endung: .*\) · Medien-Kandidaten seit Videostart (\d+) · nicht sichtbar: Abrufe aus Workern, anderen Fenstern, WebSocket/WebRTC$', dg, re.M)
+        pf = re.search(r'^Ladevorgänge hier \(Zeitleisten-Puffer, beim Aufruf gelesen, letzte 2 min, Art:Endung\): .* · Zeitleiste \d+', dg, re.M)
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m and pf else None
     anon = lambda dg: not re.search(r'://|127\.0\.0|/y/|manifest\.mpd|/manifest|seg0|stream\.m3u8|a-\d', dg)
     n0 = len([x for x in HITS if not x['browser']])
 
@@ -154,6 +170,9 @@ with sync_playwright() as p:
         check('… Diagnose: dash:manifest bound(… dash-segments), Stückprüfung bound (stueckfolge) mit %d Treffern' % N,
               re.search(r'dash:manifest · Bindung bound\([^)]*dash-segments', dg) and re.search(r'DASH-Stückprüfung 1/1: Treffer %d · Darstellungen mit Treffern 1 · längste Folge %d · Init-Abrufe 1 .* Ergebnis bound \(stueckfolge\)' % (N, N), dg)
               and 'DASH-Manifest: VOD' in dg and anon(dg), lines(dg))
+        o = obs(dg)
+        check('… Diagnose Stufe 1: Abgleich exakt %d Stücke + 1 Init, keine unscharfen Stufen; Beobachter zählt ≥ %d Medien-Kandidaten seit Videostart, Puffer getrennt' % (N, N + 1),
+              has_abg(dg, seg=N, init=1) and o and o[2] >= N + 1 and o[1] >= N + 1 and o[0] >= o[1], lines(dg))
 
     open_case('hlsurl'); it = hint(); dg = diag()
     check('MPD unter einer .m3u8-Adresse: Inhalt schlägt Adresse – dash:manifest gebunden, kein HLS-Angebot', DB in it and not any(x in it for x in OFFERS)
@@ -181,6 +200,17 @@ with sync_playwright() as p:
     open_case('qwrong'); it = hint(); dg = diag()
     check('gleicher Stückpfad, andere Video-Identität in der Query (MPD ?video=A, geladen ?video=B): keine Treffer → ambiguous',
           DB not in it and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
+    # ---------- Diagnose Stufe 1: unscharfe Stufen werden gezählt, binden aber nie ----------
+    for m, what, kw, leak in (('dq', 'Stücke und Init mit angehängter Query (?tok=1), MPD ohne Query', dict(q=N, iq=1), 'tok'),
+                              ('dhost', 'gleicher Pfad auf anderem Host (localhost statt 127.0.0.1)', dict(host=N, ih=1), 'localhost'),
+                              ('dnum', 'Muster passt, Zeiten liegen neben der SegmentTimeline (+7)', dict(num=N, init=1), '61447')):
+        open_case(m); it = hint(); dg = diag()
+        check('%s: Diagnose zählt %s, Stücke exakt 0 – Bindung ambiguous (keine-treffer), kein „erkannt“, anonym' % (what, kw),
+              DB not in it and has_abg(dg, **kw) and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg)
+              and 'Bindung bound(' not in dg and anon(dg) and leak not in dg and obs(dg) and obs(dg)[2] >= N, (it, lines(dg)))
+    open_case('worker'); dg = diag(); o = obs(dg)
+    check('Web-Worker: Beobachter sieht die Stücke nicht (Kandidaten seit Videostart < %d), Abgleich exakt 0 / unscharf 0 – Hinweis auf Worker in der Zeile' % N,
+          has_abg(dg, seg=0, init=0) and o and o[2] < N, lines(dg))
     check('nichts beim Helfer angefragt (kein Plan, kein Download)', len([x for x in HITS if not x['browser']]) == n0)
     check('keine Seitenfehler', not errs, errs)
     ctx.close()

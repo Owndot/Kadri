@@ -199,6 +199,11 @@
             const parts = abs.split(tok);
             rep.prefix = parts[0];
             rep.re = new RegExp('^' + dashEsc(parts[0]) + '(\\d{1,20})' + dashEsc(parts[1]) + '$');
+            // nur für die Diagnose (dashDiagClassify): Herkunft, Pfad und Query getrennt – nie für die Bindung
+            try {
+              const ux = new URL(abs);
+              if (ux.origin.indexOf(tok) < 0) { rep.dOrigin = ux.origin; rep.dPath = new RegExp('^' + dashEsc(ux.pathname).replace(tok, '(\\d{1,20})') + '$'); rep.dQuery = new RegExp('^' + dashEsc(ux.search).replace(tok, '(\\d{1,20})') + '$'); }
+            } catch (e) {}
             rep.mode = hasNum ? 'number' : 'time';
             rep.start = hasNum ? (dashInt(tplAttr(chain, 'startNumber'), 0, 1e9) ?? 1) : 0;
             if (hasTime) {
@@ -228,9 +233,13 @@
             rep.mode = 'list'; rep.list = new Map();
             urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashUrlKey(new URL(m, base).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
             if (rep.list.size < 2) { out.single++; return; }   // alle auf dieselbe Datei (Byte-Bereiche): keine Folge erkennbar
+            // nur für die Diagnose: dieselben Stücke ohne Query (Herkunft+Pfad) und nur nach Pfad
+            rep.dList = new Set(); rep.dListPath = new Set();
+            rep.list.forEach((k, key) => { try { const ux = new URL(key); rep.dList.add(ux.origin + ux.pathname); rep.dListPath.add(ux.pathname); } catch (e) {} });
             const ini = dashKid(sl, 'Initialization');
             if (ini && ini.getAttribute('sourceURL')) { try { rep.init = dashUrlKey(new URL(ini.getAttribute('sourceURL'), base).href); } catch (e) {} }
           }
+          if (rep.init) { try { const ux = new URL(rep.init); rep.dInitOP = ux.origin + ux.pathname; rep.dInitPath = ux.pathname; } catch (e) {} }
           const ct = String(a.getAttribute('contentType') || '').toLowerCase(), mime = String(r.getAttribute('mimeType') || a.getAttribute('mimeType') || '').toLowerCase();
           rep.kind = /^(video|audio|text|image)$/.test(ct) ? ct : /^video\//.test(mime) ? 'video' : /^audio\//.test(mime) ? 'audio' : 'other';
           out.reps.push(rep);
@@ -254,6 +263,29 @@
       if (r.dur > 0) { const q = Number(m[1]) / r.dur; if (Number.isInteger(q)) return { rep: r.i, idx: q }; }
     }
     return null;
+  }
+  // NUR DIAGNOSE (DASH-Diagnose Stufe 1): ordnet einen beobachteten Abruf stufenweise einem gelesenen MPD zu, damit die
+  // anonymisierte Diagnose zeigt, WARUM es keine Treffer gibt. 'exact'/'init' ist genau die Evidenz von dashMatchSegment
+  // (Bindung); alle anderen Stufen sind unscharf und fließen NIE in dashHit/dashBindDecision ein – nur als Zählung:
+  //   'number'      Herkunft, Pfad und Query passen zum Muster, aber die Nummer/Zeit liegt nicht in der Folge/Zeitleiste
+  //   'query'       gleiche Herkunft, Pfad passt zum Muster, Query weicht ab   ('init-query' ebenso für das Init)
+  //   'host'        Pfad passt zum Muster, andere Herkunft (Host)               ('init-host' ebenso für das Init)
+  //   'none'        kein struktureller Treffer
+  const DASH_DIAG_RANK = { none: 0, 'init-host': 1, host: 2, 'init-query': 3, query: 4, number: 5 };
+  function dashDiagClassify(index, key) {
+    const m = dashMatchSegment(index, key);
+    if (m) return m.init ? 'init' : 'exact';
+    let u;
+    try { u = new URL(key); } catch (e) { return 'none'; }
+    const o = u.origin, p = u.pathname, q = u.search;
+    let best = 'none';
+    const take = (c) => { if (DASH_DIAG_RANK[c] > DASH_DIAG_RANK[best]) best = c; };
+    ((index && index.reps) || []).forEach((r) => {
+      if (r.dInitPath && r.dInitPath === p) take(r.dInitOP === o + p ? 'init-query' : 'init-host');
+      if (r.dPath && r.dPath.test(p)) take(r.dOrigin !== o ? 'host' : r.dQuery.test(q) ? 'number' : 'query');
+      if (r.dList) { if (r.dList.has(o + p)) take('query'); else if (r.dListPath.has(p)) take('host'); }
+    });
+    return best;
   }
   // Reine Entscheidung „ist dieses Manifest an das laufende Video gebunden?“ – nur aus beobachteten Stückabrufen.
   // c = { manifests: [{ key, hits: [{ rep, idx, t }], duration, checkable }], from, now, video: { duration, othersPlaying } }

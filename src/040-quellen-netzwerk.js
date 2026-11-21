@@ -150,9 +150,9 @@
     if (arr.length > 60) arr.shift();
     if (assetHits.size > 200) assetHits.delete(assetHits.keys().next().value);
   }
-  function seeUrl(u, arrived) {
+  function seeUrl(u, arrived, it) {
     if (typeof u !== 'string' || u.indexOf('http') !== 0) return;
-    try { dashSee(u, arrived); } catch (e) {}
+    try { dashSee(u, arrived, it); } catch (e) {}
     if (SPLIT_CDN_RE.test(hostOf(u))) { noteSplit(u, arrived); return; }
     noteSegment(u);
     if (isMedia(u)) addSource(u);
@@ -297,10 +297,13 @@
   const plParts = new Map();   // urlKey eines Stücks/Init/Unterliste aus einer gelesenen Liste → Rolle (Quellenmodell)
   const netSeen = { pl: 0, src: 0 };   // Meldungen des Mitlesers in der Seite (page.js) – nur gezählt, für die Diagnose
   // DASH (S2): verworfene MPD-Texte je Grund (nur gezählt) und die letzten beobachteten Abrufe (nur Pfad + Zeit), damit ein
-  // später gelesenes MPD seine schon geladenen Stücke noch zuordnen kann. Privat; nie gespeichert, nie in die Diagnose.
+  // später gelesenes MPD seine schon geladenen Stücke noch zuordnen kann. Privat; nie gespeichert; Adressen nie in die Diagnose (dort nur Zählungen).
   const dashRejected = {};
   const dashRejectedKeys = new Set();   // Adressen (volle, ohne #), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
-  const recentRes = [];
+  const recentRes = [];   // { k, t, it } – it: Initiator laut Resource Timing (nur für die Diagnose-Zählung)
+  // Diagnose: was der Resource-Timing-BEOBACHTER (PerformanceObserver) im Hauptthread dieses Fensters tatsächlich meldet –
+  // nur Initiator, Endungsklasse und Zeit, nie die Adresse. Unabhängig vom begrenzten Zeitleisten-Puffer (getEntriesByType).
+  const obsRes = { n: 0, total: {}, log: [], dropped: 0 };
   // Gelesene gültige MPDs je VOLLER Adresse (ohne #) – zwei MPDs mit gleichem Pfad, aber anderer Query sind zwei Manifeste.
   // (plInfo bleibt nach Pfad geschlüsselt – die HLS-Logik ändert sich nicht.)
   const dashInfo = new Map();
@@ -412,14 +415,25 @@
     info.dashHits.push({ rep: m.rep, idx: m.idx, t: t });
     if (info.dashHits.length > 3000) info.dashHits.shift();
   }
-  function dashSee(u, arrived) {
+  function dashSee(u, arrived, it) {
     let k = '';
     try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) { return; }
     if (!k) return;
     const t = arrived || Date.now();
-    recentRes.push({ k: k, t: t });
+    recentRes.push({ k: k, t: t, it: typeof it === 'string' ? it : '' });
     if (recentRes.length > 800) recentRes.shift();
     new Set(dashInfo.values()).forEach((p) => { if (p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t); });
+  }
+  // Initiator → feste Klasse (Browserwerte; Unbekanntes als „sonst“), Endung → anonExt-Klasse (src/280)
+  const obsKind = (it) => (it === 'xmlhttprequest' ? 'xhr' : /^(fetch|other|video|audio|img|script|link|css|iframe|beacon|track|navigation)$/.test(it) ? it : 'sonst');
+  function obsNote(u, it, t) {
+    const a = obsKind(String(it || ''));
+    let x = '?';
+    try { x = anonExt(u); } catch (e) {}
+    obsRes.n++;
+    obsRes.total[a] = (obsRes.total[a] || 0) + 1;
+    obsRes.log.push({ a: a, x: x, t: t });
+    if (obsRes.log.length > 3000) { obsRes.log.shift(); obsRes.dropped++; }
   }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
@@ -478,7 +492,11 @@
 
   try {
     new PerformanceObserver((list) => {
-      list.getEntries().forEach((e) => seeUrl(e.name, e.responseEnd > 0 && performance.timeOrigin ? performance.timeOrigin + e.responseEnd : 0));
+      list.getEntries().forEach((e) => {
+        const t = e.responseEnd > 0 && performance.timeOrigin ? performance.timeOrigin + e.responseEnd : 0;
+        try { obsNote(e.name, e.initiatorType, t || Date.now()); } catch (x) {}
+        seeUrl(e.name, t, e.initiatorType);
+      });
     }).observe({ type: 'resource', buffered: true });
   } catch (e) {}
 
