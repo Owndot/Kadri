@@ -140,6 +140,21 @@
     if (s.association.state === 'bound') return { state: 'attemptable', reason: null };
     return { state: 'candidate', reason: s.association.state === 'ambiguous' ? 'ambiguous' : 'not-bound' };
   }
+  // ---------- DASH: erkannt, aber nicht speicherbar – nur für den Hinweis, nie ein Angebot ----------
+  // DASH-Einträge gelangen weder in selectDownloads (nur MP4) noch in selectStreams (nur HLS) – darum hier eigens, damit
+  // der Hinweis stimmt statt „keine speicherbare Videodatei“. 'bound': ein DASH-Manifest ist nachweislich an genau dieses
+  // Video gebunden (dieselben Belege wie bei HLS); 'suspected': nur vermutet (ambiguous, z. B. zeitliche Nähe beim Start);
+  // '' sonst – auch ein nur irgendwo gesehenes (unbound) Manifest zählt nicht. Mehrere Schnappschüsse (Originalvideo,
+  // eigener Player): der stärkste Beleg zählt. Reine Funktion; ändert keine Auswahl.
+  function mediaDashState(snapshots) {
+    let st = '';
+    (snapshots || []).forEach((snap) => (snap || []).forEach((s) => {
+      if (!s || s.kind !== 'dash' || !s.association) return;
+      if (s.association.state === 'bound') st = 'bound';
+      else if (s.association.state === 'ambiguous' && !st) st = 'suspected';
+    }));
+    return st;
+  }
   // Auswahl „Stream speichern …“: gebundene Haupt-/Medienlisten; tatsächlich geladene zuerst, Hauptliste vor Medienliste.
   function selectStreams(snapshot, caps) {
     const out = [];

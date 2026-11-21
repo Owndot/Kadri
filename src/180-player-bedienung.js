@@ -437,6 +437,13 @@
       const sOpts = st.hdl.ok ? hlsOptions({ hls: st.hdl.hls }) : [];
       const streams = sOpts.filter((o) => o.state === 'attemptable');
       const j = hdlActive(st.hdl.job) && hdlJobHere() ? st.hdl.job : null;
+      // DASH (nur für den Hinweis, nie ein Angebot): aus beiden Quellenständen (Originalvideo, eigener Player) – sicher
+      // gebunden bzw. nur vermutet (siehe mediaDashState)
+      let dash = '';
+      try {
+        dash = /\.mpd(\?|#|$)/i.test(st.cur || '') ? 'bound'
+          : mediaDashState([st.media && st.media.orig ? mediaRegistry.snapshot(st.media.orig) : [], st.media && st.media.own ? mediaRegistry.snapshot(st.media.own) : []]);
+      } catch (e) { dash = ''; }
       if (j || can.length || streams.length) {
         st.hdl.menu = true;
         if (j) {
@@ -456,13 +463,14 @@
         }
       } else if (st.hdl.ok) {
         // erkannt, aber nicht über die Helfer-App: verständlich sagen warum – ohne Adresse
-        if (/\.mpd(\?|#|$)/i.test(st.cur || '') || sOpts.some((o) => o.reason === 'dash-not-supported')) items.push({ label: 'Helfer-App: DASH-Stream erkannt', sub: 'DASH speichert die Helfer-App nicht', stay: true, fn: () => {} });
+        if (dash === 'bound') items.push({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} });
         else if ((st.hls || PLAYLIST_RE.test(st.cur || '')) && !st.hdl.hls) items.push({ label: 'Helfer-App: Stream erkannt', sub: 'Diese Helfer-App-Version speichert keine Streams', stay: true, fn: () => {} });
         else if (sOpts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: Stream nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
         else if (sOpts.some((o) => o.reason === 'protected')) items.push({ label: 'Helfer-App: Stream geschützt', sub: 'verschlüsselt (DRM/AES) – nicht speicherbar', stay: true, fn: () => {} });
         else if (opts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: MP4 nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
         else if (opts.some((o) => o.reason === 'browser-failed') || (st.mode === 'own' && (() => { const el = vid; return !!el.error; })())) items.push({ label: 'Helfer-App: Video lässt sich nicht abspielen', sub: 'nur nachweislich abspielbare Dateien werden angeboten', stay: true, fn: () => {} });
         else if (d && /\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d)) items.push({ label: 'Helfer-App: Format nicht unterstützt', sub: 'die Helfer-App speichert MP4 und HLS (kein WebM/MOV)', stay: true, fn: () => {} });
+        else if (dash === 'suspected') items.push({ label: 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt', stay: true, fn: () => {} });
         else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
       } else if (channel) {
         // Helfer-Kanal vorhanden, Fähigkeit (noch) nicht bestätigt: Stand nennen statt den Helfer-Weg stillschweigend wegzulassen
@@ -471,6 +479,8 @@
         else if (s === 'unreachable') items.push(st.hdl.err === 'unpaired' || st.hdl.err === 'rejected' ? { label: pageDlHelperText(st.hdl.err), stay: true, fn: () => {} }
           : { label: 'Helfer-App nicht erreichbar', sub: 'App öffnen und ⬇ erneut tippen', stay: true, fn: () => {} });
         else if (s === 'unsupported') items.push({ label: 'Helfer-App: diese Version kann keine direkten Downloads', sub: 'Helfer-App aktualisieren', stay: true, fn: () => {} });
+        else if (dash === 'bound') items.push({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} });
+        else if (dash === 'suspected') items.push({ label: 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt', stay: true, fn: () => {} });
         else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
       }
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });

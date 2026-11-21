@@ -34,21 +34,24 @@
   function pageDlOptions(v, caps) {
     try { playerSources(v, {}); } catch (e) {}
     const ctx = mediaRegistry.contextFor(v);
-    if (!ctx) return { mp4: [], hls: [], all: [], allS: [] };
+    if (!ctx) return { mp4: [], hls: [], all: [], allS: [], dash: '' };
     try { pageDlObservePlaying(v, ctx); } catch (e) {}
     const snap = mediaRegistry.snapshot(ctx);
     const all = selectDownloads(snap, { supported: true }).map((o) => Object.assign({ ctx: ctx }, o));
     const allS = selectStreams(snap, { hls: !!(caps && caps.hls) }).map((o) => Object.assign({ ctx: ctx }, o));
-    return { mp4: all.filter((o) => o.state === 'attemptable'), hls: allS.filter((o) => o.state === 'attemptable'), all: all, allS: allS };
+    return { mp4: all.filter((o) => o.state === 'attemptable'), hls: allS.filter((o) => o.state === 'attemptable'), all: all, allS: allS,
+      dash: mediaDashState([snap]) };
   }
   // Warum nichts angeboten wird (feste Texte, ohne Adresse)
   function pageDlReason(o, caps) {
     const rs = o.all.map((x) => x.reason).concat(o.allS.map((x) => x.reason));
-    if (rs.indexOf('dash-not-supported') >= 0) return 'DASH-Stream erkannt – speichert die Helfer-App nicht';
+    if (o.dash === 'bound') return 'DASH-Stream erkannt – derzeit nicht unterstützt';
     if (o.allS.some((x) => x.reason === 'helper-unavailable') || (!(caps && caps.hls) && o.allS.length)) return 'Stream erkannt – diese Helfer-App-Version speichert keine Streams';
     if (rs.indexOf('protected') >= 0) return 'Video geschützt (DRM/verschlüsselt) – nicht speicherbar';
     if (rs.indexOf('ambiguous') >= 0 || rs.indexOf('not-bound') >= 0) return 'Quelle nicht sicher diesem Video zugeordnet – Video kurz abspielen und erneut tippen';
     if (rs.indexOf('not-standalone') >= 0 || rs.indexOf('stream-not-supported') >= 0) return 'Nur Teilstücke eines Streams erkannt – Video abspielen und erneut tippen';
+    // nur zeitlich vermutet: ehrlich so benennen (nach allen sicheren Gründen, nie als Angebot)
+    if (o.dash === 'suspected') return 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt';
     return 'Keine speicherbare Videodatei erkannt – Video abspielen und erneut tippen';
   }
   const pageDlHelperText = (kind) => kind === 'unpaired'
