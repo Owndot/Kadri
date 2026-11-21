@@ -72,7 +72,8 @@
     let link = '';
     try { link = SHOW_DOWNLOAD ? postUrlFor(v) : ''; } catch (e) {}
     const d = pageDlDirect(v);
-    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', fn: () => toYtdlnis(link) });
+    // (ext: braucht einen frischen Tipp – steht die Auswahl im Hauptfenster, führt es diese Aktion selbst aus, src/035)
+    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', ext: { k: 'ytdlnis', u: link }, fn: () => toYtdlnis(link) });
     if (d && sameOrigin(d) && !IS_ANDROID_UA()) {
       items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => {
         toast('Download wird vorbereitet …');
@@ -81,13 +82,14 @@
       } });
     }
     if (d) {
-      items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', fn: () => {
-        const w = window.open(d, '_blank');
-        if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
-      } });
+      items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', ext: { k: 'open', u: d }, fn: () => pageDlOpenTab(d) });
     }
-    if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => shareUrl(link || d) });
+    if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: { k: 'share', u: link || d }, fn: () => shareUrl(link || d) });
     return items;
+  }
+  function pageDlOpenTab(d) {
+    const w = window.open(d, '_blank');
+    if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
   }
 
   async function onPageDownload() {
@@ -178,11 +180,13 @@
     const resume = p.job && p.job.state === 'interrupted' ? p.job : null;
     const go = (opt) => pageDlGo(sel.url, p.planId, opt, resume, x);
     // auch bei nur einer Qualität/Tonspur erst die Auswahl (wie im Player); gestartet wird nur per Tipp
-    const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
+    const dur = p.duration > 0 ? fmtTime(p.duration) : '';
+    // Hauptzeile: die Qualität (1080p, 720p …); Ton, Laufzeit, Datenrate und Formathinweis gedämpft darunter
     pageDlMenu(resume ? 'Stream fortsetzen' : 'Stream speichern', p.options.slice(0, 12).map((o) => ({
-      label: (resume ? tr('Fortsetzen') + ': ' : '') + (o.height ? o.height + 'p' : tr('Qualität unbekannt')) + ' · ' +
-        (o.audio === 'muxed' ? tr('Ton im Stream') : tr('Ton') + ': ' + (o.audio.name || o.audio.lang || tr('eigene Spur'))),
-      sub: dur + (o.bandwidth ? Math.round(o.bandwidth / 1000) + ' kbit/s' : '') + (o.codecs === 'ok' ? '' : ' · ' + tr('Format wird beim Laden geprüft')),
+      label: (resume ? tr('Fortsetzen') + ': ' : '') + (o.height ? o.height + 'p' : tr('Qualität unbekannt')),
+      sub: [o.audio === 'muxed' ? tr('Ton im Stream') : tr('Ton') + ': ' + (o.audio.name || o.audio.lang || tr('eigene Spur')),
+        dur, o.bandwidth ? Math.round(o.bandwidth / 1000) + ' kbit/s' : '',
+        o.codecs === 'ok' ? '' : tr('Format wird beim Laden geprüft')].filter(Boolean).join(' · '),
       fn: () => go(o) })));
   }
   async function pageDlGo(u, planId, o, resume, x) {
@@ -275,7 +279,9 @@
     // Zurück-Taste: der eigene Eintrag des offenen Blatts ist nicht mehr der aktuelle
     if (pageDlEl && pageDlHist && tok !== pageDlHist) { pageDlHist = ''; pageDlClose(true); }
   });
-  function pageDlMenu(title, items) {
+  function pageDlMenu(title, items, here) {
+    // eingebettetes Fenster, Knopf im Hauptfenster: die Auswahl erscheint dort (Aktionen bleiben hier, src/035)
+    if (!here && IN_FRAME && fuiRelay()) { fuiFrameMenu(title, items); return; }
     ui();
     // ein neues Blatt ersetzt das offene (z. B. Qualität/Ton nach „Stream …“) – der Verlaufseintrag bleibt, die
     // visualViewport-Listener des alten Blatts werden entfernt
@@ -283,8 +289,11 @@
     pageDlUnfit();
     const ov = h('div', { class: 'dlo' });
     const box = h('div', { class: 'dlm', role: 'menu', 'aria-label': tr(title) });
+    box.appendChild(h('div', { class: 'dlg', 'aria-hidden': 'true' }));   // Griff (nur Anzeige)
     const head = h('div', { class: 'dlh' }, tr(title));
     box.appendChild(head);
+    const list = h('div', { class: 'dll' });   // nur die Liste scrollt; Titel und „Schließen“ bleiben stehen
+    box.appendChild(list);
     let used = false;   // genau eine Aktion je Blatt
     items.forEach((it) => {
       const b = h('button', { class: 'dli' + (it.info ? ' info' : ''), role: it.info ? 'note' : 'menuitem' }, tr(it.label));
@@ -298,7 +307,7 @@
         if (pageDlEl === ov) pageDlClose();   // hat die Aktion kein neues Blatt geöffnet: jetzt schließen
       });
       else b.disabled = true;
-      box.appendChild(b);
+      list.appendChild(b);
     });
     const close = h('button', { class: 'dli dlx', 'aria-label': 'Schließen' }, tr('Schließen'));
     close.addEventListener('click', (e) => { e.stopPropagation(); if (pageDlEl === ov) pageDlClose(); });

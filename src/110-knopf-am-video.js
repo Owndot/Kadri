@@ -42,10 +42,15 @@
   function hidePill() {
     if (pill) pill.classList.remove('on');
   }
+  // Woran der Knopf steht: das eigene Video oder (Hauptfenster) das Video eines eingebetteten Fensters (src/035)
+  function pillAnchor() {
+    if (fuiTop.cur) return fuiTopRect(fuiTop.cur);
+    return active && active.isConnected ? rectOf(active) : null;
+  }
   function place() {
-    if (!active || !pill || !pill.classList.contains('on')) return;
-    const r = rectOf(active);
-    if (!active.isConnected || r.width < CONFIG.minWidth || r.bottom < 60 || r.top > innerHeight - 60) {
+    if (!pill || !pill.classList.contains('on')) return;
+    const r = pillAnchor();
+    if (!r || r.width < CONFIG.minWidth || r.bottom < 60 || r.top > innerHeight - 60) {
       pill.classList.remove('on'); return;
     }
     const w = pill.offsetWidth || 100, ph = pill.offsetHeight || 38;
@@ -92,12 +97,18 @@
     tickN++;
     if (quiet > 5 && tickN % 5 && !vp) return;
     if (hostEl && !hostEl.isConnected) attachHost();   // von der Seite entfernt? Wieder einsetzen.
-    if (vp) { hidePill(); return; }                    // eigener Player offen: kein Button darüber
+    if (vp) { if (IN_FRAME) fuiFrameOff(); hidePill(); return; }   // eigener Player offen: kein Button darüber
     const v = pickPlaying();
-    quiet = lastVidCount ? 0 : quiet + 1;
+    quiet = lastVidCount || fuiTop.regs.size ? 0 : quiet + 1;
+    // Hauptfenster: läuft das größte Video in einem eingebetteten Fenster, steht der Knopf dafür hier (src/035)
+    const fr = IN_FRAME ? null : fuiTopDecide(v);
+    if (fr) { miss = 0; fuiTopShow(fr); return; }
+    if (fuiTop.cur) fuiTopDrop();
     if (v) {
       miss = 0;
-      if (v !== active || !pill || !pill.classList.contains('on')) showPill(v);
+      // eingebettetes Fenster: zeigt das Hauptfenster den Knopf, hier keinen eigenen (das Video bleibt „active“)
+      if (IN_FRAME && fuiFrameHold(v)) { if (pill) hidePill(); if (v !== active) { active = v; watchSize(null); } }
+      else if (v !== active || !pill || !pill.classList.contains('on')) showPill(v);
       else schedulePlace();   // Sicherheitsnetz, falls die Seite das Video ohne Scrollen verschiebt
       if (PH) { try { phMp4(); } catch (e) {} }   // MP4-Adressen schon im Hintergrund holen
       // Facebook: HD-Version selbstständig im Hintergrund suchen, sobald sicher ist, welches Video läuft
@@ -109,6 +120,7 @@
       }
     } else if (active && ++miss >= 2) {
       hidePill();   // kurzes Ruckeln beim Laden nicht gleich als Pause werten
+      if (IN_FRAME) fuiFrameOff();
     }
   }
   // Prüfung läuft nur, solange die Seite sichtbar ist (anderer Tab, andere App, Bildschirm aus = Pause)

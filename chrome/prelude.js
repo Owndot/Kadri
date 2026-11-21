@@ -40,6 +40,23 @@
       const r = await api.runtime.sendMessage(msg);
       return r && typeof r === 'object' ? r : null;
     };
+    // ---------- Oberfläche eingebetteter Videos im Hauptfenster (src/035-fenster-oberflaeche.js) ----------
+    // send: Meldung an den Hintergrund (der prüft streng und leitet nur innerhalb desselben Tabs weiter: aus einem
+    // eingebetteten Fenster nur an das Hauptfenster, vom Hauptfenster nur an genau das gemeldete Dokument).
+    // onMsg: setzt das Skript; nimmt nur Meldungen des Hintergrunds an (nie von Seiten oder anderen Fenstern direkt).
+    const KADRI_FRAMEUI = {
+      send: (m) => api.runtime.sendMessage(Object.assign({}, m, { t: 'kadri-fui' })).catch(() => null),
+      onMsg: null,
+    };
+    try {
+      api.runtime.onMessage.addListener((m, sender, reply) => {
+        if (!m || m.t !== 'kadri-fui-in' || typeof KADRI_FRAMEUI.onMsg !== 'function') return;
+        if (!sender || sender.id !== api.runtime.id || sender.tab) return;   // nur vom Hintergrund der Erweiterung
+        let r = null;
+        try { r = KADRI_FRAMEUI.onMsg(m); } catch (e) { r = null; }
+        reply(r && typeof r === 'object' ? r : null);
+      });
+    } catch (e) {}
     // ---------- Anfragen ----------
     // Binärdaten (ArrayBuffer/Uint8Array) als Base64 schicken – Nachrichten an den Hintergrund können nur Text/JSON
     // (vorher wurde daraus der Text „[object ArrayBuffer]“ – „Über den Browser laden“ kam beim Helfer kaputt an)

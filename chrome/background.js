@@ -319,8 +319,81 @@ function inject(sender, files) {
   if (tabId == null || tabId < 0) return Promise.reject(new Error('kein Tab'));
   return api.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, files });
 }
+// ---------- Oberfläche eingebetteter Videos im Hauptfenster (src/035-fenster-oberflaeche.js) ----------
+// Ein eingebettetes Fenster (iframe) mit laufendem Video zeigt Knopf und Auswahl nicht in seinem Kasten, sondern im
+// Hauptfenster desselben Tabs. Hier geht nur durch, was dafür nötig ist – streng geprüft, alles andere wird verworfen:
+//  - nach oben (aus einem Fenster, frameId > 0) nur an das Hauptfenster (frameId 0): Zufallskennung, Ein/Aus, Texte der
+//    Auswahl und Hinweise. Absender (frameId, documentId) setzt der Browser, nicht die Nachricht.
+//  - nach unten (vom Hauptfenster) nur an genau das Dokument, das sich gemeldet hat (frameId + documentId), mit festen
+//    Befehlen: ack, act (dl/player/diag/share), pick (Nummer des Eintrags).
+//  - Antwort des Fensters auf einen Tipp: ok/Hinweis, und nur für Aktionen, die den Tipp im Hauptfenster brauchen, ein
+//    Link (http/https) bzw. der Diagnosetext. Download-Aufträge an die Helfer-App startet weiterhin nur das Fenster selbst
+//    (Herkunft für die Helfer-App wie bisher aus dessen sender.url).
+const FUI_N = /^[0-9a-f]{32}$/;
+const fuiStr = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
+function fuiUp(m) {
+  if (!FUI_N.test(typeof m.n === 'string' ? m.n : '')) return null;
+  if (m.op === 'show') return { op: 'show', n: m.n, on: m.on === true };
+  if (m.op === 'toast') return { op: 'toast', n: m.n, text: fuiStr(m.text, 300) };
+  if (m.op === 'menu') {
+    if (!Number.isInteger(m.seq) || m.seq < 0 || !Array.isArray(m.items) || m.items.length > 24) return null;
+    return { op: 'menu', n: m.n, seq: m.seq, title: fuiStr(m.title, 120),
+      items: m.items.map((it) => ({ label: fuiStr(it && it.label, 200), sub: fuiStr(it && it.sub, 300), info: !!(it && it.info === true) })) };
+  }
+  return null;
+}
+function fuiDown(m) {
+  if (!FUI_N.test(typeof m.n === 'string' ? m.n : '')) return null;
+  if (m.op === 'ack' && ['remote', 'busy', 'local'].includes(m.mode)) return { op: 'ack', n: m.n, mode: m.mode };
+  if (m.op === 'act' && ['dl', 'player', 'diag', 'share'].includes(m.a)) return { op: 'act', n: m.n, a: m.a };
+  if (m.op === 'pick' && Number.isInteger(m.seq) && m.seq >= 0 && Number.isInteger(m.i) && m.i >= 0 && m.i < 24) return { op: 'pick', n: m.n, seq: m.seq, i: m.i };
+  return null;
+}
+function fuiBack(r) {
+  if (!r || typeof r !== 'object') return { ok: false };
+  const out = { ok: r.ok === true };
+  if (typeof r.toast === 'string') out.toast = r.toast.slice(0, 300);
+  if (r.gone === true) out.gone = true;
+  const x = r.ext;
+  if (x && typeof x === 'object') {
+    if (['ytdlnis', 'open', 'share'].includes(x.k) && typeof x.u === 'string' && x.u.length <= 8192 && /^https?:\/\/[^\s]+$/i.test(x.u)) out.ext = { k: x.k, u: x.u };
+    else if (x.k === 'copy' && typeof x.t === 'string') out.ext = { k: 'copy', t: x.t.slice(0, 100000) };
+  }
+  return out;
+}
+function fuiUpBack(r) {
+  if (!r || typeof r !== 'object') return null;
+  const out = { ok: r.ok === true };
+  if (['remote', 'busy', 'local', 'wait'].includes(r.mode)) out.mode = r.mode;
+  return out;
+}
+function fuiRelay(m, sender, reply) {
+  const tab = sender.tab && sender.tab.id, fid = sender.frameId;
+  const done = (r) => { try { reply(r === undefined ? null : r); } catch (e) {} };
+  // nur Inhaltsskripte in Web-Seiten (Herkunft http/https; Chrome meldet bei manchen Fenstern als Adresse noch
+  // „about:blank“, die Herkunft stimmt dort). Undurchsichtige Herkunft (sandbox: „null“) → nichts, Oberfläche bleibt im Fenster
+  const web = (x) => typeof x === 'string' && /^https?:\/\/[^/]/.test(x);
+  if (tab == null || tab < 0 || !Number.isInteger(fid) || !(web(sender.origin) || (sender.origin === undefined && web(sender.url)))) return done(null);
+  const go = (msg, opt, map) => {
+    let p;
+    try { p = api.tabs.sendMessage(tab, Object.assign({ t: 'kadri-fui-in' }, msg), opt); } catch (e) { return done(null); }
+    Promise.resolve(p).then((r) => done(map(r)), () => done(null));
+  };
+  if (fid > 0) {
+    const up = fuiUp(m);
+    if (!up || typeof sender.documentId !== 'string' || !sender.documentId) return done(null);
+    up.src = { f: fid, d: sender.documentId };
+    return go(up, { frameId: 0 }, fuiUpBack);
+  }
+  const to = m.to;
+  if (!to || typeof to !== 'object' || !Number.isInteger(to.f) || to.f <= 0 || typeof to.d !== 'string' || !to.d || to.d.length > 64) return done(null);
+  const down = fuiDown(m);
+  if (!down) return done(null);
+  return go(down, { frameId: to.f, documentId: to.d }, fuiBack);
+}
 api.runtime.onMessage.addListener((m, sender, reply) => {
   if (!m || !sender || sender.id !== api.runtime.id) return;
+  if (m.t === 'kadri-fui') { fuiRelay(m, sender, reply); return true; }
   if (m.t === 'kadri-hls') { inject(sender, ['hls.min.js']).then(() => reply({ ok: true }), (e) => reply({ ok: false, e: String(e && e.message || e) })); return true; }
   if (m.t === 'kadri-sub' && sender.frameId > 0) { inject(sender, ['content.js']).then(() => reply({ ok: true }), () => reply({ ok: false })); return true; }
 });

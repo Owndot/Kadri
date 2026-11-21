@@ -413,9 +413,12 @@ with sync_playwright() as p:
         frame = nav.value
         frame.wait_for_function('() => { const v = document.getElementById("v"); return v && v.currentTime > 0.8; }', timeout=20000)
         frame.evaluate('() => { document.getElementById("v").muted = false; }')
-        frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
-        frame.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
-        frame.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
+        # Video im eingebetteten Fenster: Knopf und Auswahl stehen im Hauptfenster (src/035) – dort tippen
+        pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+        time.sleep(0.5)
+        xy = pg.evaluate('() => { const r = %s.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }' % R)
+        pg.touchscreen.tap(xy[0], xy[1])
+        frame.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); const v = h && h.shadowRoot && h.shadowRoot.querySelector(".vv"); return v && v.currentTime > 0.3; }', timeout=25000)   # (Oberfläche im Fenster entsteht erst mit dem Player)
         watch_toasts(frame)
         return frame
     frame = framed_player(page('/videos/frame.mp4?rate=30000'))
@@ -512,9 +515,12 @@ with sync_playwright() as p:
     fr = nav.value
     fr.wait_for_function('() => { const v = document.getElementById("v"); return v && v.currentTime > 0.8; }', timeout=20000)
     fr.evaluate('() => { document.getElementById("v").muted = false; }')
-    fr.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
-    fr.evaluate('() => %s.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()' % R)
-    fr.wait_for_function('() => { const v = %s.querySelector(".vv"); return v && v.currentTime > 0.3; }' % R, timeout=25000)
+    # Knopf des Videos im Fenster steht im Hauptfenster (src/035), nicht der des Werbe-iframes
+    pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+    time.sleep(0.5)
+    xy = pg.evaluate('() => { const r = %s.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }' % R)
+    pg.touchscreen.tap(xy[0], xy[1])
+    fr.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); const v = h && h.shadowRoot && h.shadowRoot.querySelector(".vv"); return v && v.currentTime > 0.3; }', timeout=25000)   # (Oberfläche im Fenster entsteht erst mit dem Player)
     watch_toasts(fr)
     items = wait_item(fr, lambda it: len([1 for l, _ in it if l == ITEM]) >= 2)
     offers = [sub for l, sub in items if l == ITEM]

@@ -30,20 +30,24 @@
 .pill .hdot{position:absolute;top:8px;right:7px;width:7px;height:7px;border-radius:50%;background:#641800;box-shadow:0 0 8px rgba(100,24,0,.9);filter:invert(1);opacity:0;transform:scale(.4);transition:opacity .2s ease,transform .3s cubic-bezier(.34,1.56,.64,1)}
 .pill.hd .hdot{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){.pill,.pill .pb,.pill .hdot{transition:opacity .15s ease !important}}
-/* Download-Auswahl: Bottom-Sheet über abgedunkeltem Hintergrund (Größe/Lage per visualViewport, siehe 105) */
+/* Download-Auswahl: Bottom-Sheet über abgedunkeltem Hintergrund (Größe/Lage per visualViewport, siehe 105). Dieselbe
+   Sprache wie die Menüs im Player: dezentes Glas (wenig Weichzeichner), runde Ecken, Systemschrift, Unterzeilen gedämpft;
+   Griff oben, Titel und „Schließen“ stehen fest, nur die Liste scrollt (alle Qualitäten erreichbar), Einträge ≥ 48 px */
 .dlo{position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;
- background:rgba(0,0,0,.38);pointer-events:auto;touch-action:manipulation}
-.dlm{position:relative;box-sizing:border-box;width:100%;max-width:560px;max-height:min(75%,calc(100% - 16px));overflow-y:auto;overscroll-behavior:contain;
- -webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:2px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));
- border-radius:18px 18px 0 0;background:rgba(28,30,40,.94);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);color:#fff;
- box-shadow:0 -8px 30px rgba(0,0,0,.4);font:15px/1.3 var(--font);touch-action:pan-y}
+ background:rgba(0,0,0,.34);pointer-events:auto;touch-action:manipulation}
+.dlm{position:relative;box-sizing:border-box;width:100%;max-width:560px;max-height:min(78%,calc(100% - 12px));display:flex;flex-direction:column;overflow:hidden;
+ padding:6px 8px max(8px,env(safe-area-inset-bottom,0px));border-radius:22px 22px 0 0;background:rgba(30,32,42,.9);
+ -webkit-backdrop-filter:blur(10px) saturate(1.3);backdrop-filter:blur(10px) saturate(1.3);color:#fff;
+ box-shadow:0 -6px 24px rgba(0,0,0,.34),inset 0 1px 0 rgba(255,255,255,.1);font:500 15px/1.25 var(--font);touch-action:pan-y;overscroll-behavior:contain}
 .dlm.used .dli{pointer-events:none}
-.dlm .dlh{padding:8px 12px 6px;font-weight:700;font-size:14px;opacity:.8}
-.dlm .dli{all:unset;box-sizing:border-box;min-height:48px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 14px;border-radius:12px;cursor:pointer;color:#fff;flex-shrink:0}
-.dlm .dli:active,.dlm .dli:focus-visible{background:rgba(255,255,255,.14)}
-.dlm .dli small{font-size:12px;opacity:.72}
-.dlm .dli.info{cursor:default;opacity:.92}
-.dlm .dlx{align-items:center;opacity:.75;font-size:13px}
+.dlm .dlg{flex:none;width:36px;height:4px;border-radius:2px;margin:2px auto 6px;background:rgba(255,255,255,.34)}
+.dlm .dlh{flex:none;padding:0 12px 6px;font:600 13px/1.3 var(--font);color:rgba(255,255,255,.66)}
+.dlm .dll{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:2px;touch-action:pan-y}
+.dlm .dli{all:unset;box-sizing:border-box;min-height:48px;display:flex;flex-direction:column;justify-content:center;gap:1px;padding:7px 14px;border-radius:14px;cursor:pointer;color:#fff;flex-shrink:0;font:500 15px/1.25 var(--font)}
+.dlm .dli:active,.dlm .dli:focus-visible{background:rgba(255,255,255,.12)}
+.dlm .dli small{font:400 12.5px/1.3 var(--font);color:rgba(255,255,255,.66)}
+.dlm .dli.info{cursor:default;color:rgba(255,255,255,.86);font-size:14px}
+.dlm .dlx{flex:none;align-items:center;margin-top:4px;color:rgba(255,255,255,.74);font-size:14px}
 .diag{position:fixed;left:10px;right:10px;top:10%;bottom:10%;display:flex;flex-direction:column;gap:8px;background:#161616;color:#eee;border-radius:18px;padding:12px;font:13px/1.35 var(--font);box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483647;pointer-events:auto}
 .diag .dh{font-weight:700;font-size:15px}
 .diag textarea{flex:1;width:100%;background:#000;color:#9f9;border:0;border-radius:10px;padding:8px;font:11px/1.35 monospace;resize:none}
@@ -67,7 +71,10 @@
 :host(.flat) .vmid .g svg{filter:drop-shadow(0 1px 3px rgba(0,0,0,.55))}
 :host(.flat) .vmenu{background:rgba(72,74,84,.46)!important;-webkit-backdrop-filter:blur(30px) saturate(1.6) brightness(1.04)!important;backdrop-filter:blur(30px) saturate(1.6) brightness(1.04)!important}
 :host(.flat) .vmi,:host(.flat) .vmh,:host(.flat) .toast{text-shadow:0 1px 2px rgba(0,0,0,.4)}
-:host(.flat) .vside{background:rgba(255,255,255,.17)!important}`;
+:host(.flat) .vside{background:rgba(255,255,255,.17)!important}
+/* Download-Auswahl im Design „Schlicht“: wie das Player-Menü, aber dichter (Text über der Seite gut lesbar) */
+:host(.flat) .dlm{background:rgba(72,74,84,.78)!important;-webkit-backdrop-filter:blur(16px) saturate(1.5)!important;backdrop-filter:blur(16px) saturate(1.5)!important;box-shadow:0 -2px 14px rgba(0,0,0,.18)!important}
+:host(.flat) .dlm .dli,:host(.flat) .dlm .dlh{text-shadow:0 1px 2px rgba(0,0,0,.35)}`;
 
   function h(tag, props) {
     const el = document.createElement(tag);
@@ -146,9 +153,9 @@
   // Gespeichert wird: welche Seite (links/rechts) und die Höhe relativ zum Video (0 = oben, 1 = unten).
   // Beim Loslassen rastet der Button am näheren Rand ein – nie in der Mitte.
   function savePos() {
-    if (!active || !pill) return;
-    const r = rectOf(active);
-    if (!r.width || !r.height) return;
+    if (!pill) return;
+    const r = pillAnchor();
+    if (!r || !r.width || !r.height) return;
     const left = parseFloat(pill.style.left) || 0, top = parseFloat(pill.style.top) || 0;
     const cx = left + pill.offsetWidth / 2, cy = top + pill.offsetHeight / 2;
     savedPos = {
@@ -302,8 +309,9 @@
     // P4c: ⬇ neben ▶ – speichert das laufende Video der Seite über die Helfer-App (src/105-download-knopf.js), ohne den
     // Player zu öffnen; ohne Helfer-Kanal (Firefox/Userscript) wie bisher YTDLnis/Teilen. Lange drücken: Teilen.
     const dlBtn = h('button', { class: 'pb dl', 'aria-label': 'Video speichern' }, icon(I.download));
-    dlBtn.addEventListener('click', () => onPageDownload());
-    dlBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); onDownload(null, { share: true }); });   // lange drücken: Teilen
+    // (Video in einem eingebetteten Fenster: der Tipp geht an genau dieses Fenster, src/035)
+    dlBtn.addEventListener('click', () => { if (fuiTop.cur) fuiTopAct('dl'); else onPageDownload(); });
+    dlBtn.addEventListener('contextmenu', (e) => { e.preventDefault(); if (fuiTop.cur) fuiTopAct('share'); else onDownload(null, { share: true }); });   // lange drücken: Teilen
     // Der eingebaute Player geht überall – auch auf "nur Download"-Seiten wie YouTube; ⬇ nur mit Helfer-Kanal oder
     // auf Seiten, die YTDLnis kann (sonst gäbe es dort nichts zu speichern)
     pill = pageDlShown() ? h('div', { class: 'pill' }, btn, dlBtn) : h('div', { class: 'pill' }, btn);   // [ ▶ ] [ ⬇ ]
@@ -360,13 +368,13 @@
     });
     btn.addEventListener('pointerup', () => {
       clearTimeout(pressTimer);
-      if (longPressed) copyText(diag(active, resolve(active)), 'Diagnose kopiert');
+      if (longPressed) { if (fuiTop.cur) fuiTopAct('diag'); else copyText(diag(active, resolve(active)), 'Diagnose kopiert'); }
     });
     btn.addEventListener('pointercancel', () => { clearTimeout(pressTimer); longPressed = false; });
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
     btn.addEventListener('click', () => {
       if (longPressed) { longPressed = false; return; }
-      onPlayerTap();
+      if (fuiTop.cur) fuiTopAct('player'); else onPlayerTap();
     });
 
     ['click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'mouseup'].forEach((t) =>
@@ -402,6 +410,8 @@
   document.addEventListener('webkitfullscreenchange', attachHost, true);
 
   function toast(msg) {
+    // Knopf dieses eingebetteten Fensters steht im Hauptfenster: Hinweis dort zeigen (hier wäre er abgeschnitten)
+    if (IN_FRAME && fuiRelay()) { fuiSend('toast', { n: fui.n, text: tr(msg) }); return; }
     ui();
     // im Player: eine feste Stelle für alle Hinweise (unter dem Bild) – die Gesten-Anzeige macht so lange Platz
     const pw = toastEl.parentElement;

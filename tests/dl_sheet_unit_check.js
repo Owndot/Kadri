@@ -25,7 +25,7 @@ function world() {
     console, setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout,
     addEventListener: (t, f) => { (L[t] = L[t] || new Set()).add(f); },
     removeEventListener: (t, f) => { if (L[t]) L[t].delete(f); },
-    META: false, root: shadow, ui() {}, tr: (x) => x, toast() {},
+    META: false, IN_FRAME: false, root: shadow, ui() {}, tr: (x) => x, toast() {},
     h: (tag, attrs, text) => { const e = el(tag, attrs); if (text !== undefined) e.children.push(String(text)); return e; },
     location: { href: 'https://site.example/v' },
     visualViewport: { offsetLeft: 0, offsetTop: 0, width: 400, height: 800,

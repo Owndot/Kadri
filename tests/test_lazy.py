@@ -25,12 +25,15 @@ with sync_playwright() as p:
     check('… sobald es da ist: Kadri geladen', c1, c1)
     # im Fenster mit Video: Knopf da, Player öffnet und spielt
     fb.evaluate('() => { document.getElementById("v").muted = false; }'); time.sleep(1.0)
-    fb.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
-    fb.evaluate('() => document.querySelector("[data-kadri-test]").shadowRoot.querySelector("button[aria-label=\'Im Videoplayer öffnen\']").click()')
+    # Video im eingebetteten Fenster: Knopf und Auswahl stehen im Hauptfenster (src/035) – dort tippen
+    pg.wait_for_function('() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot && h.shadowRoot.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']"); }', timeout=15000)
+    time.sleep(0.5)
+    xy = pg.evaluate('() => { const r = %s.querySelector(".pill.on button[aria-label=\'Im Videoplayer öffnen\']").getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; }' % R)
+    pg.touchscreen.tap(xy[0], xy[1])
     fb.wait_for_function('() => { const v = document.querySelector("[data-kadri-test]").shadowRoot.querySelector(".vv"); return v && v.currentTime > 0.3; }', timeout=20000)
     time.sleep(1.0)
     r = pg.evaluate('() => { const f = document.getElementById("b").getBoundingClientRect(); return [Math.round(f.width), Math.round(f.height)]; }')
-    check('… Knopf am Video im Fenster, Player spielt und das Fenster füllt den Bildschirm (mit Schlüssel)', r[1] >= 780, r)
+    check('… Knopf im Hauptfenster, Player spielt im Fenster und das Fenster füllt den Bildschirm (mit Schlüssel)', r[1] >= 780, r)
     check('keine Fehler der Seite', not errs, errs)
     ctx.close()
 shutdown()

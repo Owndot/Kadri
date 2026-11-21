@@ -6,6 +6,36 @@
   if (window.top === window) return;
   const api = globalThis.chrome || globalThis.browser;
   if (!api || !api.runtime || !api.runtime.id) return;
+  // Lage eines Videos aus einem tiefer eingebetteten Fenster an das eigene Elternfenster weiterreichen (src/035): nur eine
+  // Zufallskennung und Zahlen, in die Koordinaten dieses Fensters umgerechnet (Rand, Innenabstand, Skalierung des
+  // <iframe>), der sichtbare Teil auf dessen Kasten zugeschnitten. Nur von einem eigenen <iframe> (e.source), nie von
+  // diesem Fenster selbst. Das Hauptfenster rechnet die letzte Ebene selbst.
+  const FG = '__kadriFg1';
+  const num = (a) => Array.isArray(a) && a.length === 4 && a.every((x) => typeof x === 'number' && isFinite(x) && Math.abs(x) < 1e6);
+  const cut = (a, b) => { const l = Math.max(a[0], b[0]), t = Math.max(a[1], b[1]); return [l, t, Math.max(0, Math.min(a[0] + a[2], b[0] + b[2]) - l), Math.max(0, Math.min(a[1] + a[3], b[1] + b[3]) - t)]; };
+  addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || typeof d !== 'object' || d[FG] !== 1 || d.top === 1 || typeof d.n !== 'string' || !/^[0-9a-f]{32}$/.test(d.n)) return;
+    if (!num(d.r) || !num(d.c) || !(d.w > 0 && d.h > 0 && d.w < 1e5 && d.h < 1e5) || !e.source || e.source === window) return;
+    let f = null;
+    const all = document.querySelectorAll('iframe,frame');
+    for (let i = 0; i < all.length && !f; i++) { try { if (all[i].contentWindow === e.source) f = all[i]; } catch (er) {} }
+    if (!f) return;
+    try {
+      const fr = f.getBoundingClientRect(), cs = getComputedStyle(f);
+      if (!fr.width || !fr.height) return;
+      const sx = f.offsetWidth ? fr.width / f.offsetWidth : 1, sy = f.offsetHeight ? fr.height / f.offsetHeight : 1;
+      const pl = parseFloat(cs.paddingLeft) || 0, pt = parseFloat(cs.paddingTop) || 0;
+      const b = [fr.left + (f.clientLeft + pl) * sx, fr.top + (f.clientTop + pt) * sy,
+        (f.clientWidth - pl - (parseFloat(cs.paddingRight) || 0)) * sx, (f.clientHeight - pt - (parseFloat(cs.paddingBottom) || 0)) * sy];
+      if (b[2] <= 0 || b[3] <= 0) return;
+      const kx = b[2] / d.w, ky = b[3] / d.h;
+      const map = (a) => [b[0] + a[0] * kx, b[1] + a[1] * ky, a[2] * kx, a[3] * ky];
+      const m = { n: d.n, r: map(d.r), c: cut(map(d.c), b), w: innerWidth, h: innerHeight };
+      m[FG] = 1;
+      window.parent.postMessage(m, '*');
+    } catch (er) {}
+  });
   let asked = false, mo = null, tm = 0, n = 0;
   const vids = document.getElementsByTagName('video');   // „lebendige“ Liste – Abfrage kostet fast nichts
   function want() {
