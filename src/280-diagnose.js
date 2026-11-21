@@ -175,7 +175,7 @@
     // (gelesenes DASH-Manifest: Art nach dem Inhalt, nicht nach der Endung der Adresse)
     net.forEach((u) => { let r = 'unknown'; try { r = mediaRoleHint(u); } catch (e) {} const k = (r === 'manifest' ? 'dash' : anonKind(u)) + ':' + r; roles[k] = (roles[k] || 0) + 1; });
     L.push('Netzwerk (zuletzt beobachtet, Art:Rolle): ' + (Object.keys(roles).sort().map((k) => k + ' ×' + roles[k]).join(', ') || '-') +
-      ' · Listen gelesen ' + plInfo.size + ' (davon DASH-Manifeste ' + Array.from(plInfo.values()).filter((x) => x.kind === 'dash').length + ')' +
+      ' · Listen gelesen ' + plInfo.size + ' (davon DASH-Manifeste ' + new Set(dashInfo.values()).size + ')' +
       ' · Rollen aus Listen ' + plParts.size + (Object.keys(dashRejected).length ? ' · MPD-Texte verworfen: ' + anonCount(dashRejected) : ''));
     L.push('Helfer-Downloads (jüngste zuerst): ' + (hdlDiags.length ? '' : '-'));
     hdlDiags.forEach((d, i) => L.push(' ' + (i + 1) + '. ' + hdlDiagText(d)));

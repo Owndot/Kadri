@@ -289,7 +289,7 @@
   //  - Kein Startzeitpunkt bekannt (Kadri erst nach dem Laden im Fenster gestartet): gezählt wird ab dem letzten Seitenwechsel.
   function dashBindingFor(v) {
     const list = [], seen = new Set();
-    plInfo.forEach((p, key) => { if (p.kind === 'dash' && p.dash && !p.dash.error && !seen.has(p)) { seen.add(p); list.push({ key: key, p: p }); } });
+    dashInfo.forEach((p, key) => { if (p.dash && !p.dash.error && !seen.has(p)) { seen.add(p); list.push({ key: key, p: p }); } });
     if (!list.length || !v) return { list: [], res: {} };
     let others = false;
     try { others = allVideos().some((x) => x !== v && !x.paused && !x.ended && /^blob:/.test(x.currentSrc || '')); } catch (e) {}

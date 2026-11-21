@@ -299,8 +299,11 @@
   // DASH (S2): verworfene MPD-Texte je Grund (nur gezählt) und die letzten beobachteten Abrufe (nur Pfad + Zeit), damit ein
   // später gelesenes MPD seine schon geladenen Stücke noch zuordnen kann. Privat; nie gespeichert, nie in die Diagnose.
   const dashRejected = {};
-  const dashRejectedKeys = new Set();   // Adressen (Pfad), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
+  const dashRejectedKeys = new Set();   // Adressen (volle, ohne #), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
   const recentRes = [];
+  // Gelesene gültige MPDs je VOLLER Adresse (ohne #) – zwei MPDs mit gleichem Pfad, aber anderer Query sind zwei Manifeste.
+  // (plInfo bleibt nach Pfad geschlüsselt – die HLS-Logik ändert sich nicht.)
+  const dashInfo = new Map();
   // Wurzelelement MPD (optional mit Namensraum-Präfix) am Anfang des Textes – Vorprüfung; entscheidend ist dashParse
   // (steht vor dem erneuten Senden durch page.js weiter unten – das ruft notePlaylist sofort beim Start auf)
   const DASH_ROOT_RE = /<(?:[A-Za-z_][\w.-]{0,31}:)?MPD[\s>]/;
@@ -347,7 +350,7 @@
         if (!parsed || parsed.error) {
           const er = (parsed && parsed.error) || 'parse';
           dashRejected[er] = (dashRejected[er] || 0) + 1;
-          [reqUrl, finalUrl].forEach((x) => { if (x) dashRejectedKeys.add(urlKey(x)); });
+          [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) dashRejectedKeys.add(k); });
           if (dashRejectedKeys.size > 200) dashRejectedKeys.delete(dashRejectedKeys.values().next().value);
           return;
         }
@@ -355,6 +358,8 @@
         try { info.dash = dashSummaryFromParsed(parsed); } catch (e) { info.dash = null; }
         try { info.dashIdx = dashSegmentIndex(parsed, base); } catch (e) { info.dashIdx = null; }
         info.dashHits = []; info.dashInit = 0;
+        [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
+        while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
         // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
         if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t));
         info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
@@ -408,10 +413,13 @@
     if (info.dashHits.length > 3000) info.dashHits.shift();
   }
   function dashSee(u, arrived) {
-    const k = urlKey(u), t = arrived || Date.now();
+    let k = '';
+    try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) { return; }
+    if (!k) return;
+    const t = arrived || Date.now();
     recentRes.push({ k: k, t: t });
     if (recentRes.length > 800) recentRes.shift();
-    plInfo.forEach((p) => { if (p.kind === 'dash' && p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t); });
+    new Set(dashInfo.values()).forEach((p) => { if (p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t); });
   }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
@@ -444,7 +452,7 @@
     return { u: u, dur: media.dur, live: media.live };
   }
   // Zusammenfassung eines gelesenen DASH-Manifests (src/038) zu dieser Adresse – oder null
-  function dashSummaryOf(u) { const p = plInfo.get(urlKey(u)); return p && p.kind === 'dash' && p.dash ? p.dash : null; }
+  function dashSummaryOf(u) { let k = ''; try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) {} const p = k && dashInfo.get(k); return p && p.dash ? p.dash : null; }
   // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)
   function streamLen(u) {
     const p = plInfo.get(urlKey(u));
@@ -461,7 +469,8 @@
     const k = urlKey(u);
     if (plParts.has(k)) return plParts.get(k);
     const p = plInfo.get(k);
-    if (p) return p.kind === 'dash' ? 'manifest' : p.kids.size ? 'master' : 'media-playlist';
+    // (DASH: Manifest nur, wenn genau diese Adresse – samt Query – als gültiges MPD gelesen wurde)
+    if (p) return p.kind === 'dash' ? (dashSummaryOf(u) ? 'manifest' : 'unknown') : p.kids.size ? 'master' : 'media-playlist';
     if (SEGMENT_RE.test(u)) return 'segment';
     try { if (isSplitTrack(u)) return 'track'; } catch (e) {}
     return 'unknown';

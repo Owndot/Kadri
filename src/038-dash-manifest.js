@@ -159,9 +159,13 @@
   // Stücks in dieser Darstellung: $Number$ (− startNumber), $Time$ über die SegmentTimeline bzw. die feste Dauer,
   // SegmentList über die Reihenfolge der SegmentURL. SegmentBase/Einzeldatei (Byte-Bereiche derselben Datei) und
   // SegmentList nur mit mediaRange lassen keine Stückfolge erkennen → dort keine Bindung über Stücke (bleibt ambiguous).
+  // Identität: verglichen wird die VOLLE Adresse ohne #-Teil (Schema, Host, Pfad UND Query) – Query-Parameter tragen oft die
+  // Video-Identität (…/seg1.m4s?video=A ≠ ?video=B). Platzhalter dürfen auch in der Query stehen (…?n=$Number$). Fehlende,
+  // abweichende, zusätzliche oder umsortierte Parameter → kein Treffer (Identität nicht nachweisbar → ambiguous).
   // Grenzen: höchstens 64 Darstellungen, 20000 Zeitleisten-Einträge je Darstellung, 20000 Listeneinträge.
   const DASH_IDX = Object.freeze({ reps: 64, timeline: 20000, list: 20000 });
-  const dashPathKey = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin + x.pathname : ''; } catch (e) { return ''; } };
+  // Vergleichsschlüssel einer Adresse für DASH: alles außer dem #-Teil (nur intern; nie in Registry-Zusammenfassung/Diagnose)
+  const dashUrlKey = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin + x.pathname + x.search : ''; } catch (e) { return ''; } };
   const dashEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   function dashSegmentIndex(parsed, mpdUrl) {
     const out = { reps: [], single: 0 };
@@ -186,10 +190,11 @@
           if (media != null) {
             const tpl = fill(media);
             const hasNum = /\$Number(%0\d+d)?\$/.test(tpl), hasTime = /\$Time(%0\d+d)?\$/.test(tpl);
-            if (hasNum === hasTime) { out.single++; return; }   // keine oder beide Variablen: keine sichere Stücknummer
+            // genau EIN Zahlen-Platzhalter (sonst ist die Stücknummer nicht eindeutig ablesbar)
+            if (hasNum === hasTime || (tpl.match(/\$(Number|Time)(%0\d+d)?\$/g) || []).length !== 1) { out.single++; return; }
             const tok = 'KADRIIDXTOKEN9Q';
             let abs = '';
-            try { abs = dashPathKey(new URL(tpl.replace(/\$(Number|Time)(%0\d+d)?\$/, tok), base).href); } catch (e) { abs = ''; }
+            try { abs = dashUrlKey(new URL(tpl.replace(/\$(Number|Time)(%0\d+d)?\$/, tok), base).href); } catch (e) { abs = ''; }
             if (!abs || abs.split(tok).length !== 2) { out.single++; return; }
             const parts = abs.split(tok);
             rep.prefix = parts[0];
@@ -214,17 +219,17 @@
               if (!rep.times && !(rep.dur > 0)) { out.single++; return; }
             }
             const ini = tplAttr(chain, 'initialization');
-            if (ini) { try { rep.init = dashPathKey(new URL(fill(ini), base).href); } catch (e) {} }
+            if (ini) { try { rep.init = dashUrlKey(new URL(fill(ini), base).href); } catch (e) {} }
           } else {
             let sl = null;
             for (let i = 0; i < chain.length && !sl; i++) sl = dashKid(chain[i], 'SegmentList');
             const urls = sl ? dashKids(sl, 'SegmentURL').map((x) => x.getAttribute('media')).filter((x) => x) : [];
             if (!urls.length) { out.single++; return; }   // SegmentBase/Einzeldatei/nur mediaRange: keine Stückfolge
             rep.mode = 'list'; rep.list = new Map();
-            urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashPathKey(new URL(m, base).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
+            urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashUrlKey(new URL(m, base).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
             if (rep.list.size < 2) { out.single++; return; }   // alle auf dieselbe Datei (Byte-Bereiche): keine Folge erkennbar
             const ini = dashKid(sl, 'Initialization');
-            if (ini && ini.getAttribute('sourceURL')) { try { rep.init = dashPathKey(new URL(ini.getAttribute('sourceURL'), base).href); } catch (e) {} }
+            if (ini && ini.getAttribute('sourceURL')) { try { rep.init = dashUrlKey(new URL(ini.getAttribute('sourceURL'), base).href); } catch (e) {} }
           }
           const ct = String(a.getAttribute('contentType') || '').toLowerCase(), mime = String(r.getAttribute('mimeType') || a.getAttribute('mimeType') || '').toLowerCase();
           rep.kind = /^(video|audio|text|image)$/.test(ct) ? ct : /^video\//.test(mime) ? 'video' : /^audio\//.test(mime) ? 'audio' : 'other';
@@ -234,7 +239,7 @@
     });
     return out;
   }
-  // Ein beobachteter Abruf (nur Pfad) → { rep, idx } oder null; init → { rep, init: true }
+  // Ein beobachteter Abruf (Schlüssel dashUrlKey: volle Adresse ohne #) → { rep, idx } oder null; init → { rep, init: true }
   function dashMatchSegment(index, key) {
     if (!index || !key) return null;
     for (let i = 0; i < index.reps.length; i++) {
@@ -253,28 +258,48 @@
   // Reine Entscheidung „ist dieses Manifest an das laufende Video gebunden?“ – nur aus beobachteten Stückabrufen.
   // c = { manifests: [{ key, hits: [{ rep, idx, t }], duration, checkable }], from, now, video: { duration, othersPlaying } }
   // bound nur, wenn GENAU EIN Manifest in diesem Fenster seit dem Start dieses Mediums mindestens DASH_RUN aufeinander-
-  // folgende Stücke derselben Darstellung geladen hat, zuletzt vor höchstens DASH_RECENT ms; sonst ambiguous mit Grund.
-  // Zeitliche Nähe allein bindet nie.
-  const DASH_RUN = 3, DASH_RECENT = 20000;
+  // folgende Stücke derselben Darstellung als ZUSAMMENHÄNGENDE Abrufserie geladen hat: alle Abrufe der Folge innerhalb von
+  // DASH_SPAN ms (Reihenfolge der Abrufe egal, Wiederholungen einzelner Stücke zählen einmal) und die Serie endet vor höchstens
+  // DASH_RECENT ms. Drei irgendwann beobachtete benachbarte Nummern (alt + neu) binden nicht. Sonst ambiguous mit Grund.
+  // Zeitliche Nähe allein bindet nie. (Sehr lange Stücke – über ~20 s – können so ambiguous bleiben: bewusst vorsichtig.)
+  const DASH_RUN = 3, DASH_RECENT = 20000, DASH_SPAN = 45000;
   function dashBindDecision(c) {
     const res = {}, now = c.now, from = c.from || 0, vid = c.video || {};
     const runOf = (xs) => { let best = 0, cur = 0, prev = -2; xs.forEach((x) => { cur = x === prev + 1 ? cur + 1 : 1; prev = x; if (cur > best) best = cur; }); return best; };
+    // längste Folge je Darstellung innerhalb eines Zeitfensters [Ende − DASH_SPAN, Ende]; Enden = Abrufzeiten.
+    // any: über alle Fenster; recent: nur Fenster, deren Ende höchstens DASH_RECENT zurückliegt
+    const coherent = (hs) => {
+      const byT = hs.slice().sort((a, b) => a.t - b.t).slice(-600);
+      let any = 0, recent = 0, s = 0;
+      for (let e = 0; e < byT.length; e++) {
+        while (byT[e].t - byT[s].t > DASH_SPAN) s++;
+        const sets = new Map();
+        for (let i = s; i <= e; i++) { const h = byT[i]; if (!sets.has(h.rep)) sets.set(h.rep, new Set()); sets.get(h.rep).add(h.idx); }
+        let run = 0;
+        sets.forEach((set) => { run = Math.max(run, runOf(Array.from(set).sort((a, b) => a - b))); });
+        any = Math.max(any, run);
+        if (now - byT[e].t <= DASH_RECENT) recent = Math.max(recent, run);
+      }
+      return { any: any, recent: recent };
+    };
     const qual = [];
     (c.manifests || []).forEach((m) => {
       const hs = (m.hits || []).filter((h) => h.t >= from && Number.isInteger(h.idx));
       const by = new Map();
       hs.forEach((h) => { if (!by.has(h.rep)) by.set(h.rep, new Set()); by.get(h.rep).add(h.idx); });
-      let run = 0, n = 0;
-      by.forEach((set) => { n += set.size; run = Math.max(run, runOf(Array.from(set).sort((a, b) => a - b))); });
+      let n = 0;
+      by.forEach((set) => { n += set.size; });
       const last = hs.reduce((x, h) => Math.max(x, h.t), 0);
-      const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: run, last: last };
+      const co = coherent(hs);
+      const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: co.recent, last: last };
       res[m.key] = r;
       if (!m.checkable) { r.reason = 'nicht-pruefbar'; return; }
       if (!n) { r.reason = 'keine-treffer'; return; }
-      if (run < DASH_RUN) { r.reason = 'zu-wenig-folge'; return; }
+      // keine zusammenhängende Serie: entweder nie (zu-wenig-folge) oder nur früher (nicht-aktiv, z. B. Werbung vorher)
+      if (co.any < DASH_RUN) { r.reason = 'zu-wenig-folge'; return; }
       if (vid.othersPlaying) { r.reason = 'mehrere-videos'; return; }
       if (m.duration > 0 && vid.duration > 0 && isFinite(vid.duration) && Math.abs(m.duration - vid.duration) > Math.max(4, m.duration * 0.015)) { r.reason = 'dauer-abweicht'; return; }
-      if (now - last > DASH_RECENT) { r.reason = 'nicht-aktiv'; return; }
+      if (co.recent < DASH_RUN) { r.reason = 'nicht-aktiv'; return; }
       qual.push(m.key);
     });
     if (qual.length === 1) Object.assign(res[qual[0]], { state: 'bound', reason: 'stueckfolge' });

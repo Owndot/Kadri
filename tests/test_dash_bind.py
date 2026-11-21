@@ -35,6 +35,9 @@ CASES = {
     'worker':  {'mpd': ['/y/w/manifest'], 'play': 'num:/y/segs/', 'worker': True},
     'notmpd':  {'mpd': ['/y/n/feed'], 'play': 'num:/y/segs/'},
     'switch':  {'mpd': ['/y/c/manifest'], 'play': 'num:/y/segs/', 'switch': 'num:/y/z/'},
+    # Identität über die Query: zwei MPDs mit gleichem Pfad, andere Query; Stücke gleichen Pfads mit ?video=A
+    'qtwo':    {'mpd': ['/y/q/manifest.mpd?video=A', '/y/q/manifest.mpd?video=B'], 'play': 'num:/y/q/:?video=A'},
+    'qwrong':  {'mpd': ['/y/q/manifest.mpd?video=A'], 'play': 'num:/y/q/:?video=B'},
 }
 MPDS = {'/y/c/manifest': mpd(TPL_NUM, base='/y/segs/'), '/y/t/manifest.mpd': mpd(TPL_TIME), '/y/l/manifest.mpd': mpd(LIST),
         '/y/p/manifest': mpd(TPL_NUM.replace('<Seg', '<dash:Seg').replace('<Rep', '<dash:Rep'), base='/y/segs/', prefix='dash'),
@@ -44,8 +47,8 @@ MPDS = {'/y/c/manifest': mpd(TPL_NUM, base='/y/segs/'), '/y/t/manifest.mpd': mpd
 PAGE = '''<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>DASH</title></head>
 <body style="margin:0;background:#000"><video id=v muted autoplay playsinline style="width:100%%;height:100vh;display:block"></video><script>
 const C = %s, v = document.getElementById("v");
-const name = (p, i) => { const [k, b] = p.split(":"); return b + (k === "time" ? String(Math.round(i * 5120)) + ".m4s" : k === "list" ? "a-" + i + ".m4s" : "seg" + String(i).padStart(3, "0") + ".m4s"); };
-const initOf = (p) => p.split(":")[1] + "init.mp4";
+const name = (p, i) => { const [k, b, q] = p.split(":"); return b + (k === "time" ? String(Math.round(i * 5120)) + ".m4s" : k === "list" ? "a-" + i + ".m4s" : "seg" + String(i).padStart(3, "0") + ".m4s") + (q || ""); };
+const initOf = (p) => p.split(":")[1] + "init.mp4" + (p.split(":")[2] || "");
 const WORKER = "onmessage = async (e) => { const r = await fetch(e.data); postMessage(await r.arrayBuffer()); };";
 const viaWorker = (u) => new Promise((res) => { const w = window.__w || (window.__w = new Worker(URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }))));
   w.onmessage = (e) => res(e.data); w.postMessage(new URL(u, location.href).href); });
@@ -77,6 +80,9 @@ class M(http.server.BaseHTTPRequestHandler):
         HITS.append({'path': u.path, 'browser': bool(self.headers.get('Sec-Fetch-Mode'))})
         body, ctype = None, ''
         if u.path == '/y/page.html': body, ctype = (PAGE % (json.dumps(CASES[q['m']]), N)).encode(), 'text/html; charset=utf-8'
+        elif u.path == '/y/q/manifest.mpd':   # je Query ein eigenes MPD: Vorlage trägt die Video-Identität in der Query
+            v = q.get('video', 'X')
+            body, ctype = mpd(TPL_NUM.replace('seg$Number%03d$.m4s', 'seg$Number%03d$.m4s?video=' + v).replace('init.mp4', 'init.mp4?video=' + v)), 'application/dash+xml'
         elif u.path in MPDS: body, ctype = MPDS[u.path], 'application/dash+xml'
         else:
             m = re.match(r'^/y/\w+/(?:seg(\d{3})\.m4s|a-(\d+)\.m4s|(\d+)\.m4s|(init)\.mp4)$', u.path)
@@ -168,6 +174,13 @@ with sync_playwright() as p:
     open_case('switch', played=2); time.sleep(1.0); it = hint(); dg = diag()
     check('Medienwechsel (neues Medium ohne Stücke dieses MPD): die alten Treffer zählen nicht mehr – nicht gebunden', DB not in it
           and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
+    open_case('qtwo'); it = hint(); dg = diag()
+    check('zwei MPDs mit gleichem Pfad, andere Query (?video=A/B), Stücke mit ?video=A: genau eines gebunden, das andere ohne Treffer',
+          DB in it and dg.count('Ergebnis bound (stueckfolge)') == 1 and dg.count('Ergebnis ambiguous (keine-treffer)') == 1
+          and 'DASH-Stückprüfung 2/2' in dg and dg.count('Bindung bound(') == 1 and anon(dg) and 'video=' not in dg, (it, lines(dg)))
+    open_case('qwrong'); it = hint(); dg = diag()
+    check('gleicher Stückpfad, andere Video-Identität in der Query (MPD ?video=A, geladen ?video=B): keine Treffer → ambiguous',
+          DB not in it and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
     check('nichts beim Helfer angefragt (kein Plan, kein Download)', len([x for x in HITS if not x['browser']]) == n0)
     check('keine Seitenfehler', not errs, errs)
     ctx.close()

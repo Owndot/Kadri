@@ -194,7 +194,7 @@
     try { role = mediaRoleHint(u); } catch (e) {}
     // Als DASH nur vermutet (Endung .mpd bzw. Content-Type), aber der gelesene Text war kein gültiges MPD: kein Eintrag –
     // der Inhalt widerlegt die Vermutung (kein beliebiges XML als Manifest, auch nicht als „vermutlich DASH“)
-    try { if (role !== 'manifest' && mediaKindOf(u, '') === 'dash' && dashRejectedKeys.has(urlKey(u))) return null; } catch (e) {}
+    try { if (role !== 'manifest' && mediaKindOf(u, '') === 'dash' && dashRejectedKeys.has(dashUrlKey(new URL(u).href))) return null; } catch (e) {}
     if (role !== 'unknown') o.role = role;
     // gelesenes DASH-Manifest: Zusammenfassung (nur Kategorien/Zahlen), angegebener Schutz, angegebene Dauer (VOD).
     // Fehlt ContentProtection, bleibt der Schutz „unbekannt“ – nie „unverschlüsselt“.
@@ -219,7 +219,7 @@
     b.list.forEach((e) => {
       const r = b.res[e.key];
       if (!r || r.state !== 'bound') return;
-      const s = sources.find((x) => urlKey(x.u) === e.key);
+      const s = sources.find((x) => { try { return dashUrlKey(new URL(x.u).href) === e.key; } catch (er) { return false; } });
       const u = s ? s.u : (PLAYLIST_RE.test(e.p.u) ? e.p.u : e.p.u.split('#')[0] + '#kadri.mpd');
       mediaPut(ctx, u, 'network', 'dash-segments', 'bound', ['dash-segments']);
     });

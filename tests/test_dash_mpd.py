@@ -17,7 +17,7 @@ with sync_playwright() as p:
     pg.add_script_tag(content=SRC + '\nwindow.__sum = (t) => { const s = dashManifestSummary(t); return { s: s, ok: mediaManifestOk(s) }; };'
                       '\nwindow.__ok = (m) => mediaManifestOk(m);'
                       '\nwindow.__idx = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u); return { reps: ix.reps.length, single: ix.single,'
-                      ' m: keys.map((k) => dashMatchSegment(ix, dashPathKey(k))) }; };')
+                      ' m: keys.map((k) => dashMatchSegment(ix, dashUrlKey(k))) }; };')
     def run(text):
         r = pg.evaluate('(t) => window.__sum(t)', text)
         return r['s'], r['ok']
@@ -79,8 +79,8 @@ with sync_playwright() as p:
     r = idx('vod-number-ffmpeg.mpd', M, ['https://cdn.example/v/chunk-stream0-00001.m4s', 'https://cdn.example/v/chunk-stream0-00003.m4s?x=1',
                                          'https://cdn.example/v/chunk-stream1-00002.m4s', 'https://cdn.example/v/init-stream0.m4s',
                                          'https://cdn.example/v/chunk-stream0-00001.mp4', 'https://other.example/v/chunk-stream0-00001.m4s'])
-    check('$Number%05d$ (ffmpeg): Stücknummer je Darstellung (− startNumber), Query egal, Init erkannt; andere Endung/anderer Host: kein Treffer',
-          r['reps'] == 2 and r['m'][0] == {'rep': 0, 'idx': 0} and r['m'][1] == {'rep': 0, 'idx': 2} and r['m'][2] == {'rep': 1, 'idx': 1}
+    check('$Number%05d$ (ffmpeg): Stücknummer je Darstellung (− startNumber), Init erkannt; zusätzlicher Query-Parameter, andere Endung/anderer Host: kein Treffer',
+          r['reps'] == 2 and r['m'][0] == {'rep': 0, 'idx': 0} and r['m'][1] is None and r['m'][2] == {'rep': 1, 'idx': 1}
           and r['m'][3] == {'rep': 0, 'init': True} and r['m'][4] is None and r['m'][5] is None, r)
     r = idx('vod-timeline-avc-aac.mpd', M, ['https://cdn.example/v/video/0/0.m4s', 'https://cdn.example/v/video/0/76800.m4s', 'https://cdn.example/v/video/2/153600.m4s',
                                             'https://cdn.example/v/video/0/76801.m4s', 'https://cdn.example/v/audio/de/288768.m4s'])
@@ -91,11 +91,28 @@ with sync_playwright() as p:
     check('SegmentList mit BaseURL der MPD-Ebene: Reihenfolge der SegmentURL = Stücknummer; Init erkannt',
           r['m'][0] == {'rep': 0, 'idx': 1} and r['m'][1] == {'rep': 1, 'idx': 2} and r['m'][2] == {'rep': 0, 'init': True}, r)
     r = idx('vod-baseurl-chain.mpd', M, ['https://cdn2.example/content/p1/video/720/7.jpg', 'https://cdn2.example/content/p1/lowres/360/2.jpg',
-                                         'https://audio.example/a/seg-128000-0005.m4s', 'https://cdn2.example/content/p1/video/720/init.jpg',
-                                         'https://cdn.example/v/720/7.jpg'])
+                                         'https://audio.example/a/seg-128000-0005.m4s?tok=1', 'https://cdn2.example/content/p1/video/720/init.jpg',
+                                         'https://cdn.example/v/720/7.jpg', 'https://audio.example/a/seg-128000-0005.m4s'])
     check('BaseURL-Kette (absolut → Periode → AdaptationSet → Darstellung, auch ../ und anderer Host), $RepresentationID$/$Bandwidth$, getarnte Endung .jpg',
           r['m'][0] == {'rep': 0, 'idx': 6} and r['m'][1] == {'rep': 1, 'idx': 1} and r['m'][2] == {'rep': 2, 'idx': 5}
-          and r['m'][3] == {'rep': 0, 'init': True} and r['m'][4] is None, r)
+          and r['m'][3] == {'rep': 0, 'init': True} and r['m'][4] is None and r['m'][5] is None, r)
+    # ---------- Identität über die Query (S2-Korrektur): bedeutungstragende Parameter werden nicht ignoriert ----------
+    QV = ('<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT60S"><Period><AdaptationSet mimeType="video/mp4">'
+          '<SegmentTemplate media="seg$Number%03d$.m4s?video=A" initialization="init.mp4?video=A" startNumber="0" duration="4" timescale="1"/>'
+          '<Representation id="v" bandwidth="1" width="640" height="360"/></AdaptationSet></Period></MPD>')
+    def idxt(text, url, keys): return pg.evaluate('([t, u, k]) => window.__idx(t, u, k)', [text, url, keys])
+    r = idxt(QV, M, ['https://cdn.example/v/seg001.m4s?video=A', 'https://cdn.example/v/seg001.m4s?video=B', 'https://cdn.example/v/seg001.m4s',
+                     'https://cdn.example/v/seg001.m4s?video=A&x=1', 'https://cdn.example/v/init.mp4?video=A', 'https://cdn.example/v/init.mp4?video=B'])
+    check('gleicher Stückpfad, andere Video-Identität in der Query: nur ?video=A trifft; ?video=B, ohne Query oder mit zusätzlichem Parameter nicht',
+          r['m'][0] == {'rep': 0, 'idx': 1} and r['m'][1] is None and r['m'][2] is None and r['m'][3] is None
+          and r['m'][4] == {'rep': 0, 'init': True} and r['m'][5] is None, r)
+    QN = QV.replace('seg$Number%03d$.m4s?video=A', 'chunk.m4s?v=A&amp;n=$Number$').replace('startNumber="0"', 'startNumber="1"')
+    r = idxt(QN, M, ['https://cdn.example/v/chunk.m4s?v=A&n=5', 'https://cdn.example/v/chunk.m4s?v=B&n=5', 'https://cdn.example/v/chunk.m4s?n=5&v=A',
+                     'https://cdn.example/v/chunk.m4s?v=A&n=x'])
+    check('Stücknummer als Query-Parameter (?v=A&n=$Number$): erkannt; andere Identität, umsortierte Parameter oder keine Zahl: kein Treffer',
+          r['m'][0] == {'rep': 0, 'idx': 4} and r['m'][1] is None and r['m'][2] is None and r['m'][3] is None, r)
+    r = idxt(QV.replace('seg$Number%03d$.m4s?video=A', 'seg$Number$.m4s?a=$Number$'), M, ['https://cdn.example/v/seg1.m4s?a=1'])
+    check('zwei Zahlen-Platzhalter in einer Vorlage: Stücknummer nicht eindeutig → nicht prüfbar', r['reps'] == 0 and r['single'] == 1 and r['m'][0] is None, r)
     r = idx('vod-av1-hevc-inherit.mpd', M, ['https://cdn.example/v/av1-1080/4000.m4s', 'https://cdn.example/v/hevc/8000.m4s', 'https://cdn.example/v/a/3.m4s'])
     check('geerbte Zeitleiste trotz eigener Vorlage der Darstellung; Template mit fester Dauer (Number, Standard-Start 1)',
           r['m'][0] == {'rep': 0, 'idx': 1} and r['m'][1] == {'rep': 1, 'idx': 2} and r['m'][2] in ({'rep': 2, 'idx': 2}, {'rep': 3, 'idx': 2}), r)
