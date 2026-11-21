@@ -86,8 +86,10 @@
     fui.menu = { seq: seq, items: items.slice(0, 24) };
     fuiSend('menu', { n: fui.n, seq: seq, title: String(title), items: fui.menu.items.map((it) => ({ label: String(it.label || ''), sub: it.sub ? String(it.sub) : '', info: !!it.info })) })
       .then((r) => {
-        if (r || !fui.menu || fui.menu.seq !== seq) return;
-        // Hauptfenster nicht erreichbar: kontrolliert zurück auf die Oberfläche hier (statt einer Auswahl, die nie erscheint)
+        // nur eine ausdrücklich angezeigte Auswahl ({ok:true}) gilt; sonst – Hauptfenster nicht erreichbar, Fehler oder
+        // abgelehnt ({ok:false}) – kontrolliert zurück auf die Oberfläche hier (statt einer Auswahl, die nie erscheint),
+        // sofern diese Auswahl noch die aktuelle ist
+        if ((r && r.ok === true) || !fui.menu || fui.menu.seq !== seq) return;
         fui.menu = null; fui.local = true; fuiFrameOff();
         pageDlMenu(title, items, true);
       });
@@ -230,23 +232,31 @@
     fuiTop.recent = { g: g, t: now };
     if (a === 'dl' || a === 'player') fuiTop.credit = { g: g, t: now };
     if (a === 'player') { g.hold = now + 4000; fuiTopDrop(); }
-    fuiTopSend('act', g, { a: a }).then((r) => fuiTopResult(g, r));
+    fuiTopSend('act', g, { a: a }).then((r) => fuiTopResult(g, r, a));
   }
   function fuiTopPick(g, seq, i) {
     const now = Date.now();
     fuiTop.recent = { g: g, t: now };
     fuiTop.credit = { g: g, t: now };   // ein Eintrag darf genau eine Folge-Auswahl öffnen (z. B. Qualität des Streams)
-    fuiTopSend('pick', g, { seq: seq, i: i }).then((r) => fuiTopResult(g, r));
+    fuiTopSend('pick', g, { seq: seq, i: i }).then((r) => fuiTopResult(g, r, 'pick'));
   }
-  function fuiTopResult(g, r) {
+  // what: 'pick' (Eintrag der Auswahl) oder die Aktion des Knopfs ('dl', 'player', 'diag', 'share')
+  function fuiTopResult(g, r, what) {
     if (!r) {
       toast('Video im eingebetteten Fenster nicht mehr erreichbar');
       fuiTop.regs.delete(g.key);
       if (fuiTop.cur === g) fuiTopDrop();
       return;
     }
-    if (r.toast) toast(String(r.toast));
     if (r.gone && fuiTop.cur === g) fuiTopDrop();
+    if (r.toast) toast(String(r.toast));
+    // abgelehnt ohne eigenen Hinweis: nicht stillschweigend als erledigt behandeln – sagen, dass nichts geschah und wie
+    // es weitergeht (erneut tippen; nichts wird selbst wiederholt)
+    else if (r.ok !== true) {
+      toast(what === 'pick' ? 'Auswahl nicht mehr aktuell – nichts gestartet. Bitte erneut auf ⬇ tippen'
+        : r.gone ? 'Video im eingebetteten Fenster gerade nicht bereit – nichts gestartet. Bitte erneut tippen, sobald der Knopf wieder erscheint'
+          : 'Aktion im eingebetteten Fenster nicht ausgeführt – bitte erneut tippen');
+    }
     if (r.ext) fuiTopExt(r.ext);
   }
   // Aktionen, die einen frischen Tipp brauchen: hier ausführen (der Tipp war hier)
