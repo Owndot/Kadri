@@ -76,7 +76,7 @@
     if (d && sameOrigin(d)) {
       items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => {
         toast('Download wird vorbereitet …');
-        browserDownload(d).then((ok) => toast(ok ? 'Download läuft im Browser – du kannst die Seite verlassen'
+        browserDownload(d).then((ok) => toast(ok ? 'Download an Browser übergeben'
           : 'Die Seite sperrt den Download'));
       } });
     }

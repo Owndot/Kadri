@@ -162,7 +162,7 @@
     'Suche MP4 mit Ton …': 'Looking for MP4 with sound …', 'Suche HD-Version …': 'Looking for HD version …',
     'Wird im Videoplayer geöffnet (Weiterleitung aufgelöst) …': 'Opening in video player (redirect resolved) …',
     'Die Seite sperrt den Download': 'The site blocks the download', 'Download des Browsers': 'Browser download',
-    'Download läuft im Browser – du kannst die Seite verlassen': 'Downloading in the browser – you can leave the page',
+    'Download an Browser übergeben': 'Download handed to the browser',
     'Download läuft – siehe Benachrichtigung': 'Downloading – see notification', 'Der Server lehnt den Helper ab': 'The server rejects the helper',
     'Für Streams wird die Helper-App gebraucht': 'Streams need the helper app', 'Für dieses Video gibt es keine Datei zum Herunterladen': 'There’s no file to download for this video',
     'Für dieses Video gibt es keine Datei-Adresse': 'There’s no file address for this video', 'Helper konnte den Download nicht starten': 'The helper couldn’t start the download',

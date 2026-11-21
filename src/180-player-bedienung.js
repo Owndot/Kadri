@@ -403,7 +403,7 @@
     function browserSave(d) {
       toast('Download wird vorbereitet …');
       browserDownload(d).then((ok) => {
-        if (ok) { toast('Download läuft im Browser – du kannst die Seite verlassen'); return; }
+        if (ok) { toast('Download an Browser übergeben'); return; }
         // Der Server gibt die Datei nicht als Download frei: alle Wege zur Auswahl
         dlMenu(true);
       });

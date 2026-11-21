@@ -307,6 +307,7 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     u.ctx.browserDownload = async (x) => { saved.push(x); return true; };
     u.ctx.shareUrl = () => {}; u.ctx.toYtdlnis = () => {};
     u.ctx.sameOrigin = () => true;   // Datei derselben Herkunft wie die Seite
+    u.toasts = []; u.ctx.toast = (m) => u.toasts.push(m);
     Object.assign(u.ctx, env || {});
     return Object.assign(u, { items: u.ctx.pageDlExternal(u.ctx.active, []), opened, saved });
   };
@@ -317,6 +318,8 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     /^nur öffnen: neuer Tab, kein Download/.test(x.items[1].sub));
   x.items[0].fn(); x.items[1].fn(); await flush();
   check('… browser actions only on their own entry', x.saved.length === 1 && x.opened.length === 1 && x.saved[0] === x.url && x.opened[0] === x.url);
+  check('… browser download only claims the hand-over, not a running download', x.toasts.includes('Download an Browser übergeben') &&
+    !x.toasts.some((m) => /läuft/.test(m)));
   for (const [why, patch] of [['stream (HLS)', { currentSrc: 'https://private.invalid/master.m3u8' }], ['DASH', { currentSrc: 'https://private.invalid/a.mpd?x=1' }],
     ['MSE/blob', { currentSrc: 'blob:https://private.invalid/1' }], ['no frame yet', { readyState: 1 }], ['media error', { error: { code: 4 } }],
     ['srcObject', { srcObject: {} }]]) {
