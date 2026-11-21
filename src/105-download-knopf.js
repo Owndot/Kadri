@@ -209,27 +209,46 @@
   // seine Aktion genau einmal aus; danach schließt das Blatt kontrolliert (öffnet die Aktion selbst ein neues, bleibt es).
   // Zurück-Taste: ein Verlaufseintrag nur für das Blatt (wie beim Player; nicht auf Facebook/Instagram).
   let pageDlEl = null;          // offenes Blatt (Hintergrund-Element)
-  let pageDlHist = null;        // eigener Verlaufseintrag für die Zurück-Taste: { len, href } beim Setzen, sonst null
-  let pageDlBackPending = false;   // eigenes history.back() unterwegs: dessen popstate gehört nicht zum Blatt
-  let pageDlBackTimer = 0;
-  let pageDlWantHist = false;   // Blatt offen, Verlaufseintrag erst nach dem ausstehenden Zurück setzen
+  let pageDlHist = '';          // Kennung des eigenen Verlaufseintrags (in history.state) für die Zurück-Taste
+  let pageDlBack = '';          // eigenes history.back() unterwegs: Kennung des Eintrags, den es verlassen soll
+  let pageDlBackTimer = 0, pageDlBackTries = 0;
+  let pageDlWantHist = false;   // Blatt offen, Verlaufseintrag erst setzen, wenn das eigene Zurück angewendet ist
   let pageDlFit = null;         // Anpassung an den sichtbaren Bereich (Systemleisten, Zoom, Tastatur)
   // visualViewport-Listener des bisherigen Blatts vollständig entfernen (beim Schließen und beim Ersetzen)
   function pageDlUnfit() {
     if (pageDlFit && window.visualViewport) { visualViewport.removeEventListener('resize', pageDlFit); visualViewport.removeEventListener('scroll', pageDlFit); }
     pageDlFit = null;
   }
-  // Verlaufseintrag nur für das offene Blatt. Läuft noch ein eigenes Zurück, erst nach dessen popstate setzen – sonst
-  // träfe das ausstehende Zurück den neuen Eintrag, und die nächste Zurück-Taste verließe die Seite.
+  // Kennung im aktuellen history.state – nur sie belegt, dass der aktuelle Eintrag der eigene ist (Länge + Adresse nicht)
+  function pageDlHistTok() {
+    try { const st = history.state; return st && typeof st === 'object' && typeof st.__kadriDlSheet === 'string' ? st.__kadriDlSheet : ''; }
+    catch (e) { return ''; }
+  }
+  // Verlaufseintrag nur für das offene Blatt: Zustand der Seite unverändert übernommen, dazu die eigene Kennung. Läuft noch
+  // ein eigenes Zurück, erst danach setzen – sonst träfe das verspätete Zurück den neuen Eintrag (Blatt zu, nächste
+  // Zurück-Taste verließe die Seite). Fremde Zustandsform (kein Objekt): kein Eintrag, nichts an der Seite verändert.
   function pageDlPushHist() {
     pageDlWantHist = false;
     if (META || !pageDlEl || pageDlHist) return;
-    if (pageDlBackPending) { pageDlWantHist = true; return; }
-    try { history.pushState(history.state, '', location.href); pageDlHist = { len: history.length, href: location.href }; } catch (e) {}
+    if (pageDlBack) { pageDlWantHist = true; return; }
+    let st;
+    try { st = history.state; } catch (e) { return; }
+    if (st !== null && (typeof st !== 'object' || Array.isArray(st))) return;
+    const tok = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { history.pushState(Object.assign({}, st || {}, { __kadriDlSheet: tok }), '', location.href); pageDlHist = tok; } catch (e) {}
   }
-  function pageDlBackDone() {
-    pageDlBackPending = false; clearTimeout(pageDlBackTimer); pageDlBackTimer = 0;
+  // das eigene Zurück ist angewendet (der verlassene Eintrag ist nicht mehr der aktuelle): erst jetzt neu eintragen
+  function pageDlBackSettled() {
+    pageDlBack = ''; clearTimeout(pageDlBackTimer); pageDlBackTimer = 0;
     if (pageDlWantHist) pageDlPushHist();
+  }
+  // Sicherheitsnetz ohne popstate: nur prüfen, nie selbst eintragen, solange der alte eigene Eintrag noch der aktuelle ist
+  // (dann kann das verspätete Zurück ihn noch verlassen). Höchstens 60 s, danach bleibt das Blatt ohne eigenen Eintrag.
+  function pageDlBackCheck() {
+    pageDlBackTimer = 0;
+    if (!pageDlBack) return;
+    if (pageDlHistTok() !== pageDlBack) { pageDlBackSettled(); return; }
+    if (++pageDlBackTries < 120) pageDlBackTimer = setTimeout(pageDlBackCheck, 500);
   }
   function pageDlClose(fromBack) {
     if (!pageDlEl) return;
@@ -238,18 +257,23 @@
     removeEventListener('keydown', pageDlKey);
     pageDlWantHist = false;
     const own = pageDlHist;
-    pageDlHist = null;
-    // Selbst zurück nur, wenn der eigene Eintrag nachweislich noch der aktuelle ist (Seite hat nichts Eigenes eingetragen)
-    if (own && !fromBack && history.length === own.len && location.href === own.href) {
-      pageDlBackPending = true;
-      try { history.back(); } catch (e) { pageDlBackDone(); return; }
-      pageDlBackTimer = setTimeout(pageDlBackDone, 1000);   // Sicherheitsnetz, falls kein popstate kommt
+    pageDlHist = '';
+    // Selbst zurück nur, wenn der aktuelle Eintrag nachweislich der eigene ist (seine Kennung im history.state)
+    if (own && !fromBack && pageDlHistTok() === own) {
+      pageDlBack = own; pageDlBackTries = 0;
+      try { history.back(); } catch (e) { pageDlBack = ''; return; }
+      pageDlBackTimer = setTimeout(pageDlBackCheck, 500);
     }
   }
   function pageDlKey(e) { if (e.key === 'Escape' && pageDlEl) { e.preventDefault(); pageDlClose(); } }
   addEventListener('popstate', () => {
-    if (pageDlBackPending) { pageDlBackDone(); return; }   // das eigene Zurück ist angekommen
-    if (pageDlEl && pageDlHist) { pageDlHist = null; pageDlClose(true); }
+    const tok = pageDlHistTok();
+    if (pageDlBack) {                       // das eigene Zurück – nie ein Grund, ein (neues) Blatt zu schließen
+      if (tok !== pageDlBack) pageDlBackSettled();
+      return;
+    }
+    // Zurück-Taste: der eigene Eintrag des offenen Blatts ist nicht mehr der aktuelle
+    if (pageDlEl && pageDlHist && tok !== pageDlHist) { pageDlHist = ''; pageDlClose(true); }
   });
   function pageDlMenu(title, items) {
     ui();

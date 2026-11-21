@@ -11,7 +11,7 @@ function check(name, value, info) { assert.ok(value, name + (info === undefined 
 function world() {
   const L = {};   // window-Listener
   const vvL = { resize: new Set(), scroll: new Set() };
-  const hist = { entries: ['page'], idx: 0, pushes: 0, backs: 0, queued: 0 };
+  const hist = { entries: [null], idx: 0, pushes: 0, backs: 0, queued: 0 };   // je Eintrag sein history.state
   const el = (tag, attrs) => {
     const e = { tag, attrs: attrs || {}, children: [], style: {}, parent: null, listeners: {},
       classList: { s: new Set(String((attrs || {}).class || '').split(' ').filter(Boolean)), add(c) { this.s.add(c); }, contains(c) { return this.s.has(c); } },
@@ -31,9 +31,10 @@ function world() {
     visualViewport: { offsetLeft: 0, offsetTop: 0, width: 400, height: 800,
       addEventListener: (t, f) => vvL[t].add(f), removeEventListener: (t, f) => vvL[t].delete(f) },
     history: {
-      state: null,
+      get state() { return hist.entries[hist.idx]; },
       get length() { return hist.entries.length; },
-      pushState() { hist.entries = hist.entries.slice(0, hist.idx + 1); hist.entries.push('sheet'); hist.idx++; hist.pushes++; },
+      pushState(st) { hist.entries = hist.entries.slice(0, hist.idx + 1); hist.entries.push(st); hist.idx++; if (st && st.__kadriDlSheet) hist.pushes++; },
+      replaceState(st) { hist.entries[hist.idx] = st; },
       back() { hist.backs++; hist.queued++; },   // asynchron: erst popDeliver() wendet es an
     },
   };
@@ -47,6 +48,7 @@ function world() {
     vv: () => vvL.resize.size + vvL.scroll.size,
     popDeliver() { if (hist.queued > 0) { hist.queued--; hist.idx = Math.max(0, hist.idx - 1); pop(); } },   // ausstehendes Zurück kommt an
     userBack() { if (hist.idx > 0) { hist.idx--; pop(); } },                                               // Zurück-Taste
+    // (Länge + Adresse allein reichen nicht: siehe Fall 4)
     tapOutside() { const ov = shadow.children.find((c) => c.classList && c.classList.contains('dlo')); ov.listeners.click.forEach((f) => f({ target: ov, stopPropagation() {} })); },
   };
 }
@@ -77,19 +79,51 @@ const items = [{ label: 'A', fn() {} }];
   w.userBack();                            // Android-Zurück
   check('… Zurück-Taste schließt nur das Blatt, Seite bleibt (kein weiteres Zurück)', !w.api.isOpen() && w.hist.idx === 0 && w.hist.backs === 1, w.hist);
 
-  // 3. Sicherheitsnetz: kommt das popstate des eigenen Zurück nie, wird der Eintrag nach kurzer Zeit trotzdem gesetzt
+  // 3. verspätetes popstate: das eigene Zurück wird länger als der Sicherheits-Timeout zurückgehalten
+  w = world();
+  w.api.open('Speichern', items); w.api.close(); w.api.open('Speichern', items);   // Zurück ausstehend, neues Blatt offen
+  await new Promise((r) => setTimeout(r, 1700));                                    // weit über den Timeout hinaus
+  check('verspätetes Zurück ausstehend: Timeout setzt keinen neuen Eintrag, Blatt bleibt offen',
+    w.hist.pushes === 1 && w.hist.idx === 1 && w.api.isOpen(), w.hist);
+  w.popDeliver();                                                                   // jetzt erst kommt das popstate
+  check('… verspätetes popstate schließt das neue Blatt nicht; danach genau ein neuer eigener Eintrag',
+    w.api.isOpen() && w.hist.pushes === 2 && w.hist.idx === 1 && w.hist.entries.length === 2, w.hist);
+  w.userBack();
+  check('… Zurück-Taste schließt nur das Blatt; die Seite navigiert nicht zurück (kein weiteres history.back())',
+    !w.api.isOpen() && w.hist.idx === 0 && w.hist.backs === 1 && w.hist.queued === 0, w.hist);
+  await new Promise((r) => setTimeout(r, 700));
+  check('… auch später kein weiteres Zurück, kein neuer Eintrag', w.hist.backs === 1 && w.hist.pushes === 2 && w.hist.idx === 0, w.hist);
+  // ohne jedes popstate, aber mit angewendetem Zurück (Zustand gewechselt): Timeout erkennt das und trägt dann ein
   w = world();
   w.api.open('Speichern', items); w.api.close(); w.api.open('Speichern', items);
-  await new Promise((r) => setTimeout(r, 1100));
-  check('ohne popstate: Eintrag nach dem Sicherheitsnetz gesetzt', w.hist.pushes === 2, w.hist);
-  w.api.close();
+  w.hist.queued--; w.hist.idx--;                                                    // Zurück angewendet, popstate verloren
+  await new Promise((r) => setTimeout(r, 700));
+  check('Zurück angewendet ohne popstate: Timeout trägt erst danach ein', w.api.isOpen() && w.hist.pushes === 2 && w.hist.idx === 1, w.hist);
+  w.api.close(); w.popDeliver();
 
-  // 4. Seite hat selbst einen Eintrag gesetzt (SPA): Schließen geht NICHT zurück (keine unbeabsichtigte Navigation)
+  // 4. Zuordnung des eigenen Eintrags: nur die Kennung im history.state zählt, nicht Länge + Adresse
   w = world();
   w.api.open('Speichern', items);
-  w.ctx.history.pushState(); w.ctx.location.href = 'https://site.example/other';
+  w.ctx.history.pushState({ page: 1 }); w.ctx.location.href = 'https://site.example/other';
   w.api.close();
   check('fremder Eintrag nach dem eigenen: kein history.back() beim Schließen', w.hist.backs === 0 && w.vv() === 0, w.hist);
+  w = world();
+  w.api.open('Speichern', items);
+  w.hist.idx--; w.ctx.history.pushState({ page: 2 });   // Seite ersetzt den Eintrag durch einen eigenen: gleiche Länge, gleiche Adresse
+  check('… (gleiche Länge und Adresse wie der eigene Eintrag)', w.hist.entries.length === 2 && w.ctx.location.href === 'https://site.example/v');
+  w.api.close();
+  check('… trotzdem kein history.back(): der aktuelle Eintrag trägt nicht die eigene Kennung', w.hist.backs === 0, w.hist);
+  w = world();
+  w.api.open('Speichern', items);
+  w.ctx.history.replaceState({ router: 'x' });          // Seite überschreibt den Zustand des eigenen Eintrags
+  w.api.close();
+  check('… ebenso nach replaceState der Seite', w.hist.backs === 0, w.hist);
+  w = world();
+  w.api.open('Speichern', items);
+  check('eigener Eintrag übernimmt den Zustand der Seite und ergänzt nur die Kennung', w.hist.entries[1] && typeof w.hist.entries[1].__kadriDlSheet === 'string', w.hist.entries);
+  w = world(); w.hist.entries[0] = 'string-state';
+  w.api.open('Speichern', items); w.api.close();
+  check('fremde Zustandsform (kein Objekt): kein Eintrag, kein Zurück', w.hist.pushes === 0 && w.hist.backs === 0 && w.hist.entries[0] === 'string-state', w.hist);
 
   // 5. Facebook/Instagram: nie ein Verlaufseintrag
   w = world(); w.ctx.META = true;
