@@ -49,10 +49,73 @@
     const publicCodes = new Set(['no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
       'blocked_automatic_retry', 'blocked_bad_argument', 'blocked_body_too_large', 'blocked_credential_header',
       'blocked_credentials_in_url', 'blocked_headers_too_large', 'blocked_redirect_target',
-      'blocked_redirect_without_location', 'blocked_too_many_redirects']);
+      'blocked_redirect_without_location', 'blocked_too_many_redirects',
+      // feste Gründe der Quellenauswahl (src/045) – sonst verschwände genau der Grund, warum nichts angeboten wird
+      'stream-not-supported', 'container-not-supported']);
     return String(t).replace(/[a-z][a-z0-9+.-]*:\/\/\S*/gi, '[entfernt]')
       .replace(/\b(?:[a-z0-9_-]+\.)+[a-z][a-z0-9-]{1,}\b/gi, (m) => (/^\d+(\.\d+)+$/.test(m) ? m : '[entfernt]'))
       .replace(/[A-Za-z0-9_~%+=-]{20,}/g, (m) => publicCodes.has(m) ? m : '[entfernt]');
+  }
+  // ---------- Fenster und Quellen des Videos (anonym) ----------
+  // Für Videos in eingebetteten Fenstern: läuft Kadri dort, sieht der Mitleser in der Seite (page.js) Listen, was spielt
+  // das Element (Blob/MSE, HLS, MP4 …), was lädt die Seite (nur Art und Endung, nie Adresse/Host/Pfad), welche Quellen
+  // kennt die Registry für GENAU dieses Video und warum bietet die Auswahl sie an oder nicht. Nur Arten und Zählungen.
+  const anonExt = (u) => {
+    let p = '';
+    try { p = new URL(u, location.href).pathname.toLowerCase(); } catch (e) { return '-'; }
+    const m = /\.([a-z0-9]{1,5})$/.exec(p), x = m ? m[1] : '';
+    return !x ? 'ohne-endung' : /^(m3u8|mpd)$/.test(x) ? 'liste' : /^(ts|m4s|m4v|m4a|aac|cmfv|cmfa)$/.test(x) ? 'stueck' : x === 'mp4' ? 'mp4' :
+      /^(jpe?g|png|gif|webp|ico|bmp|svg)$/.test(x) ? 'bild' : /^(txt|json|js|html?|php|css|xml)$/.test(x) ? 'text' : 'andere';
+  };
+  const anonCount = (o) => Object.keys(o).sort().map((k) => k + ' ×' + o[k]).join(', ') || '-';
+  const anonPick = (list) => { const c = {}; (list || []).forEach((x) => { const k = x.state + (x.reason ? '(' + x.reason + ')' : ''); c[k] = (c[k] || 0) + 1; }); return anonCount(c); };
+  function anonSnapLines(L, snap) {
+    snap.slice(0, 24).forEach((s, i) => {
+      const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
+      L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
+        ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join('+') +
+        ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
+    });
+  }
+  function diagFrameSources(L) {
+    let depth = 0;
+    try { for (let w = window; w !== w.parent && depth < 9; w = w.parent) depth++; } catch (e) {}
+    let pong = false;
+    try { const f = () => { pong = true; }; document.addEventListener('kadri-pong', f); document.dispatchEvent(new Event('kadri-ping')); document.removeEventListener('kadri-pong', f); } catch (e) {}
+    L.push('Fenster-Ebene ' + depth + (IN_FRAME ? ' (Kadri hier nachgeladen)' : '') + ' · Mitleser in der Seite ' + (pong ? 'aktiv' : 'fehlt') +
+      ' · gemeldete Listen ' + netSeen.pl + ' · per Typ erkannt ' + netSeen.src +
+      (IN_FRAME && fui.n ? ' · Knopf/Auswahl ' + (fui.local ? 'hier (Rückfall)' : fui.mode === 'remote' ? 'im Hauptfenster' : fui.mode === 'busy' ? 'nicht nötig' : 'hier') : '') +
+      (!IN_FRAME && fuiTop.regs.size ? ' · Video in eingebettetem Fenster: ' + fuiTop.regs.size + ' – dessen Diagnose: lange auf ▶ drücken' : ''));
+    const v = active || biggestVideo();
+    if (v) {
+      let cs = '';
+      try { cs = v.currentSrc || ''; } catch (e) {}
+      let buf = 0;
+      try { for (let i = 0; i < v.buffered.length; i++) buf += v.buffered.end(i) - v.buffered.start(i); } catch (e) {}
+      L.push('Video-Element: Quelle ' + (v.srcObject ? 'srcObject' : cs ? anonKind(cs) : 'keine') + ' · ' + (v.paused ? 'pausiert' : 'läuft') +
+        ' · Bereitschaft ' + v.readyState + (v.error ? ' · Fehler ' + v.error.code : '') + ' · Auflösung ' + Math.min(v.videoWidth || 0, v.videoHeight || 0) + 'p' +
+        ' · gepuffert ' + Math.round(buf) + ' s · DRM ' + (v.mediaKeys ? 'ja' : 'nein') + (shadowVids.indexOf(v) >= 0 ? ' · im Shadow-DOM' : '') +
+        (v.ownerDocument !== document ? ' · in leerem Unterfenster' : ''));
+      // dieselbe Auswertung wie beim Tipp auf ⬇ (ohne Abruf; Fähigkeiten der Helfer-App hier angenommen)
+      const caps = { supported: true, hls: true };
+      let o = null;
+      try { o = pageDlOptions(v, caps); } catch (e) {}
+      let snap = [];
+      try { const c = mediaRegistry.contextFor(v); if (c) snap = mediaRegistry.snapshot(c); } catch (e) {}
+      L.push('Quellen am Video (' + snap.length + '):');
+      anonSnapLines(L, snap);
+      if (o) L.push('Auswahl MP4: ' + anonPick(o.all) + ' · Auswahl Stream: ' + anonPick(o.allS) +
+        (o.mp4.length + o.hls.length ? '' : ' · Hinweis im Menü: ' + pageDlReason(o, caps)));
+    } else L.push('Video-Element: keines');
+    let rs = [];
+    try { rs = performance.getEntriesByType('resource'); } catch (e) {}
+    const now = performance.now(), cls = {};
+    rs.forEach((e) => {
+      if (!/^(xmlhttprequest|fetch|video|audio|other)$/.test(e.initiatorType) || now - e.startTime > 120000) return;
+      const k = (e.initiatorType === 'xmlhttprequest' ? 'xhr' : e.initiatorType) + ':' + anonExt(e.name);
+      cls[k] = (cls[k] || 0) + 1;
+    });
+    L.push('Ladevorgänge hier (letzte 2 min, Art:Endung): ' + anonCount(cls) + ' · Zeitleiste ' + rs.length + (rs.length >= 250 ? ' (voll – Neueres fehlt evtl.)' : ''));
   }
   function diagAnon() {
     const L = [];
@@ -60,6 +123,7 @@
     const ua = navigator.userAgent, bm = /(Chrome|Firefox)\/(\d+)/.exec(ua);
     L.push('Browser: ' + (bm ? bm[1] + ' ' + bm[2] : '?') + (/Android/.test(ua) ? ' · Android' : '') + ' · Fenster: ' + (IN_FRAME ? 'eingebettet' : 'Hauptseite') +
       ' · Videos auf der Seite: ' + allVideos().length);
+    try { diagFrameSources(L); } catch (e) { L.push('Fenster/Quellen: Fehler ' + ((e && e.name) || '')); }
     const p = vp;
     if (p) {
       const v = p.vid;
@@ -71,12 +135,9 @@
         let snap = [];
         try { snap = mediaRegistry.snapshot(c[1]); } catch (e) {}
         L.push('Quellen ' + c[0] + ' (' + snap.length + '):');
-        snap.slice(0, 24).forEach((s, i) => {
-          const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
-          L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
-            ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join('+') +
-            ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
-        });
+        anonSnapLines(L, snap);
+        // was der eigene Player selbst belegt hat, aber die Auswahl am schwebenden Knopf (Originalvideo) nicht sieht
+        try { L.push('  Auswahl MP4: ' + anonPick(selectDownloads(snap, { supported: true })) + ' · Stream: ' + anonPick(selectStreams(snap, { hls: true }))); } catch (e) {}
       });
     } else L.push('Player: geschlossen');
     // Netzwerk: Art und Rolle der beobachteten Adressen (Rolle aus gelesenen Listen, sonst eindeutige Muster) – nur Zählungen

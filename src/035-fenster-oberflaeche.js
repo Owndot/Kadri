@@ -107,7 +107,8 @@
       onPlayerTap();
       return { ok: true };
     }
-    if (a === 'diag') return { ok: true, ext: { k: 'copy', t: diag(v, resolve(v)) } };
+    // Diagnose GENAU dieses Fensters (Video, Quellen, Auswahl) – anonymisiert, weil sie über das Hauptfenster geht
+    if (a === 'diag') { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } return { ok: true, ext: { k: 'copy', t: t } }; }
     if (a === 'share') {
       const u = postUrlFor(v);
       return u ? { ok: true, ext: { k: 'share', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
@@ -266,7 +267,7 @@
     if (x.k === 'ytdlnis' && u) toYtdlnis(u);
     else if (x.k === 'open' && u) pageDlOpenTab(u);
     else if (x.k === 'share' && u) shareUrl(u);
-    else if (x.k === 'copy' && typeof x.t === 'string') copyText(x.t, 'Diagnose kopiert');
+    else if (x.k === 'copy' && typeof x.t === 'string') copyText(x.t, 'Anonymisierte Diagnose des Video-Fensters kopiert');
   }
   function fuiTopMsg(m) {
     if (!m || !m.src || !Number.isInteger(m.src.f) || m.src.f <= 0 || typeof m.src.d !== 'string' || !m.src.d || !FUI_N.test(m.n || '')) return { ok: false };

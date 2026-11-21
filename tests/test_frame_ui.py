@@ -47,6 +47,13 @@ def page(path, q):
                 frame_tag(VID + '/f/vid.html?c=m2', 'width:100%;height:260px') +
                 frame_tag(VID + '/f/vid.html?c=ad', 'width:120px;height:80px') +
                 frame_tag(VID + '/f/vid.html?c=mute', 'width:100%;height:200px') + '</body></html>')
+    if path == '/f/oddvid.html':   # HLS wie bei manchen Playern: Listen ohne Endung (text/plain), Stücke als Bilder getarnt
+        return (HEAD % 'Getarnt' + '<script src="/hls.min.js"></script></head><body style="margin:0;background:#000"><video id=v muted autoplay playsinline '
+                'style="width:100%;height:100vh;display:block"></video><script>const v=document.getElementById("v");const h=new Hls();'
+                'h.loadSource("/d/odd/main");h.attachMedia(v);h.on(Hls.Events.MANIFEST_PARSED,()=>v.play());</script></body></html>')
+    if path == '/f/odd.html':
+        return (HEAD % 'Getarnte Seite' + '</head><body style="margin:0"><div style="height:60px"></div>' +
+                frame_tag(VID + '/f/oddvid.html', 'width:100%;height:220px') + '</body></html>')
     if path == '/f/hls.html':
         return (HEAD % 'Stream-Seite' + '</head><body style="margin:0"><div style="height:60px"></div>' +
                 frame_tag(VID + '/f/hlsvid.html', 'width:100%;height:220px') + '</body></html>')
@@ -65,6 +72,13 @@ class M(http.server.BaseHTTPRequestHandler):
         elif u.path == '/d/q/master.m3u8':   # neun Qualitäten (dieselben Stücke, eigene Listen je Qualität)
             body = ('#EXTM3U\n#EXT-X-VERSION:7\n' + ''.join('#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d\nv%d/index.m3u8\n' % (200000 + 300000 * i, w, h, i)
                                                      for i, (w, h) in enumerate(QUAL))).encode(); ctype = 'application/vnd.apple.mpegurl'
+        elif u.path == '/d/odd/main':
+            body, ctype = b'#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360\nv/main\n', 'text/plain'
+        elif u.path == '/d/odd/v/main':
+            body = open(os.path.join(HLSDIR, 'index.m3u8')).read().replace('.m4s', '.jpg').replace('init.mp4', 'init.png').encode(); ctype = 'text/plain'
+        elif re.match(r'^/d/odd/v/(seg\d+\.jpg|init\.png)$', u.path):
+            f = u.path.split('/')[-1].replace('.jpg', '.m4s').replace('init.png', 'init.mp4')
+            body, ctype = open(os.path.join(HLSDIR, f), 'rb').read(), ('image/png' if f == 'init.mp4' else 'image/jpeg')
         elif re.match(r'^/d/q/v\d/index\.m3u8$', u.path):
             body, ctype = open(os.path.join(HLSDIR, 'index.m3u8'), 'rb').read(), 'application/vnd.apple.mpegurl'
         elif re.match(r'^/d/q/v\d/(seg\d+\.m4s|init\.mp4)$', u.path):
@@ -277,6 +291,59 @@ with sync_playwright() as p:
     check('Hauptfenster antwortet nicht: das Fenster zeigt seinen eigenen Knopf (wie bisher), oben keiner',
           wait(lambda: frame_ui_shown(vf), 6) and not pg.evaluate('() => !!document.querySelector("[data-kadri-test]")'))
     sw.evaluate('() => chrome.storage.local.remove("gm:settings")')
+
+    # ---------- 4c. Diagnose des Ursprungsfensters (lange auf ▶ oben): anonym, mit Fenster, Element, Quellen, Auswahl ----------
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
+    def long_press_play():
+        rc = ui_rect(pg, '.pill.on button[aria-label="Im Videoplayer öffnen"]')
+        x, y = center(rc)
+        pg.evaluate('() => navigator.clipboard.writeText("-")')
+        cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': x, 'y': y}]}); time.sleep(1.0)
+        cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+        got = ['']
+        wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+        return got[0]
+    def diag_of(page_path, frame_part):
+        pg.goto(TOP + page_path); pg.bring_to_front()
+        vf = wait(lambda: frames_of(pg, frame_part), 10) and frames_of(pg, frame_part)[0]
+        unmute(vf); vf.evaluate('() => { document.getElementById("v").currentTime = 0; }')
+        wait(lambda: pill_on(pg), 15); time.sleep(0.6)
+        return vf, long_press_play()
+    # a) getarnte Quelle: dasselbe Bild wie auf dem Gerät („keine speicherbare Videodatei“)
+    vf, dg = diag_of('/f/odd.html', '/f/oddvid.html')
+    tap_dl()
+    check('getarnte Quelle (Listen ohne Endung, text/plain; Stücke als Bilder): Menü meldet „keine speicherbare Videodatei“ (Symptom nachgestellt)',
+          wait(lambda: any('Keine speicherbare Videodatei' in l for l, _, _ in items(pg)), 15), items(pg))
+    tap(pg, (vw / 2, 20)); wait(lambda: not sheet_open(pg), 5)
+    check('lange auf ▶ oben: anonymisierte Diagnose des URSPRUNGSFENSTERS (eingebettet, Kadri dort nachgeladen, 1 Video)',
+          'Fenster: eingebettet' in dg and 'Videos auf der Seite: 1' in dg and 'Fenster-Ebene 1 (Kadri hier nachgeladen)' in dg, dg[:600])
+    check('… Mitleser aktiv, aber keine Liste gemeldet; Element spielt Blob (MSE)',
+          'Mitleser in der Seite aktiv' in dg and 'gemeldete Listen 0' in dg and 'per Typ erkannt 0' in dg and 'Video-Element: Quelle blob' in dg, dg[:900])
+    check('… Ladevorgänge nur nach Art:Endung – Listen ohne Endung und Stücke als Bilder sichtbar',
+          re.search(r'xhr:ohne-endung ×\d', dg) and re.search(r'xhr:bild ×\d', dg) and 'xhr:liste' not in dg, [l for l in dg.split('\n') if l.startswith('Ladevorg')])
+    check('… Quellen am Video und Auswahl samt Grund des Menüs', 'Quellen am Video (' in dg and 'Auswahl Stream: -' in dg and 'Hinweis im Menü: Keine speicherbare Videodatei' in dg,
+          [l for l in dg.split('\n') if 'Auswahl' in l or 'Quellen am' in l])
+    check('… anonym: keine Adresse, kein Host, kein Pfad, kein Seitentitel', not re.search(r'://|127\.0\.0|localhost|/d/|/f/|oddvid|Getarnt', dg), dg)
+    # b) Gegenprobe normaler HLS-Stream im Fenster: Liste gemeldet, gebunden, angeboten
+    vf, dg2 = diag_of('/f/hls.html', '/f/hlsvid.html')
+    check('Gegenprobe normaler Stream: Listen gemeldet, Ladevorgänge „liste“, Stream angeboten (attemptable)',
+          re.search(r'gemeldete Listen [1-9]', dg2) and 'xhr:liste' in dg2 and re.search(r'Auswahl Stream: [^\n]*attemptable ×\d', dg2) and 'Hinweis im Menü' not in dg2,
+          [l for l in dg2.split('\n') if 'Listen' in l or 'Auswahl' in l or 'Ladevorg' in l])
+    check('… ebenfalls anonym', not re.search(r'://|127\.0\.0|localhost|/d/|/f/|hlsvid|Stream-Seite', dg2), dg2)
+    check('… Grund der Quellenauswahl bleibt lesbar (stream-not-supported nicht als Kennung entfernt)', 'unavailable(stream-not-supported)' in dg2 and '[entfernt]' not in dg2,
+          [l for l in dg2.split('\n') if 'Download ' in l][:2])
+    # c) Diagnose über das Kadri-Symbol läuft im Hauptfenster: sagt, dass das Video in einem eingebetteten Fenster läuft und wo
+    #    dessen Diagnose zu bekommen ist
+    tab = sw.evaluate('async () => (await chrome.tabs.query({})).find((t) => /\\/f\\/hls\\.html/.test(t.url)).id')
+    sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" }, { frameId: 0 })', tab)
+    wait(lambda: pg.evaluate(js('return !!r.querySelector(".diag .danon");')), 8)
+    pg.evaluate('() => navigator.clipboard.writeText("-")')
+    pg.evaluate(js('r.querySelector(".diag .danon").click(); return true;'))
+    dt = ['']
+    wait(lambda: dt.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or dt[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+    check('Diagnose über das Kadri-Symbol (Hauptseite): verweist auf das Video im eingebetteten Fenster und den langen Druck auf ▶',
+          'Fenster: Hauptseite' in dt[0] and 'Video in eingebettetem Fenster: 1 – dessen Diagnose: lange auf ▶ drücken' in dt[0], dt[0][:400])
+    pg.evaluate(js('const b = Array.from(r.querySelectorAll(".diag button")).find((x) => x.textContent === "Schließen"); if (b) b.click(); return true;'))
 
     # ---------- 5. HLS im Fenster, kleines Display: alle Qualitäten per Scrollen erreichbar, genau ein Auftrag ----------
     pg.set_viewport_size({'width': 360, 'height': 460}); vw, vh = 360, 460; VIEW = [0, 0, vw, vh]

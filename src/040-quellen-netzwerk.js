@@ -294,6 +294,7 @@
   const plInfo = new Map();    // urlKey → { u, kids:Set(urlKey), segDirs:[Ordner], dur, live, t }
   const segHits = new Map();   // Ordner der Stücke → zuletzt geladen
   const plParts = new Map();   // urlKey eines Stücks/Init/Unterliste aus einer gelesenen Liste → Rolle (Quellenmodell)
+  const netSeen = { pl: 0, src: 0 };   // Meldungen des Mitlesers in der Seite (page.js) – nur gezählt, für die Diagnose
   const SEGFILE_RE = /\.(ts|m4s|mp4|m4a|m4v|aac|cmfv|cmfa|webm|mp3)(\?|#|$)/i;
   function isoDur(s) {
     const m = /P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/.exec(s || '');
@@ -352,8 +353,8 @@
       let d = null;
       try { d = JSON.parse(e.detail); } catch (x) { d = null; }
       if (!d || typeof d.u !== 'string' || typeof d.t !== 'string') return;
-      if (d.k === 'pl') notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t);
-      else if (d.k === 'src') { if (typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.onSrc) KADRI_HOOKS.onSrc(d.u, d.f === 'mpd' ? 'mpd' : 'm3u8'); }
+      if (d.k === 'pl') { netSeen.pl++; notePlaylist(d.u, typeof d.f === 'string' ? d.f : '', d.t); }
+      else if (d.k === 'src') { netSeen.src++; if (typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.onSrc) KADRI_HOOKS.onSrc(d.u, d.f === 'mpd' ? 'mpd' : 'm3u8'); }
       else if (d.k === 'api' && META) { bodiesRead++; try { scanText(d.t); } catch (x) {} }
     });
   }
