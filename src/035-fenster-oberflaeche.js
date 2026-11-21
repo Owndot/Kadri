@@ -257,7 +257,7 @@
         : r.gone ? 'Video im eingebetteten Fenster gerade nicht bereit – nichts gestartet. Bitte erneut tippen, sobald der Knopf wieder erscheint'
           : 'Aktion im eingebetteten Fenster nicht ausgeführt – bitte erneut tippen');
     }
-    if (r.ext) fuiTopExt(r.ext);
+    if (r.ok === true && r.ext) fuiTopExt(r.ext);
   }
   // Aktionen, die einen frischen Tipp brauchen: hier ausführen (der Tipp war hier)
   function fuiTopExt(x) {

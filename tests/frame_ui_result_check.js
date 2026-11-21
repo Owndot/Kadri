@@ -110,5 +110,30 @@ const items = [{ label: 'Mit Helper herunterladen', sub: 'MP4', fn() {} }, { lab
     w.T.fuiTopAct('dl'); await tick(); await tick();
     check('Knopf, keine Antwort (null): „nicht mehr erreichbar“, Knopf weg (unverändert)', w.toasts.length === 1 && /nicht mehr erreichbar/.test(w.toasts[0]) && w.T.fuiTop.cur === null, w.toasts);
   }
+  // Fehlgeschlagene Antwort mit externer Aktion: die Aktion wird nie ausgeführt (kein Teilen, Öffnen, YTDLnis, Kopieren)
+  for (const x of [{ k: 'share', u: 'https://cdn.example/v.mp4' }, { k: 'open', u: 'https://cdn.example/v.mp4' },
+    { k: 'ytdlnis', u: 'https://site.example/watch/1' }, { k: 'copy', t: 'Diagnose' }]) {
+    {
+      const { w, g } = top({ ok: false, ext: x });
+      w.T.fuiTopPick(g, 1, 1); await tick(); await tick();
+      check('Eintrag, Antwort {ok:false, ext:' + x.k + '}: Aktion NICHT ausgeführt, Hinweis „nichts gestartet“, kein Wiederholen',
+        w.ext.length === 0 && w.toasts.length === 1 && /nichts gestartet/.test(w.toasts[0]) && w.sent.length === 1, { ext: w.ext, toasts: w.toasts });
+    }
+    {
+      const { w } = top({ ok: false, ext: x, toast: 'Hinweis des Fensters' });
+      w.T.fuiTopAct(x.k === 'copy' ? 'diag' : 'share'); await tick(); await tick();
+      check('Knopf, Antwort {ok:false, ext:' + x.k + ', toast}: Aktion NICHT ausgeführt, nur der Hinweis', w.ext.length === 0 && w.toasts.length === 1 && w.toasts[0] === 'Hinweis des Fensters', { ext: w.ext, toasts: w.toasts });
+    }
+    {
+      const { w } = top({ ext: x });
+      w.T.fuiTopAct('share'); await tick(); await tick();
+      check('Knopf, Antwort ohne ok mit ext:' + x.k + ': Aktion NICHT ausgeführt', w.ext.length === 0 && w.toasts.length === 1, { ext: w.ext, toasts: w.toasts });
+    }
+  }
+  {
+    const { w } = top({ ok: true, ext: { k: 'copy', t: 'Diagnose' } });
+    w.T.fuiTopAct('diag'); await tick(); await tick();
+    check('Knopf „diag“, Antwort {ok:true, ext:copy}: Diagnose kopiert (Gegenstück)', w.ext.length === 1 && w.ext[0][0] === 'copy' && !w.toasts.length, [w.ext, w.toasts]);
+  }
   console.log('RESULT frame-ui-result PASS ' + passed + '/' + passed);
 })().catch((e) => { console.error(e); process.exitCode = 1; });
