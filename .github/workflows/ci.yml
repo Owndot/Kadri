@@ -290,6 +290,7 @@ jobs:
           node tests/frame_ui_relay_check.js
           node tests/frame_ui_result_check.js
           node tests/dash_message_check.js
+          node tests/dash_manifest_model_check.js
           node tests/media_registry_check.js --mutations
           git fetch --no-tags origin 7f6d037e865d57fbaaa382f78e19c7acb451f5aa
           git show 7f6d037e865d57fbaaa382f78e19c7acb451f5aa:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-download-source.js"

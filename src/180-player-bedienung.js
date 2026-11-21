@@ -437,12 +437,11 @@
       const sOpts = st.hdl.ok ? hlsOptions({ hls: st.hdl.hls }) : [];
       const streams = sOpts.filter((o) => o.state === 'attemptable');
       const j = hdlActive(st.hdl.job) && hdlJobHere() ? st.hdl.job : null;
-      // DASH (nur für den Hinweis, nie ein Angebot): aus beiden Quellenständen (Originalvideo, eigener Player) – sicher
-      // gebunden bzw. nur vermutet (siehe mediaDashState)
+      // DASH (nur für den Hinweis, nie ein Angebot): allein aus den Belegen der Registry (Originalvideo, eigener Player) –
+      // sicher gebunden bzw. nur vermutet (siehe mediaDashState). Eine Endung „.mpd“ ist kein Beleg für die Zuordnung.
       let dash = '';
       try {
-        dash = /\.mpd(\?|#|$)/i.test(st.cur || '') ? 'bound'
-          : mediaDashState([st.media && st.media.orig ? mediaRegistry.snapshot(st.media.orig) : [], st.media && st.media.own ? mediaRegistry.snapshot(st.media.own) : []]);
+        dash = mediaDashState([st.media && st.media.orig ? mediaRegistry.snapshot(st.media.orig) : [], st.media && st.media.own ? mediaRegistry.snapshot(st.media.own) : []]);
       } catch (e) { dash = ''; }
       if (j || can.length || streams.length) {
         st.hdl.menu = true;

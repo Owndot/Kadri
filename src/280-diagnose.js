@@ -69,12 +69,30 @@
   };
   const anonCount = (o) => Object.keys(o).sort().map((k) => k + ' ×' + o[k]).join(', ') || '-';
   const anonPick = (list) => { const c = {}; (list || []).forEach((x) => { const k = x.state + (x.reason ? '(' + x.reason + ')' : ''); c[k] = (c[k] || 0) + 1; }); return anonCount(c); };
+  // DASH-Manifest eines Eintrags: nur Kategorien und Zählungen (keine Kennungen, keine Adressen, keine Sprachcodes)
+  function anonDashLine(m) {
+    if (m.error) return '    DASH-Manifest: nicht auswertbar (' + m.error + ')';
+    const by = (k) => m.tracks.filter((t) => t.kind === k);
+    const fam = (ts) => { const c = {}; ts.forEach((t) => t.codecs.forEach((x) => { c[x] = (c[x] || 0) + 1; })); return anonCount(c); };
+    const cont = (ts) => Array.from(new Set(ts.map((t) => t.container))).join('/') || '-';
+    const v = by('video'), a = by('audio');
+    const maxH = v.reduce((h, t) => Math.max(h, t.height || 0), 0);
+    const langs = new Set(a.map((t) => t.lang).filter(Boolean)).size;
+    return '    DASH-Manifest: ' + (m.type === 'static' ? 'VOD' : m.type === 'dynamic' ? 'Live' : '?') + ' · Perioden ' + m.periods +
+      ' · AdaptationSets ' + m.adaptationSets + ' · Darstellungen ' + m.representations +
+      ' · Video ' + v.length + (v.length ? ' (' + fam(v) + '; ' + cont(v) + (maxH ? '; bis ' + maxH + 'p' : '') + ')' : '') +
+      ' · Audio ' + a.length + (a.length ? ' (' + fam(a) + '; ' + cont(a) + '; Sprachen ' + langs + ')' : '') +
+      ' · Text ' + by('text').length + ' · Bild ' + by('image').length + ' · Adressierung ' + (m.addressing.join(',') || '-') +
+      ' · Schutz angegeben: ' + (m.protection.signaled ? 'ja (' + (m.protection.systems.join(',') || '?') + (m.protection.defaultKid ? ', KID' : '') + ')'
+        : 'nein (Verschlüsselung damit nicht ausgeschlossen)');
+  }
   function anonSnapLines(L, snap) {
     snap.slice(0, 24).forEach((s, i) => {
       const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
       L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
         ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join('+') +
         ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
+      if (s.manifest) L.push(anonDashLine(s.manifest));
     });
   }
   function diagFrameSources(L) {
@@ -146,7 +164,8 @@
     try { net = recent(); } catch (e) {}
     net.forEach((u) => { let r = 'unknown'; try { r = mediaRoleHint(u); } catch (e) {} const k = anonKind(u) + ':' + r; roles[k] = (roles[k] || 0) + 1; });
     L.push('Netzwerk (zuletzt beobachtet, Art:Rolle): ' + (Object.keys(roles).sort().map((k) => k + ' ×' + roles[k]).join(', ') || '-') +
-      ' · Listen gelesen ' + plInfo.size + ' · Rollen aus Listen ' + plParts.size);
+      ' · Listen gelesen ' + plInfo.size + ' (davon DASH-Manifeste ' + Array.from(plInfo.values()).filter((x) => x.kind === 'dash').length + ')' +
+      ' · Rollen aus Listen ' + plParts.size);
     L.push('Helfer-Downloads (jüngste zuerst): ' + (hdlDiags.length ? '' : '-'));
     hdlDiags.forEach((d, i) => L.push(' ' + (i + 1) + '. ' + hdlDiagText(d)));
     return anonScrub(L.join('\n'));

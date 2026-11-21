@@ -20,7 +20,7 @@
     let total = 0;
     const urls = new Map();            // sourceId -> genaue Adresse (privat)
     const subs = new Set();
-    const ROLE_RANK = { unknown: 0, standalone: 1, master: 2, 'media-playlist': 2, track: 3, init: 3, segment: 3 };
+    const ROLE_RANK = { unknown: 0, standalone: 1, master: 2, 'media-playlist': 2, manifest: 2, track: 3, init: 3, segment: 3 };
     const ASSOC_RANK = { unbound: 0, ambiguous: 1, bound: 2 };
     const KNOW_RANK = { unknown: 0, claimed: 1, observed: 2, verified: 3 };
     const PROT_RANK = { unknown: 0, clear: 1, encrypted: 2, drm: 3 };
@@ -70,6 +70,10 @@
       if (s.kind === 'unknown' && v.kind !== 'unknown') set('kind', v.kind);
       else if (v.provenance.kind === 'manifest' && v.kind !== 'unknown') set('kind', v.kind);
       if (ROLE_RANK[v.role] > ROLE_RANK[s.role]) set('role', v.role);   // Rolle schlägt Endung: ein Stück bleibt ein Stück
+      // DASH-Manifest: die gelesene Manifest-Rolle ersetzt eine nur nach HLS-Muster geratene Listen-Rolle (gleicher Rang)
+      else if (v.role === 'manifest' && s.kind === 'dash' && (s.role === 'master' || s.role === 'media-playlist')) set('role', 'manifest');
+      // neueste gültige Zusammenfassung des Manifests (ein Manifest kann neu geladen werden, Live ändert sich)
+      if (v.manifest && JSON.stringify(v.manifest) !== JSON.stringify(s.manifest)) { s.manifest = v.manifest; ch = true; }
       if (ASSOC_RANK[v.association.state] > ASSOC_RANK[s.association.state]) { s.association.state = v.association.state; ch = true; }
       v.association.evidence.forEach((e) => {
         if (s.association.evidence.indexOf(e) < 0 && s.association.evidence.length < MEDIA_LIMITS.evidence) { s.association.evidence.push(e); ch = true; }
@@ -102,7 +106,7 @@
       const sourceId = rand();
       const s = { sourceId: sourceId, urlRef: sourceId, kind: v.kind, role: v.role, mime: v.mime, quality: v.quality, duration: v.duration,
         audio: v.audio, video: v.video, provenance: [{ kind: v.provenance.kind, origin: v.provenance.origin, observedAt: now() }],
-        association: v.association, protection: v.protection, browser: v.browser, revision: 1 };
+        association: v.association, protection: v.protection, browser: v.browser, manifest: v.manifest, revision: 1 };
       p.sources.set(sourceId, s); p.byUrl.set(v.url, sourceId); urls.set(sourceId, v.url); total++;
       emit(p, 'add');
       return { ok: true, sourceId: sourceId, revision: 1, created: true };
@@ -182,6 +186,18 @@
     let role = 'unknown';
     try { role = mediaRoleHint(u); } catch (e) {}
     if (role !== 'unknown') o.role = role;
+    // gelesenes DASH-Manifest: Zusammenfassung (nur Kategorien/Zahlen), angegebener Schutz, angegebene Dauer (VOD).
+    // Fehlt ContentProtection, bleibt der Schutz „unbekannt“ – nie „unverschlüsselt“.
+    if (role === 'manifest') {
+      o.kind = 'dash';   // der gelesene Text IST ein MPD (Inhalt, nicht nur die Endung der Adresse)
+      let man = null;
+      try { man = dashSummaryOf(u); } catch (e) {}
+      if (man) {
+        o.manifest = man;
+        if (man.protection.signaled) o.protection = 'drm';
+        if (man.type === 'static' && man.duration > 0) o.duration = { status: 'claimed', value: man.duration, evidenceIds: ['mpd-duration'] };
+      }
+    }
     Object.assign(o, extra || {});
     return mediaRegistry.observe(ctx, o);
   }

@@ -330,6 +330,9 @@
         }
         if (segs) { info.live = text.indexOf('#EXT-X-ENDLIST') < 0; if (!info.live) info.dur = sum; }
       } else if (/<MPD[\s>]/.test(head) || /<MPD[\s>]/.test(text.slice(0, 4000))) {
+        // DASH: Rolle „manifest“ und technische Zusammenfassung (src/038; ohne Abruf, ohne Adressen)
+        info.kind = 'dash';
+        try { info.dash = dashManifestSummary(text); } catch (e) { info.dash = null; }
         info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
         const m = /mediaPresentationDuration\s*=\s*["']([^"']+)["']/.exec(text);
         if (m && !info.live) info.dur = isoDur(m[1]);
@@ -401,6 +404,8 @@
     }
     return { u: u, dur: media.dur, live: media.live };
   }
+  // Zusammenfassung eines gelesenen DASH-Manifests (src/038) zu dieser Adresse – oder null
+  function dashSummaryOf(u) { const p = plInfo.get(urlKey(u)); return p && p.kind === 'dash' && p.dash ? p.dash : null; }
   // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)
   function streamLen(u) {
     const p = plInfo.get(urlKey(u));
@@ -417,7 +422,7 @@
     const k = urlKey(u);
     if (plParts.has(k)) return plParts.get(k);
     const p = plInfo.get(k);
-    if (p) return p.kids.size ? 'master' : 'media-playlist';
+    if (p) return p.kind === 'dash' ? 'manifest' : p.kids.size ? 'master' : 'media-playlist';
     if (SEGMENT_RE.test(u)) return 'segment';
     try { if (isSplitTrack(u)) return 'track'; } catch (e) {}
     return 'unknown';

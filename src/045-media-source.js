@@ -8,13 +8,14 @@
   // Die genaue Adresse bleibt privat in der Registry (nie in Speicher, Protokoll oder Oberfläche).
   const MEDIA_LIMITS = Object.freeze({ perPlayer: 64, perDocument: 256, players: 16, urlLen: 4096, evidence: 8, provenance: 6, text: 200 });
   const MEDIA_KINDS = ['mp4', 'hls', 'dash', 'unsupported', 'unknown'];
-  const MEDIA_ROLES = ['standalone', 'master', 'media-playlist', 'segment', 'init', 'track', 'unknown'];
+  // manifest: DASH-MPD (beschreibt alle Darstellungen eines Videos; Gegenstück zur HLS-Hauptliste „master“)
+  const MEDIA_ROLES = ['standalone', 'master', 'media-playlist', 'manifest', 'segment', 'init', 'track', 'unknown'];
   const MEDIA_KNOW = ['unknown', 'claimed', 'observed', 'verified'];
   const MEDIA_ASSOC = ['unbound', 'ambiguous', 'bound'];
   const MEDIA_PROTECTION = ['unknown', 'clear', 'encrypted', 'drm'];
   const MEDIA_PROVENANCE = ['element', 'network', 'page-metadata', 'manifest', 'adapter', 'player'];
   const MEDIA_BROWSER = ['unknown', 'loaded', 'failed'];
-  const MEDIA_OBS_KEYS = ['url', 'kind', 'role', 'mime', 'quality', 'duration', 'audio', 'video', 'provenance', 'association', 'protection', 'browser'];
+  const MEDIA_OBS_KEYS = ['url', 'kind', 'role', 'mime', 'quality', 'duration', 'audio', 'video', 'provenance', 'association', 'protection', 'browser', 'manifest'];
   const mediaIsObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x) && Object.getPrototypeOf(x) === Object.prototype;
   const mediaOnlyKeys = (o, keys) => Object.keys(o).every((k) => keys.indexOf(k) >= 0);
   const mediaText = (s, max) => typeof s === 'string' && s.length > 0 && s.length <= (max || MEDIA_LIMITS.text) && !/[\u0000-\u001f]/.test(s);
@@ -54,6 +55,46 @@
     (q.bitrate === undefined || mediaNum(1, 1e9)(q.bitrate));
   const mediaTrackOk = (t) => mediaIsObj(t) && mediaOnlyKeys(t, ['present', 'codec', 'language']) && typeof t.present === 'boolean' &&
     (t.codec === undefined || mediaText(t.codec, 64)) && (t.language === undefined || mediaText(t.language, 35));
+  // ---------- Zusammenfassung eines DASH-Manifests (aus src/038, hier unabhängig und streng geprüft) ----------
+  // Nur technische Kategorien und Zahlen – keine Adresse, kein Pfad, keine Kennung (Darstellungs-IDs, KIDs, BaseURL fehlen
+  // absichtlich). Offen für weitere Codecs/Container/Adressierungen: neue Werte kommen in diese Listen, das Format (v)
+  // bleibt. protection.signaled=false heißt nur „im MPD nicht angegeben“ – nie „unverschlüsselt“.
+  const MEDIA_DASH = Object.freeze({
+    types: ['static', 'dynamic', 'unknown'],
+    errors: ['', 'doctype', 'too-large', 'parse', 'not-mpd', 'limits'],
+    kinds: ['video', 'audio', 'text', 'image', 'other'],
+    containers: ['mp4', 'webm', 'mp2t', 'text', 'image', 'other', 'unknown'],
+    codecs: ['avc', 'hevc', 'vvc', 'vp8', 'vp9', 'av1', 'aac', 'mp3', 'ac3', 'ec3', 'ac4', 'opus', 'vorbis', 'flac', 'dts',
+      'ttml', 'webvtt', 'other', 'unknown'],
+    addressing: ['template-timeline', 'template-duration', 'template-other', 'list', 'base', 'single-file', 'unknown'],
+    systems: ['cenc', 'cbcs', 'widevine', 'playready', 'clearkey', 'fairplay', 'marlin', 'other'],
+    tracks: 64, list: 8,
+  });
+  const mediaInt = (lo, hi) => (x) => Number.isInteger(x) && x >= lo && x <= hi;
+  const mediaSubset = (a, all, max) => Array.isArray(a) && a.length <= max && a.every((x) => all.indexOf(x) >= 0) && new Set(a).size === a.length;
+  function mediaDashTrackOk(t) {
+    const D = MEDIA_DASH;
+    return mediaIsObj(t) && mediaOnlyKeys(t, ['kind', 'container', 'codecs', 'width', 'height', 'bandwidth', 'lang', 'addressing', 'protected']) &&
+      D.kinds.indexOf(t.kind) >= 0 && D.containers.indexOf(t.container) >= 0 && mediaSubset(t.codecs, D.codecs, 4) &&
+      (t.width === null || mediaInt(1, 15360)(t.width)) && (t.height === null || mediaInt(1, 8640)(t.height)) &&
+      (t.bandwidth === null || mediaInt(1, 1e9)(t.bandwidth)) && (t.lang === '' || (typeof t.lang === 'string' && /^[a-z]{2,3}(-[a-z0-9]{1,8}){0,2}$/.test(t.lang))) &&
+      D.addressing.indexOf(t.addressing) >= 0 && typeof t.protected === 'boolean';
+  }
+  function mediaManifestOk(m) {
+    const D = MEDIA_DASH;
+    if (!mediaIsObj(m) || !mediaOnlyKeys(m, ['format', 'v', 'error', 'type', 'periods', 'adaptationSets', 'representations', 'duration',
+      'addressing', 'protection', 'tracks'])) return false;
+    if (m.format !== 'dash' || m.v !== 1 || D.errors.indexOf(m.error) < 0 || D.types.indexOf(m.type) < 0) return false;
+    if (!mediaInt(0, 64)(m.periods) || !mediaInt(0, 4096)(m.adaptationSets) || !mediaInt(0, 4096)(m.representations)) return false;
+    if (m.duration !== null && !mediaNum(0, 1e7)(m.duration)) return false;
+    if (!mediaSubset(m.addressing, D.addressing, D.list)) return false;
+    const p = m.protection;
+    if (!mediaIsObj(p) || !mediaOnlyKeys(p, ['signaled', 'systems', 'defaultKid']) || typeof p.signaled !== 'boolean' ||
+        !mediaSubset(p.systems, D.systems, D.list) || typeof p.defaultKid !== 'boolean' || (!p.signaled && (p.systems.length || p.defaultKid))) return false;
+    if (!Array.isArray(m.tracks) || m.tracks.length > D.tracks || m.tracks.length > m.representations || !m.tracks.every(mediaDashTrackOk)) return false;
+    if (m.error && (m.tracks.length || m.periods || p.signaled)) return false;   // nicht auswertbar: keine Angaben behaupten
+    return true;
+  }
   // Strenge Prüfung einer Beobachtung. Unbekannte Felder, überlange oder fremde Adressen, falsche Zahlen → abgelehnt.
   function mediaValidObservation(o) {
     const no = (reason) => ({ ok: false, reason: reason });
@@ -64,6 +105,9 @@
     if (o.role !== undefined && MEDIA_ROLES.indexOf(o.role) < 0) return no('role');
     if (o.protection !== undefined && MEDIA_PROTECTION.indexOf(o.protection) < 0) return no('protection');
     if (o.browser !== undefined && MEDIA_BROWSER.indexOf(o.browser) < 0) return no('browser');
+    // Manifest-Zusammenfassung nur für DASH-Manifeste (Rolle manifest), streng geprüft
+    if (o.manifest !== undefined && (!mediaManifestOk(o.manifest) || o.role !== 'manifest' ||
+        (o.kind !== undefined ? o.kind : mediaKindOf(o.url, '')) !== 'dash')) return no('manifest');
     const pv = o.provenance;
     if (!mediaIsObj(pv) || !mediaOnlyKeys(pv, ['kind', 'origin']) || MEDIA_PROVENANCE.indexOf(pv.kind) < 0 || !mediaText(pv.origin, 64)) return no('provenance');
     const as = o.association;
@@ -83,6 +127,7 @@
       mime: mime, quality: quality, duration: duration, audio: audio, video: video,
       provenance: { kind: pv.kind, origin: pv.origin }, association: { state: as.state, evidence: as.evidence.slice() },
       protection: o.protection || 'unknown', browser: o.browser || 'unknown',
+      manifest: o.manifest === undefined ? null : JSON.parse(JSON.stringify(o.manifest)),
     } };
   }
   // Downloadstatus einer Quelle (nur Beurteilung – startet nichts). attemptable = nach bekannten Kriterien bewusst
@@ -93,7 +138,7 @@
   const mediaOwnPlayed = (s) => s.kind === 'unknown' && s.browser === 'loaded' && s.association.state === 'bound' &&
     s.association.evidence.indexOf('own-player-loaded') >= 0 && s.provenance.some((p) => p.kind === 'player');
   function mediaDownloadState(s) {
-    if (s.kind === 'hls' || s.kind === 'dash' || s.role === 'master' || s.role === 'media-playlist') return { state: 'unavailable', reason: 'stream-not-supported' };
+    if (s.kind === 'hls' || s.kind === 'dash' || s.role === 'master' || s.role === 'media-playlist' || s.role === 'manifest') return { state: 'unavailable', reason: 'stream-not-supported' };
     if (s.kind === 'unsupported') return { state: 'unavailable', reason: 'container-not-supported' };
     if (s.role === 'segment' || s.role === 'init' || s.role === 'track') return { state: 'unavailable', reason: 'not-standalone' };
     if (s.protection === 'encrypted' || s.protection === 'drm') return { state: 'unavailable', reason: 'protected' };
@@ -144,12 +189,14 @@
   // DASH-Einträge gelangen weder in selectDownloads (nur MP4) noch in selectStreams (nur HLS) – darum hier eigens, damit
   // der Hinweis stimmt statt „keine speicherbare Videodatei“. 'bound': ein DASH-Manifest ist nachweislich an genau dieses
   // Video gebunden (dieselben Belege wie bei HLS); 'suspected': nur vermutet (ambiguous, z. B. zeitliche Nähe beim Start);
-  // '' sonst – auch ein nur irgendwo gesehenes (unbound) Manifest zählt nicht. Mehrere Schnappschüsse (Originalvideo,
+  // '' sonst – auch ein nur irgendwo gesehenes (unbound) Manifest zählt nicht; Einträge mit Stück-/Init-/Spur-Rolle nie.
+  // Mehrere Schnappschüsse (Originalvideo,
   // eigener Player): der stärkste Beleg zählt. Reine Funktion; ändert keine Auswahl.
   function mediaDashState(snapshots) {
     let st = '';
     (snapshots || []).forEach((snap) => (snap || []).forEach((s) => {
-      if (!s || s.kind !== 'dash' || !s.association) return;
+      // nur das Manifest selbst (bzw. noch ohne bekannte Rolle) – nie einzelne Stücke, Init-Dateien oder Spuren
+      if (!s || s.kind !== 'dash' || !s.association || (s.role !== 'manifest' && s.role !== 'unknown')) return;
       if (s.association.state === 'bound') st = 'bound';
       else if (s.association.state === 'ambiguous' && !st) st = 'suspected';
     }));

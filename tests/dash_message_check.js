@@ -36,26 +36,32 @@ const PART = 'Nur Teilstücke eines Streams erkannt – Video abspielen und erne
 
 // ---------- DASH ----------
 for (const [name, snap, want] of [
-  ['Feldbefund: nur DASH, ambiguous(start-timing)', [entry('dash', 'media-playlist', 'ambiguous')], DS],
-  ['nur DASH, sicher gebunden (segments-loaded)', [entry('dash', 'media-playlist', 'bound')], DB],
-  ['DASH-Hauptliste, gebunden', [entry('dash', 'master', 'bound')], DB],
-  ['DASH nur irgendwo gesehen (unbound): keine Behauptung', [entry('dash', 'media-playlist', 'unbound')], NONE],
-  ['gebunden schlägt vermutet (zwei Manifeste)', [entry('dash', 'media-playlist', 'ambiguous'), entry('dash', 'master', 'bound')], DB],
-  ['DASH gebunden + HLS nur vermutet: DASH-Hinweis', [entry('dash', 'master', 'bound'), entry('hls', 'master', 'ambiguous')], DB],
-  ['DASH vermutet + HLS vermutet: wie bisher „nicht sicher zugeordnet“', [entry('dash', 'master', 'ambiguous'), entry('hls', 'master', 'ambiguous')], AMB],
-  ['DASH vermutet + HLS geschützt: wie bisher „geschützt“', [entry('dash', 'master', 'ambiguous'), entry('hls', 'master', 'bound', { protection: 'drm' })], PROT],
-  ['DASH vermutet + MP4 nicht gebunden: wie bisher „nicht sicher zugeordnet“', [entry('dash', 'master', 'ambiguous'), entry('mp4', 'standalone', 'unbound')], AMB],
-  ['DASH vermutet + Stück: wie bisher „Teilstücke“', [entry('dash', 'master', 'ambiguous'), entry('mp4', 'segment', 'bound')], PART],
+  ['Feldbefund: nur DASH, ambiguous(start-timing)', [entry('dash', 'manifest', 'ambiguous')], DS],
+  ['nur DASH, sicher gebunden (segments-loaded)', [entry('dash', 'manifest', 'bound')], DB],
+  ['DASH-Manifest noch ohne bekannte Rolle, gebunden', [entry('dash', 'unknown', 'bound')], DB],
+  ['nur DASH-Stück (Rolle segment), gebunden: kein DASH-Hinweis', [entry('dash', 'segment', 'bound')], NONE],
+  ['nur DASH-Init-Datei, gebunden: kein DASH-Hinweis', [entry('dash', 'init', 'bound')], NONE],
+  ['nur DASH-Einzelspur, vermutet: kein DASH-Hinweis', [entry('dash', 'track', 'ambiguous')], NONE],
+  ['DASH nur irgendwo gesehen (unbound): keine Behauptung', [entry('dash', 'manifest', 'unbound')], NONE],
+  ['gebunden schlägt vermutet (zwei Manifeste)', [entry('dash', 'manifest', 'ambiguous'), entry('dash', 'manifest', 'bound')], DB],
+  ['DASH gebunden + HLS nur vermutet: DASH-Hinweis', [entry('dash', 'manifest', 'bound'), entry('hls', 'master', 'ambiguous')], DB],
+  ['DASH vermutet + HLS vermutet: wie bisher „nicht sicher zugeordnet“', [entry('dash', 'manifest', 'ambiguous'), entry('hls', 'master', 'ambiguous')], AMB],
+  ['DASH vermutet + HLS geschützt: wie bisher „geschützt“', [entry('dash', 'manifest', 'ambiguous'), entry('hls', 'master', 'bound', { protection: 'drm' })], PROT],
+  ['DASH vermutet + MP4 nicht gebunden: wie bisher „nicht sicher zugeordnet“', [entry('dash', 'manifest', 'ambiguous'), entry('mp4', 'standalone', 'unbound')], AMB],
+  ['DASH vermutet + Stück: wie bisher „Teilstücke“', [entry('dash', 'manifest', 'ambiguous'), entry('mp4', 'segment', 'bound')], PART],
 ]) {
   const o = opts(snap);
   check(name + ' → ' + want.slice(0, 32) + '…', T.pageDlReason(o, { supported: true, hls: true }) === want, T.pageDlReason(o, { supported: true, hls: true }));
   check('… nichts angeboten (DASH nie auswählbar)', !o.mp4.length && !o.hls.length && !o.all.some((x) => x.state === 'attemptable') && !o.allS.some((x) => x.state === 'attemptable'));
 }
-check('DASH erscheint weder in der MP4- noch in der Stream-Auswahl', T.selectDownloads([entry('dash', 'master', 'bound')], { supported: true }).length === 0 &&
-  T.selectStreams([entry('dash', 'master', 'bound')], { hls: true }).length === 0);
+check('DASH erscheint weder in der MP4- noch in der Stream-Auswahl', T.selectDownloads([entry('dash', 'manifest', 'bound')], { supported: true }).length === 0 &&
+  T.selectStreams([entry('dash', 'manifest', 'bound')], { hls: true }).length === 0);
+check('nur Manifest-Einträge zählen (Stück/Init/Spur nie, auch nicht mit Bindung)',
+  T.mediaDashState([[entry('dash', 'segment', 'bound'), entry('dash', 'init', 'bound'), entry('dash', 'track', 'bound'), entry('dash', 'standalone', 'bound')]]) === '' &&
+  T.mediaDashState([[entry('dash', 'segment', 'bound'), entry('dash', 'manifest', 'ambiguous')]]) === 'suspected');
 check('mehrere Schnappschüsse (Originalvideo, eigener Player): der stärkste Beleg zählt',
-  T.mediaDashState([[entry('dash', 'master', 'ambiguous')], [entry('dash', 'master', 'bound')]]) === 'bound' &&
-  T.mediaDashState([[], [entry('dash', 'master', 'ambiguous')]]) === 'suspected' && T.mediaDashState([[], []]) === '' && T.mediaDashState() === '');
+  T.mediaDashState([[entry('dash', 'manifest', 'ambiguous')], [entry('dash', 'manifest', 'bound')]]) === 'bound' &&
+  T.mediaDashState([[], [entry('dash', 'manifest', 'ambiguous')]]) === 'suspected' && T.mediaDashState([[], []]) === '' && T.mediaDashState() === '');
 
 // ---------- MP4/HLS unverändert: dieselben Hinweise wie bisher, dieselben Angebote ----------
 for (const [name, snap, caps, want] of [
@@ -72,8 +78,16 @@ for (const [name, snap, caps, want] of [
   check('unverändert: ' + name, T.pageDlReason(o, caps || { supported: true, hls: true }) === want && o.dash === '', T.pageDlReason(o, caps || { supported: true, hls: true }));
 }
 {
-  const o = opts([entry('hls', 'master', 'bound'), entry('mp4', 'standalone', 'bound', { browser: 'loaded' }), entry('dash', 'master', 'bound')]);
+  const o = opts([entry('hls', 'master', 'bound'), entry('mp4', 'standalone', 'bound', { browser: 'loaded' }), entry('dash', 'manifest', 'bound')]);
   check('Angebote unverändert: gebundene HLS-Liste und gebundene MP4 bleiben auswählbar, DASH kommt nicht dazu',
     o.hls.length === 1 && o.mp4.length === 1 && o.all.length === 1 && o.allS.length === 1, o);
+}
+// eigener Player (src/180): der DASH-Hinweis beruht allein auf den Belegen der Registry – eine Endung „.mpd“ der
+// gespielten Adresse ist kein Beleg (Quellprüfung der Stelle, die den Hinweis bestimmt)
+{
+  const p = fs.readFileSync(path.join(root, 'src/180-player-bedienung.js'), 'utf8');
+  const i = p.indexOf('let dash = '), block = p.slice(i, p.indexOf('if (j || can.length || streams.length)', i));
+  check('eigener Player: DASH-Hinweis nur aus mediaDashState (Registry), keine Ableitung aus der Adresse',
+    i > 0 && /dash = mediaDashState\(/.test(block) && !/\.mpd|st\.cur|'bound'/.test(block), block);
 }
 console.log('RESULT dash-message PASS ' + passed + '/' + passed);

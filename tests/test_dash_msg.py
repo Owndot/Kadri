@@ -139,6 +139,28 @@ with sync_playwright() as p:
     it = player_menu('none')
     check('eigener Player, Gegenprobe ohne Manifest: bisheriger Hinweis, kein DASH-Hinweis', 'Helfer-App: keine speicherbare Quelle erkannt' in it and not any('DASH' in x for x in it), it)
     check('nichts beim Helfer angefragt', len(helper_hits()) == n0, helper_hits()[n0:])
+    # ---------- S1: Manifest eingeordnet – anonymisierte Diagnose (Kadri-Symbol → „Anonymisiert kopieren“) ----------
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
+    def anon_diag(m):
+        pg.goto(VID + '/x/mse.html?m=' + m); pg.bring_to_front()
+        playing(pg.main_frame); time.sleep(1.5)
+        tab = sw.evaluate('async () => (await chrome.tabs.query({})).find((t) => /\\/x\\/mse\\.html/.test(t.url)).id')
+        sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" }, { frameId: 0 })', tab)
+        wait(lambda: pg.evaluate(js('return !!r.querySelector(".diag .danon");')), 8)
+        pg.evaluate('() => navigator.clipboard.writeText("-")')
+        pg.evaluate(js('r.querySelector(".diag .danon").click(); return true;'))
+        got = ['']
+        wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+        return got[0]
+    MAN = ('DASH-Manifest: VOD · Perioden 1 · AdaptationSets 1 · Darstellungen 1 · Video 1 (vp9 ×1; mp4; bis 360p) · Audio 0 · Text 0 · Bild 0'
+           ' · Adressierung template-duration · Schutz angegeben: nein (Verschlüsselung damit nicht ausgeschlossen)')
+    for m, bind in (('a', 'ambiguous(start-timing)'), ('b', 'bound(segments-loaded)')):
+        dg = anon_diag(m)
+        lines = [l for l in dg.split('\n') if 'dash:' in l or 'DASH-Manifest' in l or 'Listen gelesen' in l]
+        check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('vermutet' if m == 'a' else 'gebunden', bind), re.search(r'dash:manifest · Bindung ' + re.escape(bind), dg), lines)
+        check('… Manifest eingeordnet (VOD, 1 Periode, vp9/mp4 bis 360p, Template mit Dauer, Schutz nicht angegeben ≠ unverschlüsselt)', MAN in dg, lines)
+        check('… Netzwerk: 1 gelesenes DASH-Manifest; Download unavailable(stream-not-supported)', 'davon DASH-Manifeste 1' in dg and 'Download unavailable(stream-not-supported)' in dg, lines)
+        check('… anonym: keine Adresse, kein Host, kein Pfad', not re.search(r'://|127\.0\.0|localhost|/x/|manifest\.mpd|seg0', dg), dg[:300])
     check('keine Seitenfehler', not errs, errs)
     ctx.close()
 helper.stop()
