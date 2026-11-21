@@ -30,11 +30,16 @@
 .pill .hdot{position:absolute;top:8px;right:7px;width:7px;height:7px;border-radius:50%;background:#641800;box-shadow:0 0 8px rgba(100,24,0,.9);filter:invert(1);opacity:0;transform:scale(.4);transition:opacity .2s ease,transform .3s cubic-bezier(.34,1.56,.64,1)}
 .pill.hd .hdot{opacity:1;transform:none}
 @media (prefers-reduced-motion:reduce){.pill,.pill .pb,.pill .hdot{transition:opacity .15s ease !important}}
-.dlm{position:fixed;z-index:2147483647;display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:18px;max-height:70vh;overflow:auto;
- background:rgba(28,30,40,.82);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);color:#fff;
- box-shadow:0 10px 30px rgba(0,0,0,.4);font:14px/1.3 var(--font);pointer-events:auto}
-.dlm .dlh{padding:6px 10px 4px;font-weight:700;font-size:13px;opacity:.8}
-.dlm .dli{all:unset;display:flex;flex-direction:column;gap:2px;padding:9px 10px;border-radius:12px;cursor:pointer;color:#fff}
+/* Download-Auswahl: Bottom-Sheet über abgedunkeltem Hintergrund (Größe/Lage per visualViewport, siehe 105) */
+.dlo{position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;z-index:2147483647;display:flex;align-items:flex-end;justify-content:center;
+ background:rgba(0,0,0,.38);pointer-events:auto;touch-action:manipulation}
+.dlm{position:relative;box-sizing:border-box;width:100%;max-width:560px;max-height:min(75%,calc(100% - 16px));overflow-y:auto;overscroll-behavior:contain;
+ -webkit-overflow-scrolling:touch;display:flex;flex-direction:column;gap:2px;padding:8px 8px calc(8px + env(safe-area-inset-bottom,0px));
+ border-radius:18px 18px 0 0;background:rgba(28,30,40,.94);-webkit-backdrop-filter:blur(18px) saturate(1.4);backdrop-filter:blur(18px) saturate(1.4);color:#fff;
+ box-shadow:0 -8px 30px rgba(0,0,0,.4);font:15px/1.3 var(--font);touch-action:pan-y}
+.dlm.used .dli{pointer-events:none}
+.dlm .dlh{padding:8px 12px 6px;font-weight:700;font-size:14px;opacity:.8}
+.dlm .dli{all:unset;box-sizing:border-box;min-height:48px;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 14px;border-radius:12px;cursor:pointer;color:#fff;flex-shrink:0}
 .dlm .dli:active,.dlm .dli:focus-visible{background:rgba(255,255,255,.14)}
 .dlm .dli small{font-size:12px;opacity:.72}
 .dlm .dli.info{cursor:default;opacity:.92}

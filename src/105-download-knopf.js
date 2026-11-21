@@ -203,37 +203,96 @@
     pageDlMenu('Speichern', pageDlExternal(v, items));
   }
 
-  // Kleines Menü am Knopf (nicht im Player): Einträge mit Unterzeile; Tipp daneben schließt. Das Video läuft weiter.
-  let pageDlEl = null;
-  function pageDlClose() { if (pageDlEl) { pageDlEl.remove(); pageDlEl = null; } }
+  // Auswahl als Bottom-Sheet über der Seite (nicht im Player): Einträge mit Unterzeile, mindestens 48 px hoch; das Video
+  // läuft weiter. Alles liegt im geschlossenen Shadow DOM – darum keine Listener auf document: ein Außentipp ist ein Tipp
+  // auf den eigenen abgedunkelten Hintergrund (Ziel = Hintergrund), Scrollen im Blatt schließt nie. Ein Eintrag löst
+  // seine Aktion genau einmal aus; danach schließt das Blatt kontrolliert (öffnet die Aktion selbst ein neues, bleibt es).
+  // Zurück-Taste: ein Verlaufseintrag nur für das Blatt (wie beim Player; nicht auf Facebook/Instagram).
+  let pageDlEl = null;          // offenes Blatt (Hintergrund-Element)
+  let pageDlHist = null;        // eigener Verlaufseintrag für die Zurück-Taste: { len, href } beim Setzen, sonst null
+  let pageDlBackPending = false;   // eigenes history.back() unterwegs: dessen popstate gehört nicht zum Blatt
+  let pageDlBackTimer = 0;
+  let pageDlWantHist = false;   // Blatt offen, Verlaufseintrag erst nach dem ausstehenden Zurück setzen
+  let pageDlFit = null;         // Anpassung an den sichtbaren Bereich (Systemleisten, Zoom, Tastatur)
+  // visualViewport-Listener des bisherigen Blatts vollständig entfernen (beim Schließen und beim Ersetzen)
+  function pageDlUnfit() {
+    if (pageDlFit && window.visualViewport) { visualViewport.removeEventListener('resize', pageDlFit); visualViewport.removeEventListener('scroll', pageDlFit); }
+    pageDlFit = null;
+  }
+  // Verlaufseintrag nur für das offene Blatt. Läuft noch ein eigenes Zurück, erst nach dessen popstate setzen – sonst
+  // träfe das ausstehende Zurück den neuen Eintrag, und die nächste Zurück-Taste verließe die Seite.
+  function pageDlPushHist() {
+    pageDlWantHist = false;
+    if (META || !pageDlEl || pageDlHist) return;
+    if (pageDlBackPending) { pageDlWantHist = true; return; }
+    try { history.pushState(history.state, '', location.href); pageDlHist = { len: history.length, href: location.href }; } catch (e) {}
+  }
+  function pageDlBackDone() {
+    pageDlBackPending = false; clearTimeout(pageDlBackTimer); pageDlBackTimer = 0;
+    if (pageDlWantHist) pageDlPushHist();
+  }
+  function pageDlClose(fromBack) {
+    if (!pageDlEl) return;
+    pageDlEl.remove(); pageDlEl = null;
+    pageDlUnfit();
+    removeEventListener('keydown', pageDlKey);
+    pageDlWantHist = false;
+    const own = pageDlHist;
+    pageDlHist = null;
+    // Selbst zurück nur, wenn der eigene Eintrag nachweislich noch der aktuelle ist (Seite hat nichts Eigenes eingetragen)
+    if (own && !fromBack && history.length === own.len && location.href === own.href) {
+      pageDlBackPending = true;
+      try { history.back(); } catch (e) { pageDlBackDone(); return; }
+      pageDlBackTimer = setTimeout(pageDlBackDone, 1000);   // Sicherheitsnetz, falls kein popstate kommt
+    }
+  }
+  function pageDlKey(e) { if (e.key === 'Escape' && pageDlEl) { e.preventDefault(); pageDlClose(); } }
+  addEventListener('popstate', () => {
+    if (pageDlBackPending) { pageDlBackDone(); return; }   // das eigene Zurück ist angekommen
+    if (pageDlEl && pageDlHist) { pageDlHist = null; pageDlClose(true); }
+  });
   function pageDlMenu(title, items) {
     ui();
-    pageDlClose();
-    const box = h('div', { class: 'dlm', role: 'menu' });
-    box.appendChild(h('div', { class: 'dlh' }, tr(title)));
+    // ein neues Blatt ersetzt das offene (z. B. Qualität/Ton nach „Stream …“) – der Verlaufseintrag bleibt, die
+    // visualViewport-Listener des alten Blatts werden entfernt
+    if (pageDlEl) { pageDlEl.remove(); pageDlEl = null; }
+    pageDlUnfit();
+    const ov = h('div', { class: 'dlo' });
+    const box = h('div', { class: 'dlm', role: 'menu', 'aria-label': tr(title) });
+    const head = h('div', { class: 'dlh' }, tr(title));
+    box.appendChild(head);
+    let used = false;   // genau eine Aktion je Blatt
     items.forEach((it) => {
       const b = h('button', { class: 'dli' + (it.info ? ' info' : ''), role: it.info ? 'note' : 'menuitem' }, tr(it.label));
       if (it.sub) b.appendChild(h('small', {}, tr(it.sub)));
-      if (!it.info) b.addEventListener('click', (e) => { e.stopPropagation(); pageDlClose(); try { it.fn(); } catch (err) {} });
+      if (!it.info) b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (used || pageDlEl !== ov) return;
+        used = true;
+        box.classList.add('used');
+        try { it.fn(); } catch (err) {}
+        if (pageDlEl === ov) pageDlClose();   // hat die Aktion kein neues Blatt geöffnet: jetzt schließen
+      });
       else b.disabled = true;
       box.appendChild(b);
     });
     const close = h('button', { class: 'dli dlx', 'aria-label': 'Schließen' }, tr('Schließen'));
-    close.addEventListener('click', (e) => { e.stopPropagation(); pageDlClose(); });
+    close.addEventListener('click', (e) => { e.stopPropagation(); if (pageDlEl === ov) pageDlClose(); });
     box.appendChild(close);
-    root.appendChild(box);
-    // am Knopf ausrichten (unter- oder oberhalb, innerhalb des Bildschirms)
-    const pr = pill.getBoundingClientRect();
-    const vw = window.innerWidth, vh = window.innerHeight, w = Math.min(320, vw - 16);
-    box.style.width = w + 'px';
-    box.style.left = Math.max(8, Math.min(vw - w - 8, pr.right - w)) + 'px';
-    const below = pr.bottom + 8, hgt = box.offsetHeight || 200;
-    box.style.top = (below + hgt < vh - 8 ? below : Math.max(8, pr.top - hgt - 8)) + 'px';
-    pageDlEl = box;
-    setTimeout(() => document.addEventListener('pointerdown', function out(e) {
-      if (!pageDlEl) { document.removeEventListener('pointerdown', out, true); return; }
-      if (e.composedPath && e.composedPath().indexOf(pageDlEl) >= 0) return;
-      document.removeEventListener('pointerdown', out, true);
-      pageDlClose();
-    }, true), 0);
+    ov.appendChild(box);
+    // Tipp auf den Hintergrund (nicht ins Blatt) schließt; click statt pointerdown – ein Wisch zum Scrollen ist kein Tipp
+    ov.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === ov && pageDlEl === ov) pageDlClose(); });
+    root.appendChild(ov);
+    pageDlEl = ov;
+    // an den sichtbaren Bereich anpassen (Android-Systemleisten, Adressleiste, Zoom, kleine Displays)
+    pageDlFit = () => {
+      const vv = window.visualViewport;
+      if (!vv || pageDlEl !== ov) return;
+      ov.style.left = vv.offsetLeft + 'px'; ov.style.top = vv.offsetTop + 'px';
+      ov.style.width = vv.width + 'px'; ov.style.height = vv.height + 'px';
+    };
+    pageDlFit();
+    if (window.visualViewport) { visualViewport.addEventListener('resize', pageDlFit); visualViewport.addEventListener('scroll', pageDlFit); }
+    addEventListener('keydown', pageDlKey);
+    pageDlPushHist();   // (bei einem ersetzten Blatt bleibt der vorhandene Eintrag)
   }

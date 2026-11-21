@@ -16,7 +16,7 @@ function setup(kind = 'mp4', env = {}) {
   const opt = { ctx: {}, sourceId: source.sourceId, revision: 7, identity: 'played' };
   const v = { isConnected: true, currentSrc: url, readyState: 4, videoWidth: 640, videoHeight: 360,
     buffered: { length: 1, start: () => 0, end: () => 8 }, played: { length: 1, start: () => 0, end: () => 2 }, paused: false };
-  const ctx = { URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v,
+  const ctx = { URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v, addEventListener() {}, removeEventListener() {},
     setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout() {}, toast() {}, tr: (x) => x,
     pageTitle: () => 'PRIVATE-TITLE', fmtTime: () => '1:00',
     mediaRegistry: { snapshot: () => [source], resolveSelection: () => ({ ok: true, url }), resolveStream: () => ({ ok: true, url, bind: {} }) },
