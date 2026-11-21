@@ -15,7 +15,9 @@ with sync_playwright() as p:
     pg = br.new_page()
     pg.set_content('<!doctype html><title>mpd</title>')
     pg.add_script_tag(content=SRC + '\nwindow.__sum = (t) => { const s = dashManifestSummary(t); return { s: s, ok: mediaManifestOk(s) }; };'
-                      '\nwindow.__ok = (m) => mediaManifestOk(m);')
+                      '\nwindow.__ok = (m) => mediaManifestOk(m);'
+                      '\nwindow.__idx = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u); return { reps: ix.reps.length, single: ix.single,'
+                      ' m: keys.map((k) => dashMatchSegment(ix, dashPathKey(k))) }; };')
     def run(text):
         r = pg.evaluate('(t) => window.__sum(t)', text)
         return r['s'], r['ok']
@@ -70,6 +72,40 @@ with sync_playwright() as p:
     check('Namensraum mit Präfix (dash:MPD): ebenso erkannt', ok and not s['error'] and tracks(s, 'video')[0]['height'] == 240, s)
     check('keine Adresse, kein Pfad, keine Darstellungs-ID, kein KID in irgendeiner Zusammenfassung',
           not any(LEAK.search(json.dumps(x)) for x in results.values()), [k for k, x in results.items() if LEAK.search(json.dumps(x))])
+
+    # ---------- S2: erwartete Stück-Adressen je Darstellung (privat) und Zuordnung beobachteter Abrufe ----------
+    def idx(name, url, keys): return pg.evaluate('([t, u, k]) => window.__idx(t, u, k)', [fx(name), url, keys])
+    M = 'https://cdn.example/v/manifest.mpd'
+    r = idx('vod-number-ffmpeg.mpd', M, ['https://cdn.example/v/chunk-stream0-00001.m4s', 'https://cdn.example/v/chunk-stream0-00003.m4s?x=1',
+                                         'https://cdn.example/v/chunk-stream1-00002.m4s', 'https://cdn.example/v/init-stream0.m4s',
+                                         'https://cdn.example/v/chunk-stream0-00001.mp4', 'https://other.example/v/chunk-stream0-00001.m4s'])
+    check('$Number%05d$ (ffmpeg): Stücknummer je Darstellung (− startNumber), Query egal, Init erkannt; andere Endung/anderer Host: kein Treffer',
+          r['reps'] == 2 and r['m'][0] == {'rep': 0, 'idx': 0} and r['m'][1] == {'rep': 0, 'idx': 2} and r['m'][2] == {'rep': 1, 'idx': 1}
+          and r['m'][3] == {'rep': 0, 'init': True} and r['m'][4] is None and r['m'][5] is None, r)
+    r = idx('vod-timeline-avc-aac.mpd', M, ['https://cdn.example/v/video/0/0.m4s', 'https://cdn.example/v/video/0/76800.m4s', 'https://cdn.example/v/video/2/153600.m4s',
+                                            'https://cdn.example/v/video/0/76801.m4s', 'https://cdn.example/v/audio/de/288768.m4s'])
+    check('$Time$ über SegmentTimeline (r-Wiederholungen): Zeit → Stücknummer; Zeit außerhalb der Zeitleiste: kein Treffer',
+          r['m'][0] == {'rep': 0, 'idx': 0} and r['m'][1] == {'rep': 0, 'idx': 1} and r['m'][2] == {'rep': 2, 'idx': 2} and r['m'][3] is None
+          and r['m'][4] == {'rep': 3, 'idx': 1}, r)
+    r = idx('vod-segmentlist.mpd', M, ['https://cdn.example/v/media/v360/seg-2.m4s', 'https://cdn.example/v/media/a/seg-3.m4s', 'https://cdn.example/v/media/v360/init.mp4'])
+    check('SegmentList mit BaseURL der MPD-Ebene: Reihenfolge der SegmentURL = Stücknummer; Init erkannt',
+          r['m'][0] == {'rep': 0, 'idx': 1} and r['m'][1] == {'rep': 1, 'idx': 2} and r['m'][2] == {'rep': 0, 'init': True}, r)
+    r = idx('vod-baseurl-chain.mpd', M, ['https://cdn2.example/content/p1/video/720/7.jpg', 'https://cdn2.example/content/p1/lowres/360/2.jpg',
+                                         'https://audio.example/a/seg-128000-0005.m4s', 'https://cdn2.example/content/p1/video/720/init.jpg',
+                                         'https://cdn.example/v/720/7.jpg'])
+    check('BaseURL-Kette (absolut → Periode → AdaptationSet → Darstellung, auch ../ und anderer Host), $RepresentationID$/$Bandwidth$, getarnte Endung .jpg',
+          r['m'][0] == {'rep': 0, 'idx': 6} and r['m'][1] == {'rep': 1, 'idx': 1} and r['m'][2] == {'rep': 2, 'idx': 5}
+          and r['m'][3] == {'rep': 0, 'init': True} and r['m'][4] is None, r)
+    r = idx('vod-av1-hevc-inherit.mpd', M, ['https://cdn.example/v/av1-1080/4000.m4s', 'https://cdn.example/v/hevc/8000.m4s', 'https://cdn.example/v/a/3.m4s'])
+    check('geerbte Zeitleiste trotz eigener Vorlage der Darstellung; Template mit fester Dauer (Number, Standard-Start 1)',
+          r['m'][0] == {'rep': 0, 'idx': 1} and r['m'][1] == {'rep': 1, 'idx': 2} and r['m'][2] in ({'rep': 2, 'idx': 2}, {'rep': 3, 'idx': 2}), r)
+    r = idx('live-dynamic.mpd', M, ['https://cdn.example/v/V300/41.m4s'])
+    check('Live: $Number$ mit startNumber 0 erkannt (Bindung möglich; Download später ohnehin nicht)', r['m'][0] == {'rep': 0, 'idx': 41}, r)
+    r = idx('vod-ondemand-segmentbase.mpd', M, ['https://cdn.example/v/video_1080.mp4'])
+    check('SegmentBase/Einzeldatei: keine Stückfolge prüfbar (0 Darstellungen im Index, als „single“ gezählt), kein Treffer',
+          r['reps'] == 0 and r['single'] == 2 and r['m'][0] is None, r)
+    r = idx('vod-webm-vp9-opus.mpd', M, ['https://cdn.example/v/video_720.webm'])
+    check('WebM On-Demand (SegmentBase): ebenso nicht prüfbar', r['reps'] == 0 and r['single'] == 3 and r['m'][0] is None, r)
 
     # ---------- Angriffe und Grenzen: nur ein Fehlercode, keine erfundenen Angaben ----------
     for name, text, err in [('DOCTYPE mit Entitäten-Bombe', fx('bad-doctype-entities.mpd'), 'doctype'),

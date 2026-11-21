@@ -90,7 +90,7 @@
     snap.slice(0, 24).forEach((s, i) => {
       const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
       L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
-        ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join('+') +
+        ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join(' + ') +
         ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
       if (s.manifest) L.push(anonDashLine(s.manifest));
     });
@@ -124,6 +124,16 @@
       anonSnapLines(L, snap);
       if (o) L.push('Auswahl MP4: ' + anonPick(o.all) + ' · Auswahl Stream: ' + anonPick(o.allS) +
         (o.mp4.length + o.hls.length ? '' : ' · Hinweis im Menü: ' + pageDlReason(o, caps)));
+      // DASH (S2): Stückprüfung je gelesenem MPD – nur Zählungen und Grund
+      try {
+        const b = dashBindingFor(v);
+        b.list.forEach((e, i) => {
+          const r = b.res[e.key] || {};
+          L.push('DASH-Stückprüfung ' + (i + 1) + '/' + b.list.length + ': Treffer ' + (r.hits || 0) + ' · Darstellungen mit Treffern ' + (r.reps || 0) +
+            ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
+            ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')');
+        });
+      } catch (e) {}
     } else L.push('Video-Element: keines');
     let rs = [];
     try { rs = performance.getEntriesByType('resource'); } catch (e) {}
@@ -162,10 +172,11 @@
     const roles = {};
     let net = [];
     try { net = recent(); } catch (e) {}
-    net.forEach((u) => { let r = 'unknown'; try { r = mediaRoleHint(u); } catch (e) {} const k = anonKind(u) + ':' + r; roles[k] = (roles[k] || 0) + 1; });
+    // (gelesenes DASH-Manifest: Art nach dem Inhalt, nicht nach der Endung der Adresse)
+    net.forEach((u) => { let r = 'unknown'; try { r = mediaRoleHint(u); } catch (e) {} const k = (r === 'manifest' ? 'dash' : anonKind(u)) + ':' + r; roles[k] = (roles[k] || 0) + 1; });
     L.push('Netzwerk (zuletzt beobachtet, Art:Rolle): ' + (Object.keys(roles).sort().map((k) => k + ' ×' + roles[k]).join(', ') || '-') +
       ' · Listen gelesen ' + plInfo.size + ' (davon DASH-Manifeste ' + Array.from(plInfo.values()).filter((x) => x.kind === 'dash').length + ')' +
-      ' · Rollen aus Listen ' + plParts.size);
+      ' · Rollen aus Listen ' + plParts.size + (Object.keys(dashRejected).length ? ' · MPD-Texte verworfen: ' + anonCount(dashRejected) : ''));
     L.push('Helfer-Downloads (jüngste zuerst): ' + (hdlDiags.length ? '' : '-'));
     hdlDiags.forEach((d, i) => L.push(' ' + (i + 1) + '. ' + hdlDiagText(d)));
     return anonScrub(L.join('\n'));

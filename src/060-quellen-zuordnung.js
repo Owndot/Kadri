@@ -279,6 +279,26 @@
   const startAt = new WeakMap();
   document.addEventListener('loadstart', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO') startAt.set(v, Date.now()); }, true);
   document.addEventListener('play', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO' && !startAt.has(v)) startAt.set(v, Date.now()); }, true);
+  // ---------- DASH (S2): Bindung eines gelesenen MPD an dieses Video – nur über Stückfolgen (src/038 dashBindDecision) ----------
+  // Gezählt werden Abrufe dieses Fensters seit dem Start des aktuellen Mediums (loadstart/erstes play; nach Seitenwechsel neu),
+  // die genau auf die Stück-Adressen einer Darstellung passen. Grenzen (bewusst nicht umgangen):
+  //  - Abrufe aus Web-Workern erscheinen nicht in der Ressourcen-Zeitleiste dieses Fensters → keine Treffer → ambiguous.
+  //  - Getarnte Stücke (andere Endung, z. B. .jpg) zählen nur, wenn das MPD genau diese Adressen beschreibt; liefert die Seite
+  //    Stücke unter anderen Adressen (eigene Umleitung, Blob, Proxy) → keine Treffer → ambiguous.
+  //  - SegmentBase/Einzeldatei (Byte-Bereiche derselben Datei): keine Stückfolge erkennbar → ambiguous (nicht-pruefbar).
+  //  - Kein Startzeitpunkt bekannt (Kadri erst nach dem Laden im Fenster gestartet): gezählt wird ab dem letzten Seitenwechsel.
+  function dashBindingFor(v) {
+    const list = [], seen = new Set();
+    plInfo.forEach((p, key) => { if (p.kind === 'dash' && p.dash && !p.dash.error && !seen.has(p)) { seen.add(p); list.push({ key: key, p: p }); } });
+    if (!list.length || !v) return { list: [], res: {} };
+    let others = false;
+    try { others = allVideos().some((x) => x !== v && !x.paused && !x.ended && /^blob:/.test(x.currentSrc || '')); } catch (e) {}
+    const res = dashBindDecision({
+      manifests: list.map((e) => ({ key: e.key, hits: e.p.dashHits || [], duration: e.p.dash.type === 'static' ? e.p.dash.duration : 0,
+        checkable: !!(e.p.dashIdx && e.p.dashIdx.reps.length) })),
+      from: Math.max(navAt, (startAt.get(v) || 0) - 3000), now: Date.now(), video: { duration: v.duration, othersPlaying: others } });
+    return { list: list, res: res };
+  }
   function timingMatch(v) {
     checkNav();   // gerade erst zu einem anderen Video gewechselt? (Prüfung läuft nur jede Sekunde)
     const s = startAt.get(v);

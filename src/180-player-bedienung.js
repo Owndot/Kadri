@@ -441,6 +441,7 @@
       // sicher gebunden bzw. nur vermutet (siehe mediaDashState). Eine Endung „.mpd“ ist kein Beleg für die Zuordnung.
       let dash = '';
       try {
+        if (st.media && st.media.orig) dashObserveFor(orig, st.media.orig);   // Stückfolgen seit dem Öffnen nachtragen
         dash = mediaDashState([st.media && st.media.orig ? mediaRegistry.snapshot(st.media.orig) : [], st.media && st.media.own ? mediaRegistry.snapshot(st.media.own) : []]);
       } catch (e) { dash = ''; }
       if (j || can.length || streams.length) {

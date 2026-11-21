@@ -152,6 +152,7 @@
   }
   function seeUrl(u, arrived) {
     if (typeof u !== 'string' || u.indexOf('http') !== 0) return;
+    try { dashSee(u, arrived); } catch (e) {}
     if (SPLIT_CDN_RE.test(hostOf(u))) { noteSplit(u, arrived); return; }
     noteSegment(u);
     if (isMedia(u)) addSource(u);
@@ -295,6 +296,14 @@
   const segHits = new Map();   // Ordner der Stücke → zuletzt geladen
   const plParts = new Map();   // urlKey eines Stücks/Init/Unterliste aus einer gelesenen Liste → Rolle (Quellenmodell)
   const netSeen = { pl: 0, src: 0 };   // Meldungen des Mitlesers in der Seite (page.js) – nur gezählt, für die Diagnose
+  // DASH (S2): verworfene MPD-Texte je Grund (nur gezählt) und die letzten beobachteten Abrufe (nur Pfad + Zeit), damit ein
+  // später gelesenes MPD seine schon geladenen Stücke noch zuordnen kann. Privat; nie gespeichert, nie in die Diagnose.
+  const dashRejected = {};
+  const dashRejectedKeys = new Set();   // Adressen (Pfad), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
+  const recentRes = [];
+  // Wurzelelement MPD (optional mit Namensraum-Präfix) am Anfang des Textes – Vorprüfung; entscheidend ist dashParse
+  // (steht vor dem erneuten Senden durch page.js weiter unten – das ruft notePlaylist sofort beim Start auf)
+  const DASH_ROOT_RE = /<(?:[A-Za-z_][\w.-]{0,31}:)?MPD[\s>]/;
   const SEGFILE_RE = /\.(ts|m4s|mp4|m4a|m4v|aac|cmfv|cmfa|webm|mp3)(\?|#|$)/i;
   function isoDur(s) {
     const m = /P(?:(\d+(?:\.\d+)?)D)?T?(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?/.exec(s || '');
@@ -329,10 +338,25 @@
           else { addDir(abs(l)); part(abs(l), 'segment'); }
         }
         if (segs) { info.live = text.indexOf('#EXT-X-ENDLIST') < 0; if (!info.live) info.dur = sum; }
-      } else if (/<MPD[\s>]/.test(head) || /<MPD[\s>]/.test(text.slice(0, 4000))) {
-        // DASH: Rolle „manifest“ und technische Zusammenfassung (src/038; ohne Abruf, ohne Adressen)
+      } else if (DASH_ROOT_RE.test(head) || DASH_ROOT_RE.test(text.slice(0, 4000))) {
+        // DASH: nur ein gültiges MPD (Wurzel MPD, auch mit Namensraum-Präfix wie dash:MPD; sicher geparst, src/038) wird
+        // als Manifest geführt – mit Zusammenfassung und (privat) den erwarteten Stück-Adressen. Kein MPD, kaputtes XML,
+        // DOCTYPE oder Grenzen überschritten: gezählt und verworfen (kein beliebiges XML als Manifest).
+        let parsed = null;
+        try { parsed = dashParse(text); } catch (e) { parsed = { error: 'parse' }; }
+        if (!parsed || parsed.error) {
+          const er = (parsed && parsed.error) || 'parse';
+          dashRejected[er] = (dashRejected[er] || 0) + 1;
+          [reqUrl, finalUrl].forEach((x) => { if (x) dashRejectedKeys.add(urlKey(x)); });
+          if (dashRejectedKeys.size > 200) dashRejectedKeys.delete(dashRejectedKeys.values().next().value);
+          return;
+        }
         info.kind = 'dash';
-        try { info.dash = dashManifestSummary(text); } catch (e) { info.dash = null; }
+        try { info.dash = dashSummaryFromParsed(parsed); } catch (e) { info.dash = null; }
+        try { info.dashIdx = dashSegmentIndex(parsed, base); } catch (e) { info.dashIdx = null; }
+        info.dashHits = []; info.dashInit = 0;
+        // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
+        if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t));
         info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
         const m = /mediaPresentationDuration\s*=\s*["']([^"']+)["']/.exec(text);
         if (m && !info.live) info.dur = isoDur(m[1]);
@@ -375,6 +399,20 @@
   // Kadri: page.js hebt seine letzten Meldungen auf – jetzt, wo alles zuhört, noch einmal schicken lassen
   // (in eingebetteten Fenstern startet Kadri erst, wenn ein Video auftaucht)
   if (IS_KADRI) { try { document.dispatchEvent(new Event('kadri-hello')); } catch (e) {} }
+  // Ein beobachteter Abruf als Stück einer Darstellung eines gelesenen MPD (nur Pfad + Zeit; höchstens 3000 je Manifest)
+  function dashHit(info, k, t) {
+    const m = dashMatchSegment(info.dashIdx, k);
+    if (!m) return;
+    if (m.init) { info.dashInit++; return; }
+    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t });
+    if (info.dashHits.length > 3000) info.dashHits.shift();
+  }
+  function dashSee(u, arrived) {
+    const k = urlKey(u), t = arrived || Date.now();
+    recentRes.push({ k: k, t: t });
+    if (recentRes.length > 800) recentRes.shift();
+    plInfo.forEach((p) => { if (p.kind === 'dash' && p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t); });
+  }
   function noteSegment(u) {
     if (PLAYLIST_RE.test(u) || !(SEGFILE_RE.test(u) || SEGMENT_RE.test(u))) return;
     if (vp && vp.mode === 'own') return;   // Stücke des eigenen Players zählen nicht
@@ -389,7 +427,8 @@
     segHits.forEach((t, d) => {
       if (t < from || t <= mediaT) return;
       let m = null;
-      plInfo.forEach((p) => { if (p.segDirs.some((sd) => d.startsWith(sd)) && (!m || p.t > m.t)) m = p; });
+      // (DASH nicht über den Ordner: dort zählen nur zugeordnete Stückfolgen je Darstellung, siehe dashBindingFor)
+      plInfo.forEach((p) => { if (p.kind !== 'dash' && p.segDirs.some((sd) => d.startsWith(sd)) && (!m || p.t > m.t)) m = p; });
       if (m) { media = m; mediaT = t; }
     });
     if (!media) return null;

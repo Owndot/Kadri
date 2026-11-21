@@ -78,6 +78,39 @@ check('… weder in der MP4- noch in der Stream-Auswahl (kein neues Angebot)', A
 check('… DASH-Hinweis „gebunden“', A.mediaDashState([snap2]) === 'bound');
 check('Stück mit Art dash (ehemals Manifest, jetzt Rolle segment): kein DASH-Hinweis', A.mediaDashState([reg.snapshot(c)]) === '');
 
+// ---------- Korrektur: Inhalt (gültiges MPD) überstimmt eine aus der Adresse geratene HLS-Einstufung ----------
+{
+  const r4 = A.createMediaRegistry({ random: () => 'md' + (++n).toString(16).padStart(6, '0'), docKey: () => 'doc4' });
+  const c4 = r4.contextFor({ addEventListener() {} });
+  const HU = 'https://cdn.example/x/stream.m3u8';
+  r4.observe(c4, { url: HU, role: 'master', protection: 'drm', provenance: { kind: 'network', origin: 'start-timing' }, association: { state: 'ambiguous', evidence: ['start-timing'] } });
+  let x = r4.snapshot(c4)[0];
+  check('zuerst nach Adresse vermutet: hls:master (Stream-Auswahl sähe eine HLS-Liste)', x.kind === 'hls' && x.role === 'master' && A.selectStreams(r4.snapshot(c4), { hls: true }).length === 1, x);
+  const rr = r4.observe(c4, { url: HU, kind: 'dash', role: 'manifest', manifest: sum(), provenance: { kind: 'network', origin: 'start-timing' }, association: { state: 'ambiguous', evidence: ['start-timing'] } });
+  x = r4.snapshot(c4)[0];
+  check('… dann gültiges MPD unter derselben Adresse gelesen: dash:manifest mit Zusammenfassung (Art und Rolle konsistent)', rr.ok && x.kind === 'dash' && x.role === 'manifest' && !!x.manifest, [rr, x.kind, x.role]);
+  check('… kein HLS-/MP4-Angebot mehr, Download unavailable(stream-not-supported), Schutz drm bleibt', A.selectStreams(r4.snapshot(c4), { hls: true }).length === 0 &&
+    A.selectDownloads(r4.snapshot(c4), { supported: true }).length === 0 && x.download.reason === 'stream-not-supported' && x.protection === 'drm', x);
+  r4.observe(c4, { url: HU, role: 'master', provenance: { kind: 'network', origin: 'start-timing' }, association: { state: 'ambiguous', evidence: ['start-timing'] } });
+  x = r4.snapshot(c4)[0];
+  check('… eine spätere bloße Adress-Vermutung (HLS) macht das gelesene MPD nicht wieder zu HLS', x.kind === 'dash' && x.role === 'manifest', x);
+  const SU = 'https://cdn.example/x/seg-1.m4s';
+  r4.observe(c4, { url: SU, role: 'segment', provenance: { kind: 'manifest', origin: 'hls-media' }, association: { state: 'unbound', evidence: [] } });
+  const rs = r4.observe(c4, { url: SU, kind: 'dash', role: 'manifest', manifest: sum(), provenance: { kind: 'network', origin: 'x' }, association: { state: 'unbound', evidence: [] } });
+  const y = r4.snapshot(c4).find((e) => e.role === 'segment');
+  check('Stück bleibt Stück: keine Manifest-Rolle, keine Zusammenfassung', rs.ok && y && y.role === 'segment' && y.kind !== 'dash' && y.manifest === null, y);
+  const IU = 'https://cdn.example/x/init.mp4';
+  r4.observe(c4, { url: IU, role: 'init', provenance: { kind: 'manifest', origin: 'hls-map' }, association: { state: 'unbound', evidence: [] } });
+  r4.observe(c4, { url: IU, kind: 'dash', role: 'manifest', manifest: sum(), provenance: { kind: 'network', origin: 'x' }, association: { state: 'unbound', evidence: [] } });
+  const z = r4.snapshot(c4).find((e) => e.role === 'init');
+  check('Init-Datei bleibt Init-Datei', z && z.role === 'init' && z.kind === 'mp4' && z.manifest === null, z);
+  const OU = 'https://cdn.example/x/other.m3u8';
+  r4.observe(c4, { url: OU, role: 'master', provenance: { kind: 'network', origin: 'start-timing' }, association: { state: 'ambiguous', evidence: ['start-timing'] } });
+  const bad = r4.observe(c4, { url: OU, kind: 'dash', role: 'manifest', manifest: sum({ error: 'parse', type: 'unknown', periods: 0, adaptationSets: 0,
+    representations: 0, duration: null, addressing: [], tracks: [] }), provenance: { kind: 'network', origin: 'x' }, association: { state: 'unbound', evidence: [] } });
+  const w = r4.snapshot(c4).find((e) => e.sourceId === bad.sourceId);
+  check('nicht auswertbares MPD (nur Fehlercode) überstimmt eine HLS-Einstufung nicht', bad.ok && w.kind === 'hls' && w.role === 'master' && w.manifest === null, w);
+}
 // ---------- MP4/HLS unverändert ----------
 const reg3 = A.createMediaRegistry({ random: () => 'kd' + (++n).toString(16).padStart(6, '0'), docKey: () => 'doc3' });
 const c3 = reg3.contextFor({ addEventListener() {} });

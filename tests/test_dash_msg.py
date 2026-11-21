@@ -154,10 +154,10 @@ with sync_playwright() as p:
         return got[0]
     MAN = ('DASH-Manifest: VOD · Perioden 1 · AdaptationSets 1 · Darstellungen 1 · Video 1 (vp9 ×1; mp4; bis 360p) · Audio 0 · Text 0 · Bild 0'
            ' · Adressierung template-duration · Schutz angegeben: nein (Verschlüsselung damit nicht ausgeschlossen)')
-    for m, bind in (('a', 'ambiguous(start-timing)'), ('b', 'bound(segments-loaded)')):
+    for m, bind in (('a', r'ambiguous\(start-timing\)'), ('b', r'bound\([^)]*dash-segments')):   # gebunden nur über die Stückfolge
         dg = anon_diag(m)
         lines = [l for l in dg.split('\n') if 'dash:' in l or 'DASH-Manifest' in l or 'Listen gelesen' in l]
-        check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('vermutet' if m == 'a' else 'gebunden', bind), re.search(r'dash:manifest · Bindung ' + re.escape(bind), dg), lines)
+        check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('vermutet' if m == 'a' else 'gebunden', bind), re.search(r'dash:manifest · Bindung ' + bind, dg), lines)
         check('… Manifest eingeordnet (VOD, 1 Periode, vp9/mp4 bis 360p, Template mit Dauer, Schutz nicht angegeben ≠ unverschlüsselt)', MAN in dg, lines)
         check('… Netzwerk: 1 gelesenes DASH-Manifest; Download unavailable(stream-not-supported)', 'davon DASH-Manifeste 1' in dg and 'Download unavailable(stream-not-supported)' in dg, lines)
         check('… anonym: keine Adresse, kein Host, kein Pfad', not re.search(r'://|127\.0\.0|localhost|/x/|manifest\.mpd|seg0', dg), dg[:300])

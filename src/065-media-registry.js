@@ -67,13 +67,20 @@
     function merge(s, v) {
       let ch = false;
       const set = (k, x) => { if (s[k] !== x) { s[k] = x; ch = true; } };
-      if (s.kind === 'unknown' && v.kind !== 'unknown') set('kind', v.kind);
-      else if (v.provenance.kind === 'manifest' && v.kind !== 'unknown') set('kind', v.kind);
-      if (ROLE_RANK[v.role] > ROLE_RANK[s.role]) set('role', v.role);   // Rolle schlägt Endung: ein Stück bleibt ein Stück
-      // DASH-Manifest: die gelesene Manifest-Rolle ersetzt eine nur nach HLS-Muster geratene Listen-Rolle (gleicher Rang)
-      else if (v.role === 'manifest' && s.kind === 'dash' && (s.role === 'master' || s.role === 'media-playlist')) set('role', 'manifest');
-      // neueste gültige Zusammenfassung des Manifests (ein Manifest kann neu geladen werden, Live ändert sich)
-      if (v.manifest && JSON.stringify(v.manifest) !== JSON.stringify(s.manifest)) { s.manifest = v.manifest; ch = true; }
+      // Der gelesene Inhalt ist ein gültiges MPD: das überstimmt eine nur aus der Adresse geratene Art/Rolle (z. B. HLS wegen
+      // „.m3u8“) – Art dash und Rolle manifest immer zusammen. Stücke, Init-Dateien und Spuren bleiben, was sie sind.
+      const part = s.role === 'segment' || s.role === 'init' || s.role === 'track';
+      const mpd = !!v.manifest && !v.manifest.error && v.kind === 'dash' && v.role === 'manifest';
+      if (mpd && !part) { set('kind', 'dash'); set('role', 'manifest'); }
+      else {
+        if (s.kind === 'unknown' && v.kind !== 'unknown') set('kind', v.kind);
+        else if (v.provenance.kind === 'manifest' && v.kind !== 'unknown') set('kind', v.kind);
+        if (ROLE_RANK[v.role] > ROLE_RANK[s.role]) set('role', v.role);   // Rolle schlägt Endung: ein Stück bleibt ein Stück
+        // DASH-Manifest: die gelesene Manifest-Rolle ersetzt eine nur nach HLS-Muster geratene Listen-Rolle (gleicher Rang)
+        else if (v.role === 'manifest' && s.kind === 'dash' && (s.role === 'master' || s.role === 'media-playlist')) set('role', 'manifest');
+      }
+      // neueste gültige Zusammenfassung des Manifests (ein Manifest kann neu geladen werden, Live ändert sich) – nur an Manifesten
+      if (v.manifest && s.role === 'manifest' && s.kind === 'dash' && JSON.stringify(v.manifest) !== JSON.stringify(s.manifest)) { s.manifest = v.manifest; ch = true; }
       if (ASSOC_RANK[v.association.state] > ASSOC_RANK[s.association.state]) { s.association.state = v.association.state; ch = true; }
       v.association.evidence.forEach((e) => {
         if (s.association.evidence.indexOf(e) < 0 && s.association.evidence.length < MEDIA_LIMITS.evidence) { s.association.evidence.push(e); ch = true; }
@@ -185,6 +192,9 @@
     const o = { url: u, provenance: { kind: prov, origin: origin }, association: { state: state, evidence: evidence.slice() } };
     let role = 'unknown';
     try { role = mediaRoleHint(u); } catch (e) {}
+    // Als DASH nur vermutet (Endung .mpd bzw. Content-Type), aber der gelesene Text war kein gültiges MPD: kein Eintrag –
+    // der Inhalt widerlegt die Vermutung (kein beliebiges XML als Manifest, auch nicht als „vermutlich DASH“)
+    try { if (role !== 'manifest' && mediaKindOf(u, '') === 'dash' && dashRejectedKeys.has(urlKey(u))) return null; } catch (e) {}
     if (role !== 'unknown') o.role = role;
     // gelesenes DASH-Manifest: Zusammenfassung (nur Kategorien/Zahlen), angegebener Schutz, angegebene Dauer (VOD).
     // Fehlt ContentProtection, bleibt der Schutz „unbekannt“ – nie „unverschlüsselt“.
@@ -200,6 +210,19 @@
     }
     Object.assign(o, extra || {});
     return mediaRegistry.observe(ctx, o);
+  }
+  // DASH (S2): ein gelesenes MPD gilt als an GENAU dieses Video gebunden, wenn seine Stücke nachweislich in Folge geladen
+  // wurden (dashBindingFor/dashBindDecision); sonst wird hier nichts eingetragen (zeitliche Nähe bleibt ambiguous).
+  function dashObserveFor(v, ctx) {
+    if (!v || !ctx) return;
+    const b = dashBindingFor(v);
+    b.list.forEach((e) => {
+      const r = b.res[e.key];
+      if (!r || r.state !== 'bound') return;
+      const s = sources.find((x) => urlKey(x.u) === e.key);
+      const u = s ? s.u : (PLAYLIST_RE.test(e.p.u) ? e.p.u : e.p.u.split('#')[0] + '#kadri.mpd');
+      mediaPut(ctx, u, 'network', 'dash-segments', 'bound', ['dash-segments']);
+    });
   }
   // Leichte Adapter (auch beim Öffnen des Download-Menüs): Element, <source>-Kinder, vorhandener Site-Adapter
   function mediaObserveLight(v, ctx) {
@@ -242,5 +265,6 @@
       if (m) mediaPut(ctx, x.u, m[1], m[2], m[3], m[4], q(x.u));
       else if (!/^MP4 mit Ton/.test(how)) mediaPut(ctx, x.u, 'page-metadata', 'near', 'ambiguous', ['near'], q(x.u));
     });
+    try { dashObserveFor(v, ctx); } catch (e) {}
     return ctx;
   }

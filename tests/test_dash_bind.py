@@ -1,0 +1,177 @@
+# S2 DASH im echten Chromium mit der Erweiterung: Bindung eines gelesenen MPD an das laufende Video nur über tatsächlich
+# beobachtete Stückabrufe in Folge (je Darstellung) – nie über zeitliche Nähe. Video per MSE aus fMP4-Stücken.
+# Fälle: BaseURL-Kette (MPD ohne Endung, nur Content-Type), SegmentTimeline ($Time$), SegmentList, Namensraum-Präfix
+# (dash:MPD), MPD unter einer .m3u8-Adresse (Inhalt schlägt Adresse), konkurrierende MPDs, zu wenige Stücke, Stücke aus
+# einem Web-Worker (unsichtbar → ambiguous), kein MPD (feed mit eingebettetem dash:MPD → verworfen), Medienwechsel.
+# Geprüft über den Hinweis im Download-Menü (kein Angebot!) und die anonymisierte Diagnose (Treffer, Grund).
+#   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>   (vorher: node tools/build.js --test)
+import os, re, time, json, threading, http.server, urllib.parse
+from common import *   # noqa: E402
+
+HLSDIR = os.path.join(WEB, 'hls')
+HITS = []
+VID = 'http://127.0.0.1:8791'
+N, SEG = 12, 5.12
+NS = 'urn:mpeg:dash:schema:mpd:2011'
+def mpd(body, base='', prefix=''):
+    p = prefix + ':' if prefix else ''
+    x = ('<?xml version="1.0"?><{p}MPD xmlns{c}="{ns}" type="static" mediaPresentationDuration="PT61.44S" minBufferTime="PT2S">' + ('<{p}BaseURL>' + base + '</{p}BaseURL>' if base else '') +
+         '<{p}Period><{p}AdaptationSet mimeType="video/mp4" codecs="vp09.00.10.08">' + body + '</{p}AdaptationSet></{p}Period></{p}MPD>')
+    return x.replace('{p}', p).replace('{c}', ':' + prefix if prefix else '').replace('{ns}', NS).encode()
+TPL_NUM = '<SegmentTemplate initialization="init.mp4" media="seg$Number%03d$.m4s" startNumber="0" duration="5120" timescale="1000"/><Representation id="v" bandwidth="400000" width="640" height="360"/>'
+TPL_TIME = ('<SegmentTemplate initialization="init.mp4" media="$Time$.m4s" timescale="1000"><SegmentTimeline><S t="0" d="5120" r="11"/></SegmentTimeline></SegmentTemplate>'
+            '<Representation id="v" bandwidth="400000" width="640" height="360"/>')
+LIST = ('<Representation id="v" bandwidth="400000" width="640" height="360"><SegmentList timescale="1000" duration="5120"><Initialization sourceURL="init.mp4"/>' +
+        ''.join('<SegmentURL media="a-%d.m4s"/>' % i for i in range(N)) + '</SegmentList></Representation>')
+# je Fall: geladene Manifeste, Stückquelle der Wiedergabe, Worker, Medienwechsel
+CASES = {
+    'chain':   {'mpd': ['/y/c/manifest'], 'play': 'num:/y/segs/'},
+    'time':    {'mpd': ['/y/t/manifest.mpd'], 'play': 'time:/y/t/'},
+    'list':    {'mpd': ['/y/l/manifest.mpd'], 'play': 'list:/y/l/'},
+    'prefix':  {'mpd': ['/y/p/manifest'], 'play': 'num:/y/segs/'},
+    'hlsurl':  {'mpd': ['/y/h/stream.m3u8'], 'play': 'num:/y/segs/'},
+    'compete': {'mpd': ['/y/k1/manifest.mpd', '/y/k2/manifest.mpd'], 'play': 'num:/y/segs/'},
+    'few':     {'mpd': ['/y/f/manifest.mpd'], 'play': 'num:/y/z/', 'extra': ['/y/f/seg000.m4s', '/y/f/seg001.m4s']},
+    'worker':  {'mpd': ['/y/w/manifest'], 'play': 'num:/y/segs/', 'worker': True},
+    'notmpd':  {'mpd': ['/y/n/feed'], 'play': 'num:/y/segs/'},
+    'switch':  {'mpd': ['/y/c/manifest'], 'play': 'num:/y/segs/', 'switch': 'num:/y/z/'},
+}
+MPDS = {'/y/c/manifest': mpd(TPL_NUM, base='/y/segs/'), '/y/t/manifest.mpd': mpd(TPL_TIME), '/y/l/manifest.mpd': mpd(LIST),
+        '/y/p/manifest': mpd(TPL_NUM.replace('<Seg', '<dash:Seg').replace('<Rep', '<dash:Rep'), base='/y/segs/', prefix='dash'),
+        '/y/h/stream.m3u8': mpd(TPL_NUM, base='/y/segs/'), '/y/k1/manifest.mpd': mpd(TPL_NUM, base='/y/segs/'),
+        '/y/k2/manifest.mpd': mpd(TPL_NUM, base='/y/segs/'), '/y/f/manifest.mpd': mpd(TPL_NUM), '/y/w/manifest': mpd(TPL_NUM, base='/y/segs/'),
+        '/y/n/feed': ('<?xml version="1.0"?><feed xmlns:dash="%s"><title>x</title><dash:MPD type="static"><dash:Period/></dash:MPD></feed>' % NS).encode()}
+PAGE = '''<!doctype html><html><head><meta name=viewport content="width=device-width,initial-scale=1"><title>DASH</title></head>
+<body style="margin:0;background:#000"><video id=v muted autoplay playsinline style="width:100%%;height:100vh;display:block"></video><script>
+const C = %s, v = document.getElementById("v");
+const name = (p, i) => { const [k, b] = p.split(":"); return b + (k === "time" ? String(Math.round(i * 5120)) + ".m4s" : k === "list" ? "a-" + i + ".m4s" : "seg" + String(i).padStart(3, "0") + ".m4s"); };
+const initOf = (p) => p.split(":")[1] + "init.mp4";
+const WORKER = "onmessage = async (e) => { const r = await fetch(e.data); postMessage(await r.arrayBuffer()); };";
+const viaWorker = (u) => new Promise((res) => { const w = window.__w || (window.__w = new Worker(URL.createObjectURL(new Blob([WORKER], { type: "text/javascript" }))));
+  w.onmessage = (e) => res(e.data); w.postMessage(new URL(u, location.href).href); });
+const get = async (u) => (C.worker ? viaWorker(u) : (await fetch(u)).arrayBuffer());
+const play = (p) => new Promise((done) => {
+  const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
+  ms.addEventListener("sourceopen", async () => {
+    const sb = ms.addSourceBuffer('video/mp4; codecs="vp09.00.10.08,opus"');
+    const app = (b) => new Promise((res) => { sb.addEventListener("updateend", res, { once: true }); sb.appendBuffer(b); });
+    await app(await get(initOf(p)));
+    v.play().catch(() => {});
+    for (let i = 0; i < %d; i++) await app(await get(name(p, i)));
+    ms.endOfStream(); done();
+  });
+});
+(async () => {
+  for (const m of C.mpd) await (await fetch(m)).text();
+  for (const x of (C.extra || [])) await (await fetch(x)).arrayBuffer();
+  await play(C.play);
+  window.__played = 1;
+  if (C.switch) { await new Promise((r) => setTimeout(r, 4500)); await play(C["switch"]); window.__played = 2; }
+})();
+</script></body></html>'''
+
+class M(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path); q = dict(urllib.parse.parse_qsl(u.query))
+        HITS.append({'path': u.path, 'browser': bool(self.headers.get('Sec-Fetch-Mode'))})
+        body, ctype = None, ''
+        if u.path == '/y/page.html': body, ctype = (PAGE % (json.dumps(CASES[q['m']]), N)).encode(), 'text/html; charset=utf-8'
+        elif u.path in MPDS: body, ctype = MPDS[u.path], 'application/dash+xml'
+        else:
+            m = re.match(r'^/y/\w+/(?:seg(\d{3})\.m4s|a-(\d+)\.m4s|(\d+)\.m4s|(init)\.mp4)$', u.path)
+            if m:
+                f = 'init.mp4' if m.group(4) else 'seg%03d.m4s' % (int(m.group(1)) if m.group(1) else int(m.group(2)) if m.group(2) else int(m.group(3)) // 5120)
+                body, ctype = open(os.path.join(HLSDIR, f), 'rb').read(), 'video/mp4'
+        if body is None:
+            self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
+        self.send_response(200); self.send_header('Content-Type', ctype); self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store'); self.end_headers()
+        try: self.wfile.write(body)
+        except Exception: pass
+srv = http.server.ThreadingHTTPServer(('127.0.0.1', 8791), M); srv.daemon_threads = True
+threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+def wait(pred, secs=10):
+    end = time.time() + secs
+    while time.time() < end:
+        try:
+            if pred(): return True
+        except Exception: pass
+        time.sleep(0.15)
+    return False
+UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot; })()'
+def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
+DB = 'DASH-Stream erkannt – derzeit nicht unterstützt'
+DS = 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt'
+OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …')
+
+helper = ChannelHelper()
+check('echter Kanal-Helfer mit MP4- und HLS-Engine', helper.ready.startswith('READY') and helper.cmd('downloads 8791') == 'DOWNLOADS on' and helper.cmd('hls on') == 'HLS on')
+with sync_playwright() as p:
+    ctx, sw, udir = launch(p)
+    ext_id = sw.url.split('/')[2]
+    check('Kopplung über die Einstellungsseite', pair_helper(ctx, ext_id, helper) == 'Verbunden')
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
+    pg = ctx.pages[0] if ctx.pages else ctx.new_page()
+    errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    def open_case(m, played=1):
+        pg.goto(VID + '/y/page.html?m=' + m); pg.bring_to_front()
+        pg.wait_for_function('(n) => window.__played >= n', arg=played, timeout=40000)
+        pg.evaluate('() => { document.getElementById("v").muted = false; }')
+        time.sleep(1.2)
+    def hint():
+        wait(lambda: pg.evaluate(js('return !!r.querySelector(".pill.on");')), 15); time.sleep(0.3)
+        pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
+        wait(lambda: any(x != 'Schließen' for x in (pg.evaluate(js('return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent);')) or [])), 15)
+        it = pg.evaluate(js('return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent);')) or []
+        pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;')); time.sleep(0.3)
+        return it
+    def diag():
+        tab = sw.evaluate('async () => (await chrome.tabs.query({})).find((t) => /\\/y\\/page\\.html/.test(t.url)).id')
+        sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" }, { frameId: 0 })', tab)
+        wait(lambda: pg.evaluate(js('return !!r.querySelector(".diag .danon");')), 8)
+        pg.evaluate('() => navigator.clipboard.writeText("-")')
+        pg.evaluate(js('r.querySelector(".diag .danon").click(); return true;'))
+        got = ['']
+        wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+        pg.evaluate(js('const b = Array.from(r.querySelectorAll(".diag button")).find((x) => x.textContent === "Schließen"); if (b) b.click(); return true;'))
+        return got[0]
+    def lines(dg): return [l for l in dg.split('\n') if 'dash:' in l or 'DASH' in l or 'MPD-Texte' in l]
+    anon = lambda dg: not re.search(r'://|127\.0\.0|/y/|manifest\.mpd|/manifest|seg0|stream\.m3u8|a-\d', dg)
+    n0 = len([x for x in HITS if not x['browser']])
+
+    for m, what in (('chain', 'BaseURL der MPD-Ebene (MPD ohne Endung, nur Content-Type)'), ('time', 'SegmentTimeline ($Time$)'), ('list', 'SegmentList'),
+                    ('prefix', 'Namensraum-Präfix dash:MPD über die ganze Erkennungskette')):
+        open_case(m); it = hint(); dg = diag()
+        check('%s: Stücke in Folge geladen → gebunden („%s“), kein Angebot' % (what, DB), DB in it and not any(x in it for x in OFFERS), it)
+        check('… Diagnose: dash:manifest bound(… dash-segments), Stückprüfung bound (stueckfolge) mit %d Treffern' % N,
+              re.search(r'dash:manifest · Bindung bound\([^)]*dash-segments', dg) and re.search(r'DASH-Stückprüfung 1/1: Treffer %d · Darstellungen mit Treffern 1 · längste Folge %d · Init-Abrufe 1 .* Ergebnis bound \(stueckfolge\)' % (N, N), dg)
+              and 'DASH-Manifest: VOD' in dg and anon(dg), lines(dg))
+
+    open_case('hlsurl'); it = hint(); dg = diag()
+    check('MPD unter einer .m3u8-Adresse: Inhalt schlägt Adresse – dash:manifest gebunden, kein HLS-Angebot', DB in it and not any(x in it for x in OFFERS)
+          and re.search(r'dash:manifest · Bindung bound', dg) and 'hls:' not in dg and anon(dg), (it, lines(dg)))
+
+    open_case('compete'); it = hint(); dg = diag()
+    check('zwei MPDs beschreiben dieselben geladenen Stücke: keines gebunden (konkurrenz), nur „vermutlich“', DS in it and DB not in it
+          and dg.count('Ergebnis ambiguous (konkurrenz)') == 2 and 'Bindung bound(' not in dg, (it, lines(dg)))
+    open_case('few'); it = hint(); dg = diag()
+    check('nur 2 Stücke des MPD geladen: ambiguous (zu-wenig-folge), kein „erkannt“', DB not in it and 'Ergebnis ambiguous (zu-wenig-folge)' in dg
+          and re.search(r'Treffer 2 · Darstellungen mit Treffern 1 · längste Folge 2', dg), (it, lines(dg)))
+    open_case('worker'); it = hint(); dg = diag()
+    check('Stücke aus einem Web-Worker (in diesem Fenster unsichtbar): keine Treffer → ambiguous, nie gebunden', DB not in it and 'Ergebnis ambiguous (keine-treffer)' in dg
+          and 'Bindung bound(' not in dg, (it, lines(dg)))
+    open_case('notmpd'); it = hint(); dg = diag()
+    check('kein MPD (feed mit eingebettetem dash:MPD, Content-Type DASH): verworfen und gezählt, kein Manifest-Eintrag, kein DASH-Hinweis',
+          'MPD-Texte verworfen: not-mpd ×1' in dg and 'dash:manifest' not in dg and 'DASH-Stückprüfung' not in dg and not any('DASH' in x for x in it), (it, lines(dg)))
+    open_case('switch', played=2); time.sleep(1.0); it = hint(); dg = diag()
+    check('Medienwechsel (neues Medium ohne Stücke dieses MPD): die alten Treffer zählen nicht mehr – nicht gebunden', DB not in it
+          and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
+    check('nichts beim Helfer angefragt (kein Plan, kein Download)', len([x for x in HITS if not x['browser']]) == n0)
+    check('keine Seitenfehler', not errs, errs)
+    ctx.close()
+helper.stop()
+srv.shutdown()
+shutdown()
+done()
