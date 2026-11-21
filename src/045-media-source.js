@@ -32,7 +32,8 @@
     if (tag) return tag[1].toLowerCase() === 'mpd' ? 'dash' : 'hls';
     if (/\.m3u8?$/.test(p) || m === 'application/vnd.apple.mpegurl' || m === 'application/x-mpegurl' || m === 'audio/mpegurl') return 'hls';
     if (/\.mpd$/.test(p) || m === 'application/dash+xml') return 'dash';
-    if (/\.(mp4|m4v)$/.test(p) || m === 'video/mp4') return 'mp4';
+    // (…/123.mp4/ mit Schrägstrich am Ende: übliche Form von Video-Seiten wie get_file – ebenfalls die MP4-Datei)
+    if (/\.(mp4|m4v)\/?$/.test(p) || m === 'video/mp4') return 'mp4';
     if (/\.(webm|ogv|ogg|mkv|mov|avi|flv|ts|m4s|m4a|aac|mp3)$/.test(p) || /^(video|audio)\/(webm|ogg|x-matroska|quicktime|mp2t)$/.test(m)) return 'unsupported';
     return 'unknown';
   }
@@ -86,12 +87,17 @@
   }
   // Downloadstatus einer Quelle (nur Beurteilung – startet nichts). attemptable = nach bekannten Kriterien bewusst
   // auswählbar; der Helfer prüft beim Abruf selbst (Netzgrenzen, Status, Länge, Typ, Signatur). Kein Erfolgsversprechen.
+  // Vom Kadri-Player selbst nachweislich abgespielte Datei (Herkunft player, Beleg own-player-loaded, Bilddaten geladen):
+  // ihr Typ ist oft nicht an der Adresse erkennbar (ohne Endung). Dann trotzdem auswählbar – die Helfer-App prüft
+  // Content-Type und MP4-Signatur selbst und lehnt anderes ab. Nie für Angaben der Seite, Adapter oder Netzbeobachtungen.
+  const mediaOwnPlayed = (s) => s.kind === 'unknown' && s.browser === 'loaded' && s.association.state === 'bound' &&
+    s.association.evidence.indexOf('own-player-loaded') >= 0 && s.provenance.some((p) => p.kind === 'player');
   function mediaDownloadState(s) {
     if (s.kind === 'hls' || s.kind === 'dash' || s.role === 'master' || s.role === 'media-playlist') return { state: 'unavailable', reason: 'stream-not-supported' };
     if (s.kind === 'unsupported') return { state: 'unavailable', reason: 'container-not-supported' };
     if (s.role === 'segment' || s.role === 'init' || s.role === 'track') return { state: 'unavailable', reason: 'not-standalone' };
     if (s.protection === 'encrypted' || s.protection === 'drm') return { state: 'unavailable', reason: 'protected' };
-    if (s.kind !== 'mp4') return { state: 'candidate', reason: 'type-unknown' };
+    if (s.kind !== 'mp4' && !mediaOwnPlayed(s)) return { state: 'candidate', reason: 'type-unknown' };
     if (s.association.state !== 'bound') return { state: 'candidate', reason: s.association.state === 'ambiguous' ? 'ambiguous' : 'not-bound' };
     if (s.browser === 'failed') return { state: 'candidate', reason: 'browser-failed' };
     return { state: 'attemptable', reason: null };
@@ -110,13 +116,13 @@
   function selectDownloads(snapshot, caps) {
     const out = [];
     (snapshot || []).forEach((s, i) => {
-      if (s.kind !== 'mp4') return;
+      if (s.kind !== 'mp4' && !mediaOwnPlayed(s)) return;
       let d = mediaDownloadState(s);
       if (d.state === 'attemptable' && !(caps && caps.supported)) d = { state: 'unavailable', reason: 'helper-unavailable' };
       if (d.state === 'attemptable' && caps && caps.active === s.sourceId) d = { state: 'active', reason: null };
       const h = s.quality.status !== 'unknown' && s.quality.value.height ? s.quality.value.height : 0;
       out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, height: h, quality: s.quality.status,
-        identity: s.browser === 'loaded' ? 'played' : 'declared', loaded: mediaSourceLoaded(s), i: i });
+        identity: s.browser === 'loaded' ? 'played' : 'declared', loaded: mediaSourceLoaded(s), typeChecked: s.kind === 'mp4', i: i });
     });
     out.sort((a, b) => (Number(b.loaded) - Number(a.loaded)) || (b.height - a.height) || (a.i - b.i));
     out.forEach((x) => { delete x.i; });

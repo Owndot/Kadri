@@ -77,14 +77,30 @@ function verify(modelText, regText) {
   eq(reg.resolveSelection(ctx, hls.sourceId, hls.revision).reason, 'stream-not-supported', 'HLS not offered before P4');
   const unk = reg.observe(ctx, obs('https://cdn.example/media?id=1'));
   eq(reg.resolveSelection(ctx, unk.sourceId, unk.revision).reason, 'type-unknown', 'unknown type stays unknown');
+  // Eigene Wiedergabe des Kadri-Players: Typ an der Adresse unbekannt, aber nachweislich abgespielt → auswählbar (Typ prüft
+  // die Helfer-App). Nur mit Herkunft player + Beleg own-player-loaded + geladen; Seiten-/Element-/Adapterangaben nie.
+  const ownObs = (u, x) => obs(u, Object.assign({ provenance: { kind: 'player', origin: 'own-player' }, association: { state: 'bound', evidence: ['own-player-loaded'] }, browser: 'loaded' }, x || {}));
+  const ownU = reg.observe(ctx, ownObs('https://cdn.example/stream?id=7'));
+  eq(reg.resolveSelection(ctx, ownU.sourceId, ownU.revision), { ok: true, url: 'https://cdn.example/stream?id=7' }, 'own player played file without extension: attemptable');
+  const forged = reg.observe(ctx, obs('https://cdn.example/forged?id=8', { association: { state: 'bound', evidence: ['own-player-loaded'] }, browser: 'loaded' }));
+  eq(reg.resolveSelection(ctx, forged.sourceId, forged.revision).reason, 'type-unknown', 'element claim with own-player evidence is not own playback');
+  const adOwn = reg.observe(ctx, obs('https://cdn.example/ad?id=9', { provenance: { kind: 'adapter', origin: 'site-adapter' }, association: { state: 'bound', evidence: ['own-player-loaded'] }, browser: 'loaded' }));
+  eq(reg.resolveSelection(ctx, adOwn.sourceId, adOwn.revision).reason, 'type-unknown', 'adapter never counts as own playback');
+  const notLoaded = reg.observe(ctx, ownObs('https://cdn.example/stream?id=10', { browser: 'unknown' }));
+  eq(reg.resolveSelection(ctx, notLoaded.sourceId, notLoaded.revision).reason, 'type-unknown', 'own player without loaded data: not attemptable');
+  const ownWebm = reg.observe(ctx, ownObs('https://cdn.example/clip.webm'));
+  eq(reg.resolveSelection(ctx, ownWebm.sourceId, ownWebm.revision).reason, 'container-not-supported', 'own player WebM stays unsupported');
+  const kvs = reg.observe(ctx, obs('https://cdn.example/get_file/1/ab/123/123.mp4/?rnd=5'));
+  eq(reg.resolveSelection(ctx, kvs.sourceId, kvs.revision), { ok: true, url: 'https://cdn.example/get_file/1/ab/123/123.mp4/?rnd=5' }, 'path …/123.mp4/ is an MP4 file');
   const drm = reg.observe(ctx, obs('https://cdn.example/drm.mp4', { protection: 'drm' }));
   eq(reg.resolveSelection(ctx, drm.sourceId, drm.revision).reason, 'protected', 'protected source not offered');
   const snap = reg.snapshot(ctx);
   ok(!JSON.stringify(snap).includes('cdn.example'), 'snapshot carries no URL');
   ok(Object.isFrozen(snap) && Object.isFrozen(snap[0]), 'snapshot is read-only');
   const opts = A.selectDownloads(snap, { supported: true });
-  eq(opts.filter((o) => o.state === 'attemptable').map((o) => o.sourceId), [r1.sourceId], 'only the bound standalone MP4 is attemptable');
-  ok(opts.every((o) => snap.find((s) => s.sourceId === o.sourceId).kind === 'mp4'), 'download options are MP4 only');
+  eq(opts.filter((o) => o.state === 'attemptable').map((o) => o.sourceId).sort(), [r1.sourceId, ownU.sourceId, kvs.sourceId].sort(), 'only bound standalone MP4s and the own played file are attemptable');
+  ok(opts.every((o) => { const k = snap.find((s) => s.sourceId === o.sourceId).kind; return k === 'mp4' || (k === 'unknown' && o.sourceId === ownU.sourceId); }), 'download options are MP4 (or the own played file) only');
+  eq([opts.find((o) => o.sourceId === ownU.sourceId).typeChecked, opts.find((o) => o.sourceId === r1.sourceId).typeChecked], [false, true], 'type not known from the address is marked');
   eq(A.selectDownloads(snap, { supported: false }).filter((o) => o.state === 'attemptable').length, 0, 'no helper: nothing attemptable');
   eq(A.selectDownloads(snap, { supported: true, active: r1.sourceId }).find((o) => o.sourceId === r1.sourceId).state, 'active', 'active job marked');
   // R2-Nachtest: am Element genannt ≠ belegt dasselbe Video. Nur was der Browser in diesem Player geladen hat, gilt als
@@ -183,7 +199,8 @@ if (process.argv.includes('--mutations')) {
     [model, "if (!mediaOnlyKeys(o, MEDIA_OBS_KEYS)) return no('unknown-field');", ''],                            // free fields
     [model, "if (s.role === 'segment' || s.role === 'init' || s.role === 'track') return { state: 'unavailable', reason: 'not-standalone' };", ''], // role check removed
     [model, "if (s.association.state !== 'bound')", 'if (false)'],                                               // binding ignored
-    [model, "if (s.kind !== 'mp4') return { state: 'candidate', reason: 'type-unknown' };", ''],                  // unknown as mp4
+    [model, "if (s.kind !== 'mp4' && !mediaOwnPlayed(s)) return { state: 'candidate', reason: 'type-unknown' };", ''],   // unknown as mp4
+    [model, "s.association.evidence.indexOf('own-player-loaded') >= 0 && s.provenance.some((p) => p.kind === 'player')", 'true'],   // fremde Angaben als eigene Wiedergabe
     [model, "&& pv.kind !== 'player') return no('unverifiable-claim');", "&& false) return no('unverifiable-claim');"], // page data accepted as verified
     [model, "if (/\\.m3u8?$/.test(p)", "if (/\\.mp4/.test(p)) return 'mp4';\n    if (/\\.m3u8?$/.test(p)"],    // extension over path end
     [model, "if (s.protection === 'encrypted' || s.protection === 'drm')", 'if (false)'],

@@ -73,7 +73,7 @@
     try { link = SHOW_DOWNLOAD ? postUrlFor(v) : ''; } catch (e) {}
     const d = pageDlDirect(v);
     if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', fn: () => toYtdlnis(link) });
-    if (d && sameOrigin(d)) {
+    if (d && sameOrigin(d) && !IS_ANDROID_UA()) {
       items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => {
         toast('Download wird vorbereitet …');
         browserDownload(d).then((ok) => toast(ok ? 'Download an Browser übergeben'

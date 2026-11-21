@@ -307,6 +307,7 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     u.ctx.browserDownload = async (x) => { saved.push(x); return true; };
     u.ctx.shareUrl = () => {}; u.ctx.toYtdlnis = () => {};
     u.ctx.sameOrigin = () => true;   // Datei derselben Herkunft wie die Seite
+    u.ctx.IS_ANDROID_UA = () => false;
     u.toasts = []; u.ctx.toast = (m) => u.toasts.push(m);
     Object.assign(u.ctx, env || {});
     return Object.assign(u, { items: u.ctx.pageDlExternal(u.ctx.active, []), opened, saved });
@@ -326,6 +327,9 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
     x = ext(patch);
     check('alternatives: no browser file for ' + why, !x.items.some((i) => /Im Browser/.test(i.label)));
   }
+  x = ext({}, { IS_ANDROID_UA: () => true });
+  check('alternatives on Android: no browser download even for the same origin – only "Im Browser öffnen" and share',
+    x.items.map((i) => i.label).join('|') === 'Im Browser öffnen|Teilen …');
   x = ext({}, { sameOrigin: () => false });
   check('alternatives (other server): no misleading browser download – only "Im Browser öffnen" and share',
     x.items.map((i) => i.label).join('|') === 'Im Browser öffnen|Teilen …');
@@ -340,7 +344,7 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   nh.ctx.SHOW_DOWNLOAD = true; nh.ctx.postUrlFor = () => 'https://private.invalid/post/1';
   let ytdl = 0;
   nh.ctx.toYtdlnis = () => { ytdl++; }; nh.ctx.shareUrl = () => {}; nh.ctx.window = { open: () => ({}) }; nh.ctx.browserDownload = async () => true;
-  nh.ctx.sameOrigin = () => false;
+  nh.ctx.sameOrigin = () => false; nh.ctx.IS_ANDROID_UA = () => false;
   nh.ctx.pageDlMenu = (title, items) => nhMenus.push(items);
   nh.ctx.onDownload = () => { ytdl++; };
   await nh.api.onPageDownload();

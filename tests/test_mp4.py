@@ -154,9 +154,14 @@ with sync_playwright() as p:
     # Datei von einem anderen Server (127.0.0.1:8791, Seite :8790): kein irreführender Browser-Download, nur „Im Browser öffnen“
     check('ohne Kopplung: kein Eintrag „%s“; fremder Server: nur „Im Browser öffnen“, kein „Im Browser herunterladen“' % ITEM,
           ITEM not in items and 'Im Browser öffnen' in items and 'Im Browser herunterladen' not in items and 'Im Browser speichern' not in items, items)
+    check('ohne Kopplung: Grund im Menü statt stillem Weglassen („nicht gekoppelt“)', any('nicht gekoppelt' in l for l in items), items)
     check('… nichts beim Helfer angefragt', not [x for x in MHITS if not x['browser']] and files(helper) == [])
-    close_player(pg)
+    # Kopplung bei offenem Player: beim nächsten Öffnen des Menüs wird die Helfer-App erneut gefragt (kein Neuöffnen nötig)
     check('Kopplung über die Einstellungsseite', pair_helper(ctx, ext_id, helper) == 'Verbunden')
+    pg.bring_to_front()
+    items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
+    check('nach der Kopplung: Menü fragt erneut, „%s“ erscheint ohne Neuöffnen des Players' % ITEM, any(l == ITEM for l, _ in items), items)
+    close_player(pg)
 
     # ---------- öffentliche MP4: Start nur nach Tipp ----------
     player(pg, page('/videos/pub.mp4?sig=SECRET-A'))
@@ -519,6 +524,27 @@ with sync_playwright() as p:
     check('… Werbung nie an den Helfer', len([x for x in MHITS if x['path'] == '/videos/ad.mp4' and not x['browser']]) == n_ad == 0)
     close_player(fr)
 
+    # ---------- Regression: der Player spielt eine direkte MP4 ohne Dateiendung; die Seite hat dafür keine passende
+    # Registrierung (Typ an der Adresse unbekannt). Angeboten wird sie aus der eigenen, nachweislichen Wiedergabe. ----------
+    n0 = len(helper_hits('/videos/noext')); pages0 = len(ctx.pages)
+    player(pg, page('/videos/noext?id=42')); t0 = len(toasts(pg))
+    items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
+    check('Ohne Dateiendung: „%s“ aus der eigenen Wiedergabe (Typ prüft die Helfer-App, diese Wiedergabe)' % ITEM,
+          any(l == ITEM and 'Typ prüft die Helfer-App' in s and 'diese Wiedergabe' in s for l, s in items), items)
+    check('… kein Browser-Download-Angebot für eine Datei eines anderen Servers', not any(l == 'Im Browser herunterladen' for l, _ in items), items)
+    url0 = pg.url
+    dl_menu(pg); ok = pick(pg, ITEM)
+    end = time.time() + 30
+    while time.time() < end and not any('Gespeichert in Download/Video-Assistent' in t for t in toasts(pg)[t0:]): time.sleep(0.2)
+    check('… Tipp startet einen Helfer-Auftrag, Datei fertig', ok and any('Gespeichert in Download/Video-Assistent' in t for t in toasts(pg)[t0:]), toasts(pg)[t0:])
+    nh = helper_hits('/videos/noext')[n0:]
+    check('… genau ein Helfer-Abruf, kein neuer Tab, keine Navigation', len(nh) == 1 and len(ctx.pages) == pages0 and pg.url == url0, (len(nh), len(ctx.pages), pg.url == url0))
+    close_player(pg)
+    # …/123.mp4/ (Schrägstrich am Ende, übliche Form von Video-Seiten): als MP4 erkannt
+    player(pg, page('/videos/kvs/123.mp4/?rnd=1'))
+    items = wait_item(pg, lambda it: any(l == ITEM for l, _ in it)); close_menu(pg)
+    check('Pfad …/123.mp4/: „%s“ mit MP4' % ITEM, any(l == ITEM and s.startswith('MP4') for l, s in items), items)
+    close_player(pg)
     # ---------- nichts Sensibles gespeichert oder angezeigt ----------
     stored = json.dumps(sw.evaluate('async () => await chrome.storage.local.get(null)'))
     check('Speicher der Erweiterung ohne URL, Pfad oder Token', not re.search(r'SECRET|8791|/videos/|\.mp4', stored), re.findall(r'SECRET[^"]*|/videos/[^"]*', stored))

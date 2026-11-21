@@ -284,7 +284,12 @@
     // Schleife, keine Wiederholung von selbst und kein Medienabruf (caps/find fragen nur den Helfer).
     // Zustand der Prüfung am Download-Knopf (im geschlossenen Shadow-DOM; nur Zustand und Zähler, nie eine Adresse) –
     // für die Diagnose der Tests, wenn ein erwarteter Eintrag fehlt.
-    const hdlMark = (s) => { try { bDl.dataset.hdl = s; bDl.dataset.hdlGen = String(st.hdl.gen); } catch (e) {} };
+    // Ist das Download-Menü offen, während die Prüfung läuft, zeigt es danach gleich den neuen Stand (Helfer-Eintrag oder Grund).
+    const hdlMark = (s) => {
+      st.hdl.state = s;
+      try { bDl.dataset.hdl = s; bDl.dataset.hdlGen = String(st.hdl.gen); } catch (e) {}
+      if (s !== 'pending' && s !== 'find' && s !== 'stale' && st.hdl.menuList && menuOpen() && menu.querySelector('.vmlist') === st.hdl.menuList) dlMenu(false, true);
+    };
     function hdlProbe() {
       if (typeof KADRI_DOWNLOAD !== 'function') return;   // (Firefox/Userscript: kein Kanal zur Helfer-App)
       const u = hdlPrimary();
@@ -298,6 +303,7 @@
         if (!current()) return;
         if (hdlPrimary() !== u) { drop('stale'); hdlProbe(); return; }   // (eine jetzt geeignete andere Quelle gleich prüfen)
         const v = r && r.ok && r.value;
+        st.hdl.err = (v && v.error) || (r && r.error && r.error.kind) || '';   // fester Code (z. B. unpaired), nie Text
         st.hdl.ok = !!(v && v.supported);
         st.hdl.hls = !!(v && v.supported && v.hls);   // P4b: nur ein Helfer, der HLS meldet (alte: nie)
         if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
@@ -423,6 +429,9 @@
       try { link = SHOW_DOWNLOAD ? postUrlFor(orig) : ''; } catch (e) {}
       const items = [];
       st.hdl.menu = false;
+      // Prüfung noch nicht fertig oder vorübergehend gescheitert: beim Öffnen erneut fragen (nur den Helfer, kein Medienabruf)
+      const channel = typeof KADRI_DOWNLOAD === 'function' && CONFIG.systemHelper !== false;
+      if (channel && !keep) hdlProbe();
       const opts = st.hdl.ok ? hdlOptions(!keep) : [];
       const can = opts.filter((o) => o.state === 'attemptable');
       const sOpts = st.hdl.ok ? hlsOptions({ hls: st.hdl.hls }) : [];
@@ -439,7 +448,7 @@
           // P4b: Streams – erst Plan (Qualität/Ton wählen), dann Start. Tatsächlich Geladenes (MP4 oder Stream) zuerst,
           // sonst bisherige Reihenfolge (stabile Sortierung).
           can.slice(0, 4).map((o) => ({ loaded: o.loaded, item: { label: 'Mit Helper herunterladen',
-            sub: 'MP4' + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' + tr('direkt in die Helfer-App · kein neuer Tab') + ' · ' +
+            sub: (o.typeChecked === false ? tr('Video (Typ prüft die Helfer-App)') : 'MP4') + (o.height ? ' · ' + o.height + 'p' : '') + ' · ' + tr('direkt in die Helfer-App · kein neuer Tab') + ' · ' +
               tr(hdlEvidenceText(o)), fn: () => hdlStart(o) } }))
             .concat(streams.slice(0, 2).map((o) => ({ loaded: o.loaded, item: { label: 'Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
               tr(hdlEvidenceText(o)), fn: () => hlsPlanMenu(o) } })))
@@ -452,10 +461,22 @@
         else if (sOpts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: Stream nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
         else if (sOpts.some((o) => o.reason === 'protected')) items.push({ label: 'Helfer-App: Stream geschützt', sub: 'verschlüsselt (DRM/AES) – nicht speicherbar', stay: true, fn: () => {} });
         else if (opts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: MP4 nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
+        else if (opts.some((o) => o.reason === 'browser-failed') || (st.mode === 'own' && (() => { const el = vid; return !!el.error; })())) items.push({ label: 'Helfer-App: Video lässt sich nicht abspielen', sub: 'nur nachweislich abspielbare Dateien werden angeboten', stay: true, fn: () => {} });
+        else if (d && /\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d)) items.push({ label: 'Helfer-App: Format nicht unterstützt', sub: 'die Helfer-App speichert MP4 und HLS (kein WebM/MOV)', stay: true, fn: () => {} });
+        else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
+      } else if (channel) {
+        // Helfer-Kanal vorhanden, Fähigkeit (noch) nicht bestätigt: Stand nennen statt den Helfer-Weg stillschweigend wegzulassen
+        const s = st.hdl.state;
+        if (s === 'pending' || s === 'find') items.push({ label: 'Helfer-App wird geprüft …', sub: 'Eintrag erscheint gleich hier', stay: true, fn: () => {} });
+        else if (s === 'unreachable') items.push(st.hdl.err === 'unpaired' || st.hdl.err === 'rejected' ? { label: pageDlHelperText(st.hdl.err), stay: true, fn: () => {} }
+          : { label: 'Helfer-App nicht erreichbar', sub: 'App öffnen und ⬇ erneut tippen', stay: true, fn: () => {} });
+        else if (s === 'unsupported') items.push({ label: 'Helfer-App: diese Version kann keine direkten Downloads', sub: 'Helfer-App aktualisieren', stay: true, fn: () => {} });
+        else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
       }
       if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
-      // Browser-Download nur bei einer Datei derselben Herkunft (sonst öffnet der Browser sie als Seite, siehe 105)
-      if (d && !browserFailed && sameOrigin(d)) items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => browserSave(d) });
+      // Browser-Download nur bei einer Datei derselben Herkunft (sonst öffnet der Browser sie als Seite, siehe 105) und nicht
+      // auf Android: dort öffnen Browser die Datei auch dann oft als Seite (Weiterleitung auf einen anderen Server)
+      if (d && !browserFailed && sameOrigin(d) && !IS_ANDROID_UA()) items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => browserSave(d) });
       if (d) {
         items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', fn: () => {
           const w = window.open(d, '_blank');
@@ -466,6 +487,7 @@
       if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => dlOut(() => shareUrl(link || d)) });
       if (!items.length) { toast('Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items, keep);
+      st.hdl.menuList = menu.querySelector('.vmlist');
     }
     // Tipp: immer die Auswahl (Helfer-App zuerst, dann YTDLnis, Browser, Teilen) – nie von selbst zur Videodatei
     // navigieren, keinen Browser-Download und keine andere App starten; gehandelt wird erst auf einen Eintrag.

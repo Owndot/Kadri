@@ -57,6 +57,9 @@
     setTimeout(() => a.remove(), 2000);
   }
   function sameOrigin(u) { try { return new URL(u, location.href).origin === location.origin; } catch (e) { return false; } }
+  // Android-Browser öffnen Videodateien auch mit download-Attribut oft als Seite (z. B. nach Weiterleitung auf einen
+  // anderen Server) – dort gibt es keinen verlässlichen „Im Browser herunterladen“-Weg
+  function IS_ANDROID_UA() { try { return /Android/i.test(navigator.userAgent || ''); } catch (e) { return false; } }
   // Nur die Kopfzeilen abfragen (1 Byte): sagt der Server "Anhang/Download"?
   function probeAttachment(u) {
     return new Promise((resolve) => {
