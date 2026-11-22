@@ -95,8 +95,11 @@ jobs:
           set -euo pipefail
           npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
           npx playwright install --with-deps chromium
+          pip install playwright==1.56.0          # dash_integration_check.js rechnet Kadris Fingerabdruck über tests/channel/dash_fp.py
+          python -m playwright install chromium
           sudo apt-get install -y xvfb ffmpeg
       - name: Exact test package against the real ChannelServer and DashEngine of the approved helper (nothing uploaded)
+        timeout-minutes: 25
         run: |
           set -euo pipefail
           (cd helper-harness/poc/pake-channel/core && rustup show active-toolchain)
