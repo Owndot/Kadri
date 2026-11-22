@@ -332,13 +332,11 @@ with sync_playwright() as p:
               and 'Bindung bound:own-player-loaded' in d, d)
         probe = [x for x in MHITS if x['path'] == '/videos/missing%d.mp4' % code and x['browser'] and not x['range']]
         # Seit b40e3f5 zwei Abrufe (A, B), C ohne Bestätigung nicht. Sicherheitsrelevant: nie Cookie/Authorization/Range, A ohne
-        # Referer, ein Referer höchstens die Seite. Befund S3D-REF-PRIV: auf privaten Zielen (hier 127.0.0.1) verdrängt Kadris
-        # Freigaberegel (allow, Priorität 20) die Referer-Regel (Priorität 1) – B kommt dann ohne Referer an. Eigene Prüfung unten.
+        # Referer, ein Referer höchstens die Seite. Ob B hier einen Referer trägt, wird bewusst NICHT erwartet: offener P2-Befund
+        # S3D-REF-PRIV (private Ziele wie 127.0.0.1: Kadris Freigaberegel verdrängt die Referer-Regel) – keine Norm, später beheben.
         check('HTTP %d: Vergleichsabrufe genau zweimal (A, B), nie Cookie, Authorization oder Range; A ohne Referer; ein Referer höchstens die Seite; C ohne Bestätigung nicht ausgeführt (Seite hatte ein Sitzungs-Cookie)' % code,
               len(probe) == 2 and not any(x['cookie'] or x['auth'] or x['range'] for x in probe) and any(not x['ref'] for x in probe)
               and all(not x['ref'] or x['ref'].startswith(B) for x in probe), probe)
-        check('HTTP %d: Befund S3D-REF-PRIV festgehalten – privates Ziel: auch B ohne Referer (Freigaberegel hat Vorrang); ändert sich das, Befund neu bewerten' % code,
-              [x['ref'] for x in probe] == ['', ''], probe)
         check('HTTP %d: Diagnose ohne Adresse' % code, not re.search(r'http:|127\.0\.0\.1|missing|\.mp4', d), d)
         check('HTTP %d: Diagnose belegt die Browser-Wiedergabe genau dieser Datei (dekodiertes Bild, Höhe beobachtet)' % code,
               'Identität diese Wiedergabe' in d and 'Höhe observed' in d and re.search(r'Wiedergabe beim Start: Bild 640x360 dekodiert, Bereitschaft [234]', d), d)
