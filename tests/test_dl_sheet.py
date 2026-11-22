@@ -193,15 +193,22 @@ with sync_playwright() as p:
 
     # ---------- Außentipp, Zurück, „Schließen“ ----------
     if not sheet_open(cdp): tap_dl(); wait(lambda: sheet_open(cdp), 10)
+    pos = lambda: pg.evaluate('() => [scrollX, scrollY, history.scrollRestoration]')
+    before = pos()   # (manche Chromium-Fassungen scrollen beim Wischen im Blatt die Seite mit – das ist dann der Stand)
     tap(pg, (vw / 2, 20))
     check('Tipp auf den Hintergrund (außerhalb) schließt', wait(lambda: not sheet_open(cdp), 5))
     check('… ohne Start, ohne Navigation', not helper_clip() and pg.url == url0)
-    tap_dl(); wait(lambda: sheet_open(cdp), 10)
+    # S3D-SHEET-BACK-141: das eigene Zurück nach dem Schließen darf die Seite nicht scrollen (Chromium 141 stellte den
+    # Stand vom Öffnen wieder her; das Scrollen blendete ⬇ kurz aus, ein sofortiger Tipp ging an die Seite)
+    tap_dl()   # sofort, ohne Pause
+    check('… sofort wieder antippbar: Blatt öffnet (kein Scrollsprung durch das eigene Zurück)', wait(lambda: sheet_open(cdp), 5))
+    check('… Seite nicht gescrollt, Scroll-Wiederherstellung der Seite unverändert (auto)', pos() == before and before[2] == 'auto', (pos(), before))
     check('offenes Blatt: genau ein eigener Verlaufseintrag, genau ein zusätzliches resize-/scroll-Listenerpaar', nav()[0] == base[0] + 1 and vv_listeners() == VV1, (nav(), base, vv_listeners(), VV0))
     android_back()
     check('Zurück-Taste schließt das Blatt', wait(lambda: not sheet_open(cdp), 5))
     time.sleep(0.8)
     check('… und bleibt auf der Seite (Video läuft weiter)', pg.url == url0 and nav()[:2] == base[:2] and pg.evaluate('() => !document.getElementById("v").paused'), (pg.url, nav(), base))
+    check('… Zurück-Taste: Seite nicht gescrollt, Scroll-Wiederherstellung der Seite wieder auto', pos() == before, (pos(), before))
 
     # ---------- mehrfach öffnen und schließen: keine zusätzlichen Listener übrig, Verlauf unverändert ----------
     for i in range(3):
@@ -210,6 +217,19 @@ with sync_playwright() as p:
     time.sleep(1.2)
     check('3× öffnen/schließen: keine zusätzlichen visualViewport-Listener übrig, Verlauf wie vorher, keine Navigation',
           vv_listeners() == VV0 and nav()[:2] == base[:2] and pg.url == url0, (vv_listeners(), VV0, nav(), base))
+
+    # ---------- Seite mit eigener Scroll-Wiederherstellung "manual": bleibt unangetastet ----------
+    pg.evaluate('() => { history.scrollRestoration = "manual"; }')
+    tap_dl(); wait(lambda: sheet_open(cdp), 10)
+    check('Seite mit "manual": während das Blatt offen ist unverändert', pg.evaluate('() => history.scrollRestoration') == 'manual')
+    android_back()
+    check('Seite mit "manual": Zurück-Taste schließt das Blatt', wait(lambda: not sheet_open(cdp), 5))
+    time.sleep(0.8)
+    tap_dl(); wait(lambda: sheet_open(cdp), 10)
+    tap(pg, (vw / 2, 20)); wait(lambda: not sheet_open(cdp), 5)
+    time.sleep(0.8)
+    check('Seite mit "manual": nach Zurück-Taste und Außentipp weiter "manual", auf der Seite', pg.evaluate('() => history.scrollRestoration') == 'manual' and pg.url == url0 and nav()[:2] == base[:2], (pg.evaluate('() => history.scrollRestoration'), nav(), base))
+    pg.evaluate('() => { history.scrollRestoration = "auto"; }')
 
     # ---------- schnell schließen und sofort wieder öffnen, dann Zurück-Taste ----------
     tap_dl(); wait(lambda: sheet_open(cdp), 10)

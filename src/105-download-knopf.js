@@ -339,6 +339,7 @@
   let pageDlBack = '';          // eigenes history.back() unterwegs: Kennung des Eintrags, den es verlassen soll
   let pageDlBackTimer = 0, pageDlBackTries = 0;
   let pageDlWantHist = false;   // Blatt offen, Verlaufseintrag erst setzen, wenn das eigene Zurück angewendet ist
+  let pageDlSR = false;         // Scroll-Wiederherstellung des Seiteneintrags für die Dauer des eigenen Eintrags ausgesetzt
   let pageDlFit = null;         // Anpassung an den sichtbaren Bereich (Systemleisten, Zoom, Tastatur)
   // visualViewport-Listener des bisherigen Blatts vollständig entfernen (beim Schließen und beim Ersetzen)
   function pageDlUnfit() {
@@ -361,11 +362,27 @@
     try { st = history.state; } catch (e) { return; }
     if (st !== null && (typeof st !== 'object' || Array.isArray(st))) return;
     const tok = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    // Rückkehr auf den Seiteneintrag (eigenes Zurück oder Zurück-Taste) darf die Seite nicht scrollen: manche Chromium-
+    // Fassungen (z. B. 141) stellen sonst den Stand vom Öffnen wieder her – die Seite springt, und das Scrollen blendet
+    // ⬇ kurz aus. Nur bei "auto" der Seite: für den Seiteneintrag vorübergehend "manual", der eigene Eintrag bleibt "auto".
+    let sr = '';
+    try { sr = history.scrollRestoration; if (sr === 'auto') history.scrollRestoration = 'manual'; } catch (e) { sr = ''; }
     try { history.pushState(Object.assign({}, st || {}, { __kadriDlSheet: tok }), '', location.href); pageDlHist = tok; } catch (e) {}
+    if (sr !== 'auto') return;
+    if (pageDlHist === tok) { try { history.scrollRestoration = 'auto'; } catch (e) {} pageDlSR = true; }
+    else { try { history.scrollRestoration = 'auto'; } catch (e) {} }   // kein Eintrag entstanden: Seite unverändert
+  }
+  // Wieder auf dem Seiteneintrag (kein eigener Eintrag mehr aktuell): dessen Scroll-Wiederherstellung zurück auf "auto".
+  // Erst nach dem Zurück, nicht in popstate selbst – die Wiederherstellung des Browsers folgt erst danach.
+  function pageDlSRRestore() {
+    if (!pageDlSR || pageDlHistTok()) return;
+    pageDlSR = false;
+    setTimeout(() => { try { if (!pageDlHistTok() && history.scrollRestoration === 'manual') history.scrollRestoration = 'auto'; } catch (e) {} }, 0);
   }
   // das eigene Zurück ist angewendet (der verlassene Eintrag ist nicht mehr der aktuelle): erst jetzt neu eintragen
   function pageDlBackSettled() {
     pageDlBack = ''; clearTimeout(pageDlBackTimer); pageDlBackTimer = 0;
+    pageDlSRRestore();
     if (pageDlWantHist) pageDlPushHist();
   }
   // Sicherheitsnetz ohne popstate: nur prüfen, nie selbst eintragen, solange der alte eigene Eintrag noch der aktuelle ist
@@ -400,6 +417,7 @@
     }
     // Zurück-Taste: der eigene Eintrag des offenen Blatts ist nicht mehr der aktuelle
     if (pageDlEl && pageDlHist && tok !== pageDlHist) { pageDlHist = ''; pageDlClose(true); }
+    pageDlSRRestore();
   });
   function pageDlMenu(title, items, here) {
     // eingebettetes Fenster, Knopf im Hauptfenster: die Auswahl erscheint dort (Aktionen bleiben hier, src/035)
