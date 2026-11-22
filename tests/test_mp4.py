@@ -53,8 +53,9 @@ class M(http.server.BaseHTTPRequestHandler):
         if gate:
             gate[0].set()
             if not gate[1].wait(15): return
-        # Vergleichsabruf der Diagnose (Browser ohne Cookies/Referer, nur 1 Byte): hier wie ein Server, der ohne Sitzung 404 gibt
-        if browser and q.get('anon404') == '1' and (self.headers.get('Range') or '') == 'bytes=0-0' and not self.headers.get('Referer') and not self.headers.get('Cookie'):
+        # Vergleichsabrufe der Diagnose (seit b40e3f5: A ohne Cookies/Referer, B mit Referer ohne Cookies, je eine normale
+        # GET-Anfrage ohne Range): hier wie ein Server, der ohne Sitzung 404 gibt
+        if browser and q.get('anon404') == '1' and not self.headers.get('Range') and not self.headers.get('Cookie'):
             self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
         if not browser and q.get('late404') == '1':   # Helfer bekommt 404 erst nach 4 s (Player ist dann schon zu)
             time.sleep(4); self.send_response(404); self.send_header('Content-Length', '0'); self.end_headers(); return
@@ -325,12 +326,19 @@ with sync_playwright() as p:
         player(pg, page('/videos/missing%d.mp4?missing=%d' % (code, code)))
         start_item(pg, '/videos/missing%d.mp4' % code, 'HTTP %d' % code)
         check('HTTP %d: Datei nicht gefunden' % code, wait_toast(pg, 'Datei nicht gefunden', 15), toasts(pg))
-        d = hdl_diag(pg, 'Browser ohne Cookies/Referer: HTTP')
-        check('HTTP %d: Diagnose trennt Helfer- und Browserantwort (Helfer %d, Browser ohne Sitzung 206)' % (code, code),
-              ('Grund http_%d' % code) in d and 'Browser ohne Cookies/Referer: HTTP 206' in d and 'Bindung bound:own-player-loaded' in d, d)
-        probe = [x for x in MHITS if x['path'] == '/videos/missing%d.mp4' % code and x['browser'] and x['range'] == 'bytes=0-0']
-        check('HTTP %d: Vergleichsabruf genau einmal, ohne Cookie und Referer (Seite hatte ein Sitzungs-Cookie)' % code,
-              len(probe) == 1 and not probe[0]['cookie'] and not probe[0]['ref'] and not probe[0]['auth'], probe)
+        d = hdl_diag(pg, 'C mit Browsersitzung n')
+        check('HTTP %d: Diagnose trennt Helfer- und Browserantwort (Helfer %d, Browser ohne Sitzung 200)' % (code, code),
+              ('Grund http_%d' % code) in d and 'A ohne Cookies/Referer HTTP 200 · B mit Referer, ohne Cookies HTTP 200 · C mit Browsersitzung nicht ausgeführt (nicht bestätigt)' in d
+              and 'Bindung bound:own-player-loaded' in d, d)
+        probe = [x for x in MHITS if x['path'] == '/videos/missing%d.mp4' % code and x['browser'] and not x['range']]
+        # Seit b40e3f5 zwei Abrufe (A, B), C ohne Bestätigung nicht. Sicherheitsrelevant: nie Cookie/Authorization/Range, A ohne
+        # Referer, ein Referer höchstens die Seite. Befund S3D-REF-PRIV: auf privaten Zielen (hier 127.0.0.1) verdrängt Kadris
+        # Freigaberegel (allow, Priorität 20) die Referer-Regel (Priorität 1) – B kommt dann ohne Referer an. Eigene Prüfung unten.
+        check('HTTP %d: Vergleichsabrufe genau zweimal (A, B), nie Cookie, Authorization oder Range; A ohne Referer; ein Referer höchstens die Seite; C ohne Bestätigung nicht ausgeführt (Seite hatte ein Sitzungs-Cookie)' % code,
+              len(probe) == 2 and not any(x['cookie'] or x['auth'] or x['range'] for x in probe) and any(not x['ref'] for x in probe)
+              and all(not x['ref'] or x['ref'].startswith(B) for x in probe), probe)
+        check('HTTP %d: Befund S3D-REF-PRIV festgehalten – privates Ziel: auch B ohne Referer (Freigaberegel hat Vorrang); ändert sich das, Befund neu bewerten' % code,
+              [x['ref'] for x in probe] == ['', ''], probe)
         check('HTTP %d: Diagnose ohne Adresse' % code, not re.search(r'http:|127\.0\.0\.1|missing|\.mp4', d), d)
         check('HTTP %d: Diagnose belegt die Browser-Wiedergabe genau dieser Datei (dekodiertes Bild, Höhe beobachtet)' % code,
               'Identität diese Wiedergabe' in d and 'Höhe observed' in d and re.search(r'Wiedergabe beim Start: Bild 640x360 dekodiert, Bereitschaft [234]', d), d)
@@ -366,11 +374,11 @@ with sync_playwright() as p:
         return full, anon
     full, anon = anon_diag()
     check('R3: Fehler nach Schließen des Players erscheint in der Diagnose (Helfer 404, Vergleich ohne Sitzung)',
-          'Grund http_404' in full and 'Browser ohne Cookies/Referer: HTTP 206' in full, re.findall(r'Helfer-Download:[^|]*', full))
+          'Grund http_404' in full and 'A ohne Cookies/Referer HTTP 200 · B mit Referer, ohne Cookies HTTP 200 · C mit Browsersitzung nicht ausgeführt' in full, re.findall(r'Helfer-Download:[^|]*', full))
     check('R3: Wiedergabe-Beleg vom Start bleibt; Nachbeobachtung bei geschlossenem Player: nicht prüfbar',
           'Wiedergabe beim Start: Bild 640x360 dekodiert' in full and 'nach dem Fehler: Player zu oder anderes Medium' in full, re.findall(r'Helfer-Download:[^|]*', full))
     check('Anonymisierte Diagnose: Zustand, Grundcode und Vergleich enthalten',
-          'anonymisierte Diagnose' in anon and 'Grund http_404' in anon and 'Browser ohne Cookies/Referer: HTTP 206' in anon and 'Player: geschlossen' in anon, anon)
+          'anonymisierte Diagnose' in anon and 'Grund http_404' in anon and 'A ohne Cookies/Referer HTTP 200 · B mit Referer, ohne Cookies HTTP 200' in anon and 'Player: geschlossen' in anon, anon)
     leaks = re.findall(r'127\.0\.0\.1|8791|8790|https?:|/videos|late404|missing|\.mp4\b|SECRET|abc123|sig=|token=|Testclip|mp4\.html', anon)
     check('Anonymisierte Diagnose: keine Hosts, Ports, Pfade, Abfragen, Token, Dateinamen oder Seitentitel', not leaks, leaks)
     # mit offenem Player: Quellen anonymisiert (Art, Rolle, Bindung, Qualität), weiterhin ohne Adressteile
@@ -385,11 +393,11 @@ with sync_playwright() as p:
     # Server gibt die Datei auch dem Browser ohne Sitzung nicht: Diagnose zeigt das (technische Grenze, kein Ausweichweg)
     player(pg, page('/videos/anon404.mp4?missing=404&anon404=1'))
     start_item(pg, '/videos/anon404.mp4', 'HTTP 404 auch ohne Sitzung')
-    d = hdl_diag(pg, 'Browser ohne Cookies/Referer: HTTP')
-    check('Ohne Sitzung auch im Browser 404: Diagnose zeigt es', 'Grund http_404' in d and 'Browser ohne Cookies/Referer: HTTP 404' in d, d)
+    d = hdl_diag(pg, 'C mit Browsersitzung n')
+    check('Ohne Sitzung auch im Browser 404: Diagnose zeigt es', 'Grund http_404' in d and 'A ohne Cookies/Referer HTTP 404 · B mit Referer, ohne Cookies HTTP 404' in d, d)
     # R3: Wie site-a – Browser-Wiedergabe lief, Helfer und Abruf ohne Sitzung 404. Nach 20 s: passiver Blick auf dieselbe
     # Wiedergabe (kein weiterer Abruf durch Kadri), mit einem der festen Ergebnisse.
-    n_before = len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['range'] == 'bytes=0-0'])
+    n_before = len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['browser'] and not x['range']])
     d = hdl_diag(pg, 'nach dem Fehler: ', 5)
     d2 = ''
     end = time.time() + 30
@@ -400,7 +408,7 @@ with sync_playwright() as p:
     check('R3: Ergebnis der passiven Nachbeobachtung (Browser lud weiter / keine neuen Daten / Medienfehler)',
           re.search(r'nach dem Fehler: (Browser lud danach weiter|keine neuen Daten|Browser-Medienfehler)', d2), [d, d2])
     check('… Nachbeobachtung ohne zusätzlichen Abruf (kein Helfer-, kein Vergleichsabruf)',
-          len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['range'] == 'bytes=0-0']) == n_before)
+          len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and not x['browser']]) + len([x for x in MHITS if x['path'] == '/videos/anon404.mp4' and x['browser'] and not x['range']]) == n_before)
     check('… danach kein weiterer Abruf des Helfers', len(helper_hits('/videos/anon404.mp4')) == 1)
     close_player(pg)
 

@@ -241,6 +241,22 @@ jobs:
           ref: ${{ steps.pin.outputs.sha }}
           path: helper
           persist-credentials: false
+      # S3d: Gegenstelle der Desktop-Kanaltests aus dem eigenen DASH-Harness-Pin (vendor/dash-harness/SOURCE, Helfer-
+      # Produktstand + nur Testcode). Der WASM-Pin bleibt allein für den WASM-Neubau zuständig (Herkunft unverändert).
+      # Grund: der WASM-Pin kennt keinen Anfragekontext ("ctx"), Kadris Referer-/Kontext-Tests scheitern dagegen.
+      - name: DASH harness pin for the desktop channel counterpart (separate from the WASM pin)
+        id: harness
+        run: |
+          sha=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/dash-harness/SOURCE)
+          test -n "$sha" && test "$sha" != "${{ steps.pin.outputs.sha }}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Desktop channel counterpart $sha (WASM pin ${{ steps.pin.outputs.sha }} unchanged and separate)"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.harness.outputs.sha }}
+          path: helper-harness
+          persist-credentials: false
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
@@ -255,6 +271,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+          (cd helper-harness/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
           cargo install wasm-bindgen-cli --version 0.2.104 --locked
       - name: Rebuild the vendored WASM core from the pinned commit and compare
         run: |
@@ -265,8 +282,11 @@ jobs:
           test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc_bg.wasm | cut -d' ' -f1)" = "$(sed -n 's/^sha256_wasm=//p' vendor/kadri-pairing-poc/SOURCE)"
           test "$(sha256sum < vendor/kadri-pairing-poc/kadri_pairing_poc.js | cut -d' ' -f1)" = "$(sed -n 's/^sha256_js=//p' vendor/kadri-pairing-poc/SOURCE)"
           echo 'PASS: vendored WASM core rebuilt bit-identically from the pinned helper commit; helper production policy UNAPPROVED'
-      - name: Desktop helper (real ChannelServer of the helper app)
-        run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+      - name: Desktop helper (real ChannelServer of the helper app, from the DASH harness pin)
+        run: |
+          set -euo pipefail
+          test "$(git -C helper-harness rev-parse HEAD)" = "${{ steps.harness.outputs.sha }}"
+          bash helper-harness/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
       - name: Playwright (Chromium) for Node and Python
         run: |
           set -euo pipefail
@@ -307,8 +327,15 @@ jobs:
           fi
           grep -q 'unloaded MP4 candidate must not be offered' "$RUNNER_TEMP/previous-download-source.log"
           # hdlProbe race (P0b): the probe before the fix must fail exactly on the re-probe requirement.
-          git fetch --no-tags origin 0cdf20289e31cb6332a8cdcf5143540c44b10f1e
+          # Since 9119cbe a tap always opens the selection first, and the source check asserts that before the probe race.
+          # The predecessor is therefore 0cdf202 plus exactly the one src/180 hunk of 9119cbe (applied without fuzz): it
+          # still lacks only the re-probe fix and must fail on it.
+          git fetch --no-tags origin 0cdf20289e31cb6332a8cdcf5143540c44b10f1e 9119cbece92be41f4db1f757b912663b9914944d c302244db42d87ef66abb5d7547e2d8770950dda
+          test "$(git rev-parse 9119cbece92be41f4db1f757b912663b9914944d^)" = c302244db42d87ef66abb5d7547e2d8770950dda
           git show 0cdf20289e31cb6332a8cdcf5143540c44b10f1e:src/180-player-bedienung.js > "$RUNNER_TEMP/previous-probe-source.js"
+          git diff c302244db42d87ef66abb5d7547e2d8770950dda 9119cbece92be41f4db1f757b912663b9914944d -- src/180-player-bedienung.js > "$RUNNER_TEMP/tap-first.diff"
+          test "$(grep -c '^@@' "$RUNNER_TEMP/tap-first.diff")" = 1
+          patch --fuzz=0 -s --no-backup-if-mismatch "$RUNNER_TEMP/previous-probe-source.js" "$RUNNER_TEMP/tap-first.diff"
           if node tests/download_source_check.js "$RUNNER_TEMP/previous-probe-source.js" > "$RUNNER_TEMP/previous-probe-source.log" 2>&1; then
             echo 'Probe race regression unexpectedly passed'; exit 1
           fi
