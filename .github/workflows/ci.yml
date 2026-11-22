@@ -368,6 +368,12 @@ jobs:
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/helper-host
         run: TESTS="test_helper.py test_menu.py test_mp4.py test_hls.py test_direct_dl.py test_dl_sheet.py test_frame_ui.py test_dash_msg.py test_dash_bind.py" tests/run_all.sh
+      - name: End of the logs of failed Python browser tests (diagnosis only, runs only after a failure)
+        if: failure()
+        run: |
+          for f in tests/out/test_*.log; do
+            if grep -qE '^FAIL|Traceback' "$f"; then echo "==== $f"; grep -nE '^FAIL' "$f" | head -20; tail -n 40 "$f"; fi
+          done
       - name: P4 test extension identity - deterministic package from two build paths, fixed ID and separate data in a disposable Chromium (nothing uploaded)
         run: |
           set -euo pipefail
