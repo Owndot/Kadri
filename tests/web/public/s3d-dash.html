@@ -1,0 +1,96 @@
+<!doctype html><html lang=de><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Kadri S3d – DASH speichern (Testseite)</title></head>
+<body style="margin:0;font:15px sans-serif;background:#f4f4f4">
+<!-- Öffentliche Gerätetestseite für S3d (DASH → MP4 über die Test-App de.evp.helfer.p4test). Material: genau die in S3c/S3d
+     geprüfte Fixture (tests/make_dash_source.sh = Helper tests/java/dashdl/make-dash-fixtures.sh avc/, bitexact): statisches
+     VOD, eine Periode, 20 s, H.264 Main 320×180 + 640×360 und AAC-LC 48 kHz stereo in fMP4, SegmentTemplate +
+     SegmentTimeline, $Number%05d$, 4-s-Stücke, ohne DRM. Testbild, weißer Blitz + 1-kHz-Piepton alle 2 s.
+     Der kleine Player hier lädt MPD und Stücke selbst im Hauptthread (fetch, ohne Cache) genau unter den Adressen, die das
+     MPD beschreibt, und höchstens 8 s voraus – wie ein DASH-Player. Keine fremden Medien, keine Anmeldung, keine Cookies. -->
+<video id=v muted playsinline controls style="width:100%;display:block;background:#000;aspect-ratio:16/9"></video>
+<div style="padding:10px 12px">
+  <b>Kadri S3d – DASH speichern</b> · <span id=s>lädt …</span>
+  <div style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0">
+    <button id=b360>Neu starten · 360p</button><button id=b180>Neu starten · 180p</button>
+  </div>
+  <div id=w style="font-weight:bold;margin:6px 0"></div>
+  <div id=c style="font:13px monospace;white-space:pre-wrap;color:#222"></div>
+  <div style="font-size:14px;color:#333;margin-top:8px">Erwartung: Am Video ⬇ → „DASH-Stream speichern“ mit 2 Optionen
+    (360p und 180p, Ton AAC-LC; die gerade gespielte ist „läuft gerade“). Datei: MP4, 20 s, Blitz und Piepton gleichzeitig.
+    ⬇ antippen, solange oben „Stückfolge aktuell“ steht (bis 20 s nach dem letzten Stück) – sonst „Neu starten“.</div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const MPD = 's3d-dash/manifest.mpd', AHEAD = 8, WINDOW = 20;
+  const v = document.getElementById('v'), s = document.getElementById('s'), w = document.getElementById('w'), c = document.getElementById('c');
+  const NS = 'urn:mpeg:dash:schema:mpd:2011';
+  let mpd = null, run = 0, st = null;
+  const kid = (e, n) => Array.from(e.children).filter((x) => x.localName === n && x.namespaceURI === NS);
+  // aus dem gelesenen MPD: Darstellung → { mime, codecs, init, segs: [{ url, t0 (s) }] } (nur diese Fixture-Form)
+  function reps(doc) {
+    const out = {};
+    const per = kid(doc.documentElement, 'Period')[0];
+    kid(per, 'AdaptationSet').forEach((a) => kid(a, 'Representation').forEach((r) => {
+      const t = kid(r, 'SegmentTemplate')[0], id = r.getAttribute('id'), ts = Number(t.getAttribute('timescale'));
+      const fill = (x, n) => x.replace('$RepresentationID$', id).replace(/\$Number%05d\$/, String(n).padStart(5, '0'));
+      const segs = []; let time = 0, n = Number(t.getAttribute('startNumber') || 1);
+      kid(kid(t, 'SegmentTimeline')[0], 'S').forEach((x) => {
+        if (x.getAttribute('t') !== null) time = Number(x.getAttribute('t'));
+        for (let k = 0; k <= Number(x.getAttribute('r') || 0); k++) { segs.push({ url: new URL(fill(t.getAttribute('media'), n++), new URL(MPD, location.href)).href, t0: time / ts }); time += Number(x.getAttribute('d')); }
+      });
+      out[id] = { id: id, mime: r.getAttribute('mimeType'), codecs: r.getAttribute('codecs'), h: Number(r.getAttribute('height') || 0),
+        init: new URL(fill(t.getAttribute('initialization'), 0), new URL(MPD, location.href)).href, segs: segs };
+    }));
+    return out;
+  }
+  const iso = (x) => { const m = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?$/.exec(x || ''); return m ? (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0) : NaN; };
+  const get = async (u) => { const r = await fetch(u, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); };
+  function show() {
+    if (!st) return;
+    const age = st.last ? (Date.now() - st.last) / 1000 : Infinity;
+    const rows = st.tracks.map((t) => (t.r.mime.split('/')[0] === 'video' ? 'Video ' + t.r.h + 'p' : 'Ton AAC-LC') + ' (Darstellung ' + t.r.id + '): Init ' +
+      (t.init ? 'ja' : 'nein') + ' · Stücke ' + t.done + '/' + t.r.segs.length + (t.done ? ' (Nr. 1–' + t.done + ', in Folge)' : ''));
+    c.textContent = rows.join('\n') + '\nletztes Stück vor ' + (isFinite(age) ? age.toFixed(0) + ' s' : '–') + ' · Wiedergabe ' + v.currentTime.toFixed(1) + ' / ' +
+      (isFinite(v.duration) ? v.duration.toFixed(1) : '?') + ' s · MSE H.264 ' + (window.MediaSource && MediaSource.isTypeSupported('video/mp4; codecs="avc1.4d401e"') ? 'ja' : 'NEIN') +
+      ' · AAC-LC ' + (window.MediaSource && MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.2"') ? 'ja' : 'NEIN');
+    const vd = st.tracks[0].done;
+    if (st.err) { w.textContent = 'Fehler: ' + st.err; w.style.color = '#b00'; }
+    else if (vd >= 3 && age <= WINDOW) { w.textContent = 'Stückfolge aktuell (' + vd + ' Stücke in Folge) – jetzt ⬇ antippen (noch ' + Math.max(0, WINDOW - age).toFixed(0) + ' s)'; w.style.color = '#070'; }
+    else if (vd >= 3) { w.textContent = 'Zeitfenster abgelaufen – „Neu starten“ und dann ⬇ antippen'; w.style.color = '#a60'; }
+    else { w.textContent = 'lädt die ersten Stücke …'; w.style.color = '#333'; }
+  }
+  async function start(vid) {
+    const my = ++run;
+    const R = reps(mpd), dur = iso(mpd.documentElement.getAttribute('mediaPresentationDuration'));
+    const S = st = { tracks: [{ r: R[vid], done: 0, init: false }, { r: R['2'], done: 0, init: false }], last: 0, err: '' };
+    const ms = new MediaSource();
+    v.src = URL.createObjectURL(ms);
+    await new Promise((res) => ms.addEventListener('sourceopen', res, { once: true }));
+    if (my !== run) return;
+    try {
+      const sbs = S.tracks.map((t) => ms.addSourceBuffer(t.r.mime + '; codecs="' + t.r.codecs + '"'));
+      ms.duration = dur;
+      const app = (sb, b) => new Promise((res, rej) => { sb.addEventListener('updateend', res, { once: true }); sb.addEventListener('error', rej, { once: true }); sb.appendBuffer(b); });
+      s.textContent = 'DASH · ' + R[vid].h + 'p + AAC-LC · ' + dur + ' s';
+      await Promise.all(S.tracks.map(async (t, i) => {
+        await app(sbs[i], await get(t.r.init)); t.init = true; S.last = Date.now();
+        while (t.done < t.r.segs.length) {
+          if (my !== run) return;
+          if (t.r.segs[t.done].t0 < v.currentTime + AHEAD) { await app(sbs[i], await get(t.r.segs[t.done].url)); t.done++; S.last = Date.now(); }
+          else await new Promise((res) => setTimeout(res, 250));
+          if (i === 0 && t.done === 1) v.play().catch(() => {});
+        }
+      }));
+      if (my === run && ms.readyState === 'open') ms.endOfStream();
+    } catch (e) { if (my === run) S.err = String(e && e.message || e); }
+  }
+  document.getElementById('b360').onclick = () => start('1');
+  document.getElementById('b180').onclick = () => start('0');
+  setInterval(show, 500);
+  fetch(MPD, { cache: 'no-store' }).then((r) => r.text()).then((t) => {
+    mpd = new DOMParser().parseFromString(t, 'application/xml');
+    start(new URLSearchParams(location.search).get('q') === '180' ? '0' : '1');
+  }).catch((e) => { s.textContent = 'MPD nicht ladbar: ' + e; });
+})();
+</script></body></html>
