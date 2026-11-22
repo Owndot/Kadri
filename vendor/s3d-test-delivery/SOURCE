@@ -1,0 +1,16 @@
+# S3d DASH-Testversion – Test-Liefernachweis (getrennt von der gesperrten P4-Lieferung, die bei 7978a41 bleibt).
+# Exakt freigegebene Stände. Gelesen von .github/workflows/s3d-test-delivery.yml. Kein Release, nichts hochgeladen.
+kadri_source=520c0bf11092060f44723b5320117e31b8258fb8
+helper_application=ee5486442266f2730893353ac71611809dfd21b1
+helper_dash_harness=3887569fbc12e9cce5f47fe821b9a5cec7952249
+wasm_core_origin=bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5
+extension_id=pcccpjllneffccpenbepmfbkjedllkkf
+kadri_version=1.12.17
+kadri_zip_sha256=bf685a122610c7f7c926ba9016629238e67e0659b6a90f15301c83ba11b706fa
+kadri_content_sha256=42252ba42e7fba6c2f5821849be765ea289d4c0fec0b10b04677ad7e2d9cacc1
+helper_package=de.evp.helfer.p4test
+helper_version_code=4
+helper_version_name=1.0.4-p4test
+helper_unsigned_apk_sha256=2667665f3bd5e6753a9ab2d0cedc9c9cf088d0bf0013fcad36979964419445b3
+# Signierer: dauerhafter Eigentümerschlüssel, nur auf dem Gerät des Eigentümers; Fingerabdruck wird nach T3 eingetragen.
+helper_signer_cert_sha256=PENDING

@@ -1,0 +1,112 @@
+name: S3d DASH test delivery proof (exact approved commits; separate from the locked P4 delivery; nothing uploaded)
+
+# Test-Liefernachweis für die DASH-Testversion. Getrennt von p4-test-extension.yml: dessen Pins (SOURCE_SHA 7978a41,
+# HELPER_SHA 546af14, WASM_CORE_ORIGIN_SHA bd5ab29) und Sperre bleiben unverändert – das wird hier sogar geprüft.
+# Kein Release, keine Signatur, kein Upload. Nur auf isolierten Testbranches.
+on:
+  push:
+    branches: ['test/s3d-*']
+    paths: ['.github/workflows/s3d-test-delivery.yml', 'vendor/s3d-test-delivery/SOURCE']
+
+permissions:
+  contents: read
+
+jobs:
+  proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pins (separate file) and the locked P4 delivery unchanged
+        id: pin
+        run: |
+          set -euo pipefail
+          f=vendor/s3d-test-delivery/SOURCE
+          get() { sed -n "s/^$1=//p" "$f"; }
+          for k in kadri_source helper_application helper_dash_harness wasm_core_origin; do [[ "$(get $k)" =~ ^[0-9a-f]{40}$ ]] || { echo "bad pin $k" >&2; exit 1; }; done
+          for k in kadri_zip_sha256 kadri_content_sha256 helper_unsigned_apk_sha256; do [[ "$(get $k)" =~ ^[0-9a-f]{64}$ ]] || { echo "bad pin $k" >&2; exit 1; }; done
+          wf=.github/workflows/p4-test-extension.yml
+          grep -qx '  SOURCE_SHA: 7978a41232c3b1582289c53461da4fe63ad28ff9' "$wf"
+          grep -qx '  HELPER_SHA: 546af144fe2c2efa00c9c93b745c695f6077dbaa' "$wf"
+          grep -qx '  WASM_CORE_ORIGIN_SHA: bd5ab293bbc6729cabafe72b6bd5606f8c74f5e5' "$wf"
+          git diff --quiet "$(get kadri_source)" HEAD -- "$wf" .github/PACKAGE-UPLOAD-BLOCKED tools/delivery
+          test "$(get wasm_core_origin)" = "$(sed -n 's/^helper_commit=//p' vendor/kadri-pairing-poc/SOURCE)"
+          test "$(get helper_dash_harness)" = "$(sed -n 's/^helper_commit=//p' vendor/dash-harness/SOURCE)"
+          test "$(get helper_application)" = "$(sed -n 's/^product_base=//p' vendor/dash-harness/SOURCE)"
+          for k in kadri_source helper_application helper_dash_harness wasm_core_origin kadri_zip_sha256 kadri_content_sha256 kadri_version extension_id helper_unsigned_apk_sha256 helper_version_code helper_version_name helper_signer_cert_sha256; do echo "$k=$(get $k)" >> "$GITHUB_OUTPUT"; echo "$k=$(get $k)"; done
+          echo "PASS: P4 delivery lock and pins unchanged (7978a41 / 546af14 / bd5ab29)"
+      - name: Kadri product files identical to the approved source
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "${{ steps.pin.outputs.kadri_source }}" HEAD -- src chrome channel firefox userscript tools/build.js tools/p4test package.json vendor/kadri-pairing-poc || true)"
+          [ -z "$changed" ] || { echo "product files differ from ${{ steps.pin.outputs.kadri_source }}: $changed" >&2; exit 1; }
+          echo "PASS: product files = ${{ steps.pin.outputs.kadri_source }}"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pin.outputs.helper_dash_harness }}
+          path: helper-harness
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Helper harness = approved helper application plus test code only
+        run: |
+          set -euo pipefail
+          test "$(git -C helper-harness rev-parse HEAD)" = "${{ steps.pin.outputs.helper_dash_harness }}"
+          git -C helper-harness merge-base --is-ancestor "${{ steps.pin.outputs.helper_application }}" HEAD
+          other="$(git -C helper-harness diff --name-only "${{ steps.pin.outputs.helper_application }}" HEAD | grep -v '^tests/' || true)"
+          [ -z "$other" ] || { echo "harness changes outside tests/: $other" >&2; exit 1; }
+          grep -q '"status": "UNAPPROVED"' helper-harness/release/production-policy.json
+          echo "PASS: harness ${{ steps.pin.outputs.helper_dash_harness }} = application ${{ steps.pin.outputs.helper_application }} + tests/ only"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exact test package (Kadri P4 TEST) - identity, content and ZIP checksum
+        run: |
+          set -euo pipefail
+          node tools/build.js
+          python3 -I tools/p4test/pack-extension.py dist/chrome "$RUNNER_TEMP/kadri-p4test.zip"
+          python3 -I - "$RUNNER_TEMP/kadri-p4test.zip" "${{ steps.pin.outputs.kadri_content_sha256 }}" "${{ steps.pin.outputs.kadri_version }}" <<'PY'
+          import hashlib, json, sys, zipfile
+          z = zipfile.ZipFile(sys.argv[1]); m = json.loads(z.read('manifest.json'))
+          assert m['name'] == 'Kadri P4 TEST' and m['version'] == sys.argv[3], (m['name'], m['version'])
+          assert m['permissions'] == ['storage', 'declarativeNetRequestWithHostAccess', 'scripting'], m['permissions']
+          assert m.get('host_permissions') == ['<all_urls>'] and 'update_url' not in m and 'externally_connectable' not in m
+          s = ''.join(hashlib.sha256(z.read(n)).hexdigest() + '  ' + n + '\n' for n in sorted(z.namelist()))
+          d = hashlib.sha256(s.encode()).hexdigest()
+          assert d == sys.argv[2], 'content ' + d
+          print('PASS: Kadri P4 TEST', m['version'], len(z.namelist()), 'files, content', d)
+          PY
+          got="$(sha256sum < "$RUNNER_TEMP/kadri-p4test.zip" | cut -d' ' -f1)"
+          [ "$got" = "${{ steps.pin.outputs.kadri_zip_sha256 }}" ] || { echo "ZIP $got != ${{ steps.pin.outputs.kadri_zip_sha256 }}" >&2; exit 1; }
+          echo "PASS: ZIP sha256 $got, ID ${{ steps.pin.outputs.extension_id }}"
+          mkdir -p "$RUNNER_TEMP/packed" && unzip -q "$RUNNER_TEMP/kadri-p4test.zip" -d "$RUNNER_TEMP/packed"
+      - name: Playwright (Chromium), xvfb, ffmpeg
+        run: |
+          set -euo pipefail
+          npm install --no-save --no-package-lock --ignore-scripts playwright@1.56.0
+          npx playwright install --with-deps chromium
+          sudo apt-get install -y xvfb ffmpeg
+      - name: Exact test package against the real ChannelServer and DashEngine of the approved helper (nothing uploaded)
+        run: |
+          set -euo pipefail
+          (cd helper-harness/poc/pake-channel/core && rustup show active-toolchain)
+          bash helper-harness/tests/java/channel/build.sh "$RUNNER_TEMP/helper-host"
+          export HELPER_HOST_DIR="$RUNNER_TEMP/helper-host"
+          node tests/channel/channel_integration_check.js
+          node tests/channel/download_integration_check.js
+          node tests/channel/hls_integration_check.js
+          node tests/channel/dash_integration_check.js
+          CHANNEL_DIST_DIR="$RUNNER_TEMP/packed" xvfb-run -a node tests/channel/channel_browser_check.js
+          CHANNEL_DIST_DIR="$RUNNER_TEMP/packed" xvfb-run -a node tests/channel/channel_netguard_failure_check.js
+          rm -rf "$RUNNER_TEMP/kadri-p4test.zip" "$RUNNER_TEMP/packed"
+          echo "S3D-TEST-DELIVERY-PROOF PASS kadri=${{ steps.pin.outputs.kadri_source }} helper=${{ steps.pin.outputs.helper_application }} harness=${{ steps.pin.outputs.helper_dash_harness }} wasm=${{ steps.pin.outputs.wasm_core_origin }} zip=${{ steps.pin.outputs.kadri_zip_sha256 }} apk_unsigned=${{ steps.pin.outputs.helper_unsigned_apk_sha256 }} signer=${{ steps.pin.outputs.helper_signer_cert_sha256 }}"
