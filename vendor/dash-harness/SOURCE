@@ -1,0 +1,8 @@
+# S3d: eigener, unveränderlicher Pin des Helfer-Testharness für Kadris DASH-Ende-zu-Ende-Tests
+# (.github/workflows/dash-e2e.yml: tests/channel/dash_integration_check.js, tests/test_dash_dl.py).
+# Getrennt vom WASM-Pin (vendor/kadri-pairing-poc/SOURCE, unverändert): dieser Commit wird NUR als Desktop-Gegenstelle
+# (ChannelServer + DashEngine, tests/java/channel/build.sh) gebaut – nie für WASM, nie für eine Auslieferung.
+# Inhalt: Helfer ee54864 (S3b-Fix 2) + 3887569 (nur Testcode: Harness-Kommando „dash on“).
+repository=Owndot/video-assistent-helper
+helper_commit=3887569fbc12e9cce5f47fe821b9a5cec7952249
+product_base=ee5486442266f2730893353ac71611809dfd21b1

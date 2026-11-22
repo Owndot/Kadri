@@ -1,0 +1,74 @@
+name: DASH end-to-end (S3d) – real helper DashEngine via own harness pin, nothing published
+# Kadris DASH-Weg Ende zu Ende gegen den echten ChannelServer + DashEngine der Helfer-App (Desktop-JVM; nur der Remux ist
+# im Harness eine Verkettung – das echte Umpacken prüft die Helfer-CI mit Media3 auf dem JVM und auf Emulatoren).
+# Gegenstelle: der exakt gepinnte Commit in vendor/dash-harness/SOURCE – getrennt vom WASM-Pin
+# (vendor/kadri-pairing-poc/SOURCE, hier nur gelesen und unverändert). Nichts wird veröffentlicht; keine Artefakte.
+on:
+  push:
+    branches: ['test/s3d-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dash-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: DASH harness pin (exact 40-hex commit, separate from the WASM pin)
+        id: pin
+        run: |
+          set -euo pipefail
+          sha=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/dash-harness/SOURCE)
+          wasm=$(sed -n 's/^helper_commit=\([0-9a-f]\{40\}\)$/\1/p' vendor/kadri-pairing-poc/SOURCE)
+          test -n "$sha" && test -n "$wasm" && test "$sha" != "$wasm"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "DASH harness pin $sha (WASM pin $wasm unchanged and separate)"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Owndot/video-assistent-helper
+          ref: ${{ steps.pin.outputs.sha }}
+          path: helper
+          persist-credentials: false
+      - name: Checked-out helper is exactly the pin
+        run: test "$(git -C helper rev-parse HEAD)" = "${{ steps.pin.outputs.sha }}"
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Rust toolchain from the helper's rust-toolchain.toml
+        run: (cd helper/poc/pake-channel/core && rustup show active-toolchain && rustc -V)
+      - name: Desktop helper with DashEngine (tests/java/channel/build.sh of the pinned commit)
+        run: bash helper/tests/java/channel/build.sh "$RUNNER_TEMP/dash-harness"
+      - name: Playwright (Chromium), xvfb, ffmpeg (DASH test source)
+        run: |
+          set -euo pipefail
+          pip install playwright==1.56.0
+          python -m playwright install --with-deps chromium
+          sudo apt-get install -y xvfb ffmpeg
+          ffmpeg -version | head -1
+      - name: Build (test variant)
+        run: node tools/build.js --test
+      - name: DASH unit and fingerprint tests (no helper)
+        run: |
+          set -euo pipefail
+          node tests/channel/dash_unit_check.js
+          node tests/dash_bind_check.js
+          node tests/dash_message_check.js
+          TESTS="test_dash_fp.py test_dash_mpd.py" tests/run_all.sh
+      - name: DASH integration against the real DashEngine (Node, encrypted channel)
+        env:
+          HELPER_HOST_DIR: ${{ runner.temp }}/dash-harness
+        run: node tests/channel/dash_integration_check.js
+      - name: DASH end to end in Chromium with the extension and the real helper (both UI paths)
+        env:
+          HELPER_HOST_DIR: ${{ runner.temp }}/dash-harness
+        run: TESTS="test_dash_dl.py test_dash_msg.py test_dash_bind.py" tests/run_all.sh
