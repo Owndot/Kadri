@@ -429,17 +429,19 @@
         if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
         const p = r.value;
         if (p.job && hdlActive(p.job)) { st.hdl.url = d.offer.url; hdlSet(p.job, true); toast(tr('Läuft schon') + ': ' + hdlText(p.job)); return; }
+        if (!dashOfferStill(d, sel.bind)) { toast(DASH_CHANGED); return; }   // Quelle während des Plans gewechselt: keine Auswahl
         const its = dashOptionItems(p, d.offer.gate);
         if (!its.length) { toast('Auswahl nicht eindeutig zuordenbar – nicht angeboten'); return; }
         const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
         openMenu('DASH-Stream speichern', its.slice(0, 12).map((it) => ({
           label: it.label,
           sub: (it.o.played ? tr('läuft gerade') + ' · ' : '') + dur + (it.o.bandwidth ? Math.round(it.o.bandwidth / 1000) + ' kbit/s · ' : '') + 'H.264 + AAC',
-          fn: () => dashGo(d.offer.url, p.planId, it.o, d.x) })));
+          fn: () => dashGo(d.offer.url, p.planId, it.o, d.x, d, sel.bind) })));
       });
     }
-    function dashGo(u, planId, x, o) {
+    function dashGo(u, planId, x, o, d, bind) {
       if (st.hdl.busy) return;
+      if (!dashOfferStill(d, bind)) { toast(DASH_CHANGED); return; }   // unmittelbar vor dashstart erneut: sonst nichts senden
       st.hdl.busy = true;
       toast('Helfer-App startet den Download …');
       const info = Object.assign(hdlDiagInfo(o, u), { stream: true, dash: true, planned: true, stage: 'dashstart' });
@@ -501,6 +503,7 @@
       // Hinweises (dashWhy; nur zusammen mit dem Hinweis „DASH-Stream erkannt“ gezeigt)
       let dashD = null;
       try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig)); } catch (e) { dashD = null; }
+      if (dashD && dashD.offer) dashD.v = orig;   // (für die Nachprüfung vor Auswahl und Start)
       const dashOk = dashD && dashD.offer ? dashD : null;
       const dashWhy = dashD && dashD.reason ? dashD.reason : '';
       // DASH (nur für den Hinweis, nie ein Angebot): allein aus den Belegen der Registry (Originalvideo, eigener Player) –

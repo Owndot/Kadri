@@ -33,7 +33,18 @@ CASES = {
     'langs':    {'mpd': ['/d/ml/manifest.mpd'], 'segs': '/d/ml/'},
     'nolang':   {'mpd': ['/d/mn/manifest.mpd'], 'segs': '/d/mn/'},
     'same':     {'mpd': ['/d/ms/manifest.mpd'], 'segs': '/d/ms/'},
+    # S3c-Fix: Quelle wechselt zwischen Plan und Start (Seite und eigener Player) – sl/ps: Plan beim Helfer verzögert
+    'slow':     {'mpd': ['/d/sl/manifest.mpd'], 'segs': '/d/sl/'},
+    'swo':      {'mpd': ['/d/so/manifest.mpd'], 'segs': '/d/so/'},
+    'cmp':      {'mpd': ['/d/cp/manifest.mpd'], 'segs': '/d/cp/'},
+    'pslow':    {'mpd': ['/d/ps/manifest.mpd'], 'segs': '/d/ps/'},
+    'pswo':     {'mpd': ['/d/po/manifest.mpd'], 'segs': '/d/po/'},
+    'pcmp':     {'mpd': ['/d/pc/manifest.mpd'], 'segs': '/d/pc/'},
+    'pok':      {'mpd': ['/d/pk/manifest.mpd'], 'segs': '/d/pk/'},
 }
+SLOW = {'s': 4.0}
+# konkurrierende MPDs (später geladen): beschreiben genau die schon geladenen Stücke der Fälle cmp bzw. pcmp
+COMPETE = {'/d/k9/': '/d/cp/', '/d/k8/': '/d/pc/'}
 AUDIO = re.search(r'<AdaptationSet id="1" contentType="audio".*?</AdaptationSet>', MPD0, re.S).group(0)
 def second_audio(m, lang1, lang2, bw2):
     a2 = AUDIO.replace('id="1"', 'id="2"', 1).replace('<Representation id="2"', '<Representation id="3"').replace('bandwidth="48000"', 'bandwidth="%d"' % bw2)
@@ -46,6 +57,8 @@ def mpd_for(path, browser):
     if path.startswith('/d/he/'): m = m.replace('codecs="mp4a.40.2"', 'codecs="mp4a.40.5"')
     if path.startswith('/d/drm/'): m = m.replace('<AdaptationSet id="0"', '<AdaptationSet id="0"><ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/></AdaptationSet><AdaptationSet id="9"', 1)
     if path.startswith('/d/k1/') or path.startswith('/d/k2/'): m = m.replace('<Period id="0" start="PT0.0S">', '<Period id="0" start="PT0.0S"><BaseURL>/d/src/</BaseURL>', 1)
+    for k, base in COMPETE.items():
+        if path.startswith(k): m = m.replace('<Period id="0" start="PT0.0S">', '<Period id="0" start="PT0.0S"><BaseURL>%s</BaseURL>' % base, 1)
     if path.startswith('/d/mm/') and not browser: m = m.replace('bandwidth="322838"', 'bandwidth="322839"')   # nur der Helfer sieht ein anderes MPD
     if path.startswith('/d/ml/'): m = second_audio(m, 'de', 'en', 96000)
     if path.startswith('/d/mn/'): m = second_audio(m, '', '', 96000)
@@ -73,6 +86,18 @@ const get = async (u) => (await fetch(u)).arrayBuffer();
     ms.endOfStream(); window.__played = 1;
   });
 })();
+// S3c-Fix: neues Medium im selben Element (neue Medien-Epoche) bzw. ein später geladenes, konkurrierendes MPD
+window.__switch = () => new Promise((done) => {
+  const ms = new MediaSource(); v.src = URL.createObjectURL(ms);
+  ms.addEventListener("sourceopen", async () => {
+    const sb = ms.addSourceBuffer('video/mp4; codecs="vp09.00.10.08,opus"');
+    const app = (b) => new Promise((res) => { sb.addEventListener("updateend", res, { once: true }); sb.appendBuffer(b); });
+    await app(await get("/p/init.mp4")); v.play().catch(() => {});
+    for (let i = 0; i < 4; i++) await app(await get("/p/seg" + String(i).padStart(3, "0") + ".m4s"));
+    ms.endOfStream(); done(1);
+  });
+});
+window.__compete = async (m) => { await (await fetch(m)).text(); return 1; };
 </script></body></html>'''
 
 class M(http.server.BaseHTTPRequestHandler):
@@ -84,7 +109,9 @@ class M(http.server.BaseHTTPRequestHandler):
                      'referer': self.headers.get('Referer') or ''})
         body, ctype = None, ''
         if u.path == '/d/page.html': body, ctype = (PAGE % json.dumps(CASES[q['m']])).encode(), 'text/html; charset=utf-8'
-        elif u.path.endswith('/manifest.mpd'): body, ctype = mpd_for(u.path, browser), 'application/dash+xml'
+        elif u.path.endswith('/manifest.mpd'):
+            if not browser and (u.path.startswith('/d/sl/') or u.path.startswith('/d/ps/')): time.sleep(SLOW['s'])   # Plan beim Helfer dauert
+            body, ctype = mpd_for(u.path, browser), 'application/dash+xml'
         elif re.match(r'^/p/(init\.mp4|seg\d{3}\.m4s)$', u.path): body, ctype = open(os.path.join(HLSDIR, u.path[3:]), 'rb').read(), 'video/mp4'
         else:
             m = re.match(r'^/d/\w+/((?:init-\d|chunk-\d-\d{5})\.m4s)$', u.path)
@@ -210,6 +237,78 @@ with sync_playwright() as p:
     wait(lambda: t.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or 'eindeutig' in t[0], 30)
     check('zwei nicht unterscheidbare Tonspuren (gleiche Rate, keine Sprache): keine Auswahl angeboten („nicht eindeutig zuordenbar“)',
           'Auswahl nicht eindeutig zuordenbar – nicht angeboten' in t[0] and not pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === "DASH-Stream speichern");')), t[0])
+
+    # ---------- S3c-Fix: Quelle wechselt zwischen dashplan und dashstart → keine Auswahl bzw. kein Start ----------
+    CHANGED = 'Quelle hat sich geändert – erneut auswählen'
+    def toast_has(sub, secs=20):
+        t = ['']
+        wait(lambda: t.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or sub in t[0], secs)
+        return t[0]
+    segs_since = lambda n: [x['path'] for x in helper_hits()[n:] if '/init-' in x['path'] or '/chunk-' in x['path']]
+    title_is = lambda t: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === %s);' % json.dumps(t)))
+    # Webseitenknopf
+    open_case('slow'); sheet(keep=True); n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    tap(OFFER); time.sleep(1.0)
+    pg.evaluate('() => window.__switch()')
+    t = toast_has(CHANGED, 25)
+    check('Seite: Quelle wechselt, während der Plan beim Helfer läuft → keine Auswahl, Meldung „%s“' % CHANGED,
+          CHANGED in t and not title_is('DASH-Stream speichern') and not segs_since(n) and helper.cmd('dl-files') == files0, (t, segs_since(n)))
+    open_case('swo'); sheet(keep=True); tap(OFFER)
+    wait(lambda: title_is('DASH-Stream speichern'), 30)
+    o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
+    n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    pg.evaluate('() => window.__switch()'); time.sleep(1.0)
+    tap(o[0][0]); t = toast_has(CHANGED); time.sleep(1.5)
+    check('Seite: Quelle wechselt bei offener Auswahl → kein dashstart (kein Abruf beim Helfer, keine Datei), Meldung', bool(o) and CHANGED in t
+          and not segs_since(n) and helper.cmd('dl-files') == files0, (o, t, segs_since(n)))
+    open_case('cmp'); sheet(keep=True); tap(OFFER)
+    wait(lambda: title_is('DASH-Stream speichern'), 30)
+    o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
+    n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    pg.evaluate('() => window.__compete("/d/k9/manifest.mpd")'); time.sleep(1.0)
+    tap(o[0][0]); t = toast_has(CHANGED); time.sleep(1.5)
+    check('Seite: zweites MPD beschreibt dieselben Stücke (Konkurrenz) bei offener Auswahl → kein Start, Meldung', bool(o) and CHANGED in t
+          and not segs_since(n) and helper.cmd('dl-files') == files0, (o, t, segs_since(n)))
+    # eigener Player
+    PI = 'return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((b) => b.firstChild.textContent);'
+    def player_offer():
+        pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Im Videoplayer öffnen\\"]").click(); return true;'))
+        wait(lambda: pg.evaluate(js('return !!r.querySelector("button[aria-label^=Herunterladen]");')), 20); time.sleep(1.0)
+        end = time.time() + 15
+        while time.time() < end:
+            pg.evaluate(js('r.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })); return true;')); time.sleep(0.6)
+            if OFFER in (pg.evaluate(js(PI)) or []): return True
+            pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.6)
+        return False
+    ptap = lambda label: pg.evaluate(js('const b = Array.from(r.querySelectorAll(".vmenu.on .vmi")).find((x) => x.firstChild.textContent === %s); if (!b) return false; b.click(); return true;' % json.dumps(label)))
+    def player_options():
+        wait(lambda: any('· Ton:' in x for x in (pg.evaluate(js(PI)) or [])), 30)
+        return [x for x in (pg.evaluate(js(PI)) or []) if '· Ton:' in x]
+    open_case('pslow'); ok_offer = player_offer(); n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    ptap(OFFER); time.sleep(1.0)
+    pg.evaluate('() => window.__switch()')
+    t = toast_has(CHANGED, 25); time.sleep(0.5)
+    check('Player: Quelle wechselt, während der Plan läuft → keine Auswahl, Meldung', ok_offer and CHANGED in t
+          and not any('· Ton:' in x for x in (pg.evaluate(js(PI)) or [])) and not segs_since(n) and helper.cmd('dl-files') == files0, (t, segs_since(n)))
+    open_case('pswo'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
+    n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    pg.evaluate('() => window.__switch()'); time.sleep(1.0)
+    ptap(po[0] if po else ''); t = toast_has(CHANGED); time.sleep(1.5)
+    check('Player: Quelle wechselt bei offener Auswahl → kein Start, Meldung', ok_offer and bool(po) and CHANGED in t and not segs_since(n)
+          and helper.cmd('dl-files') == files0, (po, t, segs_since(n)))
+    open_case('pcmp'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
+    n = len(helper_hits()); files0 = helper.cmd('dl-files')
+    pg.evaluate('() => window.__compete("/d/k8/manifest.mpd")'); time.sleep(1.0)
+    ptap(po[0] if po else ''); t = toast_has(CHANGED); time.sleep(1.5)
+    check('Player: konkurrierendes MPD bei offener Auswahl → kein Start, Meldung', ok_offer and bool(po) and CHANGED in t and not segs_since(n)
+          and helper.cmd('dl-files') == files0, (po, t, segs_since(n)))
+    open_case('pok'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
+    files0 = helper.cmd('dl-files')
+    ptap(po[0] if po else '')
+    files = ['']
+    wait(lambda: files.__setitem__(0, helper.cmd('dl-files')) or files[0].count(':%d' % want) > files0.count(':%d' % want), 40)
+    check('Player: unveränderter Player und unveränderte Bindung → normaler Download bis zur Datei beim Helfer', ok_offer and po and po[0].startswith('360p')
+          and files[0].count(':%d' % want) == files0.count(':%d' % want) + 1, (po, files0, files[0]))
 
     # ---------- kein Angebot ----------
     n1 = len(helper_hits())

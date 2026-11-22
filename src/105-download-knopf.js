@@ -82,6 +82,30 @@
     out.sort((p, q) => Number(q.o.played) - Number(p.o.played) || q.o.height - p.o.height || audio.indexOf(p.a) - audio.indexOf(q.a));
     return out;
   }
+  // S3c-Fix: Ist das geplante Angebot noch genau dasselbe? Geprüft nach der (asynchronen) Planantwort und unmittelbar vor
+  // dashstart: Player-Kontext und Medien-Epoche gültig, dieselbe Quelle in derselben Revision, weiterhin sicher gebunden
+  // (bound + dash-segments) und als EINZIGES MPD (kein konkurrierendes gebunden), dieselbe Adresse und derselbe Fingerabdruck,
+  // dieselbe Bindung {player, gen, rev}. Sonst false – der Aufrufer sendet nichts und meldet DASH_CHANGED.
+  const DASH_CHANGED = 'Quelle hat sich geändert – erneut auswählen';
+  function dashOfferStill(d, bind) {
+    if (!d || !d.x || !d.offer || !d.v || !bind) return false;
+    let now = null;
+    try {
+      dashObserveFor(d.v, d.x.ctx);   // inzwischen gebundene MPDs (auch konkurrierende) nachtragen
+      const list = selectDashStreams(mediaRegistry.snapshot(d.x.ctx), { dash: true }).map((o) => Object.assign({ ctx: d.x.ctx }, o));
+      now = dashOfferFor(list, dashFromOf(d.v));
+    } catch (e) { return false; }
+    if (!now || !now.offer || now.x.sourceId !== d.x.sourceId || now.x.revision !== d.x.revision) return false;
+    if (now.offer.url !== d.offer.url || now.offer.fp !== d.offer.fp) return false;
+    // kein anderes MPD inzwischen an dieses Video gebunden oder mit ihm in Konkurrenz (dieselben Stücke beschrieben) – die
+    // Registry hält nur Bindungen; eine Konkurrenz zeigt allein die aktuelle Entscheidung (src/060 dashBindingFor)
+    try {
+      const mine = dashInfo.get(dashUrlKey(new URL(d.offer.url).href)), b = dashBindingFor(d.v);
+      if (!mine || b.list.some((e) => e.p !== mine && b.res[e.key] && (b.res[e.key].state === 'bound' || b.res[e.key].reason === 'konkurrenz'))) return false;
+    } catch (e) { return false; }
+    const sel = mediaRegistry.resolveDash(d.x.ctx, d.x.sourceId, d.x.revision);
+    return !!(sel.ok && sel.bind.player === bind.player && sel.bind.gen === bind.gen && sel.bind.rev === bind.rev);
+  }
   // played-Hinweis für den Helfer: Nummern der Darstellungen mit beobachteten Stücken (nur Zahlen, ≤ 8)
   const dashPlayedArg = (offer) => (offer.played.length ? offer.played.join(',') : undefined);
 
@@ -100,6 +124,7 @@
     const allD = selectDashStreams(snap2, { dash: !!(caps && caps.dash) }).map((o) => Object.assign({ ctx: ctx }, o));
     let dashOffer = null;
     try { dashOffer = dashOfferFor(allD, dashFromOf(v)); } catch (e) { dashOffer = null; }
+    if (dashOffer && dashOffer.offer) dashOffer.v = v;   // (für die Nachprüfung vor Auswahl und Start)
     return { mp4: all.filter((o) => o.state === 'attemptable'), hls: allS.filter((o) => o.state === 'attemptable'), all: all, allS: allS,
       dash: mediaDashState([snap2]), dashOffer: dashOffer };
   }
@@ -271,15 +296,17 @@
     if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
     const p = r.value;
     if (p.job && pageDlActive(p.job)) { hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = d.offer.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
+    if (!dashOfferStill(d, sel.bind)) { toast(DASH_CHANGED); return; }   // Quelle während des Plans gewechselt: keine Auswahl
     const items = dashOptionItems(p, d.offer.gate);
     if (!items.length) { hdlDiagFailure(info, { ok: false, error: { kind: 'plan', reason: 'ambiguous' } }); toast('Auswahl nicht eindeutig zuordenbar – nicht angeboten'); return; }
     const dur = p.duration > 0 ? fmtTime(p.duration) : '';
     pageDlMenu('DASH-Stream speichern', items.slice(0, 12).map((it) => ({
       label: it.label,
       sub: [it.o.played ? tr('läuft gerade') : '', dur, it.o.bandwidth ? Math.round(it.o.bandwidth / 1000) + ' kbit/s' : '', 'H.264 + AAC'].filter(Boolean).join(' · '),
-      fn: () => pageDlDashGo(d.offer.url, p.planId, it.o, d.x) })));
+      fn: () => pageDlDashGo(d.offer.url, p.planId, it.o, d.x, d, sel.bind) })));
   }
-  async function pageDlDashGo(u, planId, o, x) {
+  async function pageDlDashGo(u, planId, o, x, d, bind) {
+    if (!dashOfferStill(d, bind)) { toast(DASH_CHANGED); return; }   // unmittelbar vor dashstart erneut: sonst nichts senden
     const info = Object.assign(hdlSourceInfo(x), { stream: true, dash: true, planned: true, stage: 'dashstart' });
     toast('Helfer-App startet den Download …');
     pageDlStarted(await helperDl('dashstart', { planId: planId, option: o.id, name: pageDlName() }), u, info);

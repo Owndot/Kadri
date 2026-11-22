@@ -40,7 +40,15 @@
    - Der Ton ist immer benannt: Sprache bzw. „Tonspur n (Sprache nicht angegeben)“.
    - Die gerade gespielte Kombination steht oben und ist als „läuft gerade“ markiert.
    - Es gibt keine stillschweigende Wahl einer Tonspur.
-8. **Tipp → `dashstart`** mit Kennung, Plan, Option, Bindung und Name. Status, Abbruch und Liste laufen über die bestehende Download-Verwaltung (`dlstatus`/`dlcancel`, Art `dash`).
+8. **S3c-Fix 1 – Nachprüfung (`dashOfferStill`, src/105, beide Bedienwege):** Nach der Planantwort, vor der Anzeige der Optionen, und noch einmal unmittelbar vor `dashstart` muss alles noch gelten:
+   - derselbe Player-Kontext und dieselbe Medien-Epoche;
+   - dieselbe Quelle in derselben Revision;
+   - weiterhin `bound` + `dash-segments` als einziges MPD;
+   - kein anderes MPD inzwischen gebunden oder in `konkurrenz` (aktuelle Bindungsentscheidung);
+   - dieselbe Adresse, derselbe Fingerabdruck, dieselbe Bindung `{player, gen, rev}`.
+
+   Sonst kommt die feste Meldung „Quelle hat sich geändert – erneut auswählen“, und es wird kein `dashstart` gesendet.
+9. **Tipp → `dashstart`** mit Kennung, Plan, Option, Bindung und Name. Status, Abbruch und Liste laufen über die bestehende Download-Verwaltung (`dlstatus`/`dlcancel`, Art `dash`).
 
 ## 2. Fingerabdruck `kadri-dash-fp/1` in JavaScript (src/039)
 
@@ -139,7 +147,7 @@ Gemeldet wird das nur mit festen Texten, ohne Seitennamen oder Adressen.
 | `tests/test_dash_fp.py` (Chromium, ohne Erweiterung) | 24 Golden-Vektoren, Golden-Text, Querprüfung 116 Fälle, Rechengrenze, Index-Korrekturen (Bandbreitenformat, Marke, Schreibweise, Nummerierung, abgelehnte Vorlagen), S3-Vorprüfung |
 | `tests/channel/dash_unit_check.js` | Befehlsform, Wiederholbarkeit, Fähigkeit, Plan/Start/Status/Abbruch, Planablauf, Antwort verloren, Fehlercodes, Kontext, Route im Hintergrund, Registry-Auswahl und Auflösung |
 | `tests/channel/dash_integration_check.js` (echter Helfer, DashEngine) | Helfer ohne DASH, Fähigkeit, abweichender Abdruck, Gutfall bis zur veröffentlichten Datei, Bindung (andere Bindung, andere Kanal-Sitzung), neue Sitzung → neu geplant mit gleicher Kennung, Fehlerort, Abbruch, Prozessabbruch |
-| `tests/test_dash_dl.py` (Chromium + Erweiterung + echter Helfer) | bindbare, selbst erzeugte Quelle (`tests/make_dash_source.sh`); Angebot im Sheet und im Player; Plan; Tonauswahl; Start; Datei beim Helfer; keine Angebote bei HE-AAC, DRM, ungebunden und zwei MPDs; `manifest_mismatch` |
+| `tests/test_dash_dl.py` (Chromium + Erweiterung + echter Helfer; mit S3c-Fix 1: Quellwechsel während des Plans und bei offener Auswahl, konkurrierendes MPD, normaler Download – Webseitenknopf und eigener Player) | bindbare, selbst erzeugte Quelle (`tests/make_dash_source.sh`); Angebot im Sheet und im Player; Plan; Tonauswahl; Start; Datei beim Helfer; keine Angebote bei HE-AAC, DRM, ungebunden und zwei MPDs; `manifest_mismatch` |
 | Regressionen | HLS, MP4, Player-Oberfläche, DASH-Hinweis und -Bindung (siehe Bericht) |
 
 ## 8. Offen (nicht Teil von S3c)
