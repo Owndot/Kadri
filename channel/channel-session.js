@@ -32,7 +32,8 @@
   // Start wiederholt wird, entscheidet die Download-Verwaltung (channel-downloads.js) mit derselben Kennung.
   // hlsplan (P4b) legt nur einen kurzlebigen Plan beim Helfer an (keine Wirkung auf dem Gerät): wiederholbar. hlsstart
   // NICHT – wie dlstart entscheidet die Download-Verwaltung (mit derselben Kennung).
-  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright', 'dlstatus', 'dlcancel', 'hlsplan']);
+  // S3c: dashplan wie hlsplan (nur ein kurzlebiger Plan beim Helfer); dashstart NICHT (wie hlsstart).
+  const IDEMPOTENT_OPS = new Set(['status', 'beat', 'end', 'vol', 'bright', 'dlstatus', 'dlcancel', 'hlsplan', 'dashplan']);
   const retryableAfterStaleSession = (op) => IDEMPOTENT_OPS.has(op);
 
   // Steuerbefehl → Record-Inhalt, genau in der Form, die der Helfer annimmt (ControlCommands.java): nur "op" und "v",
@@ -116,8 +117,35 @@
     }
     return m;
   }
+  // S3c: DASH. dashplan {op, v:1, url, fp, bind[, played][, ref][, ua]} · dashstart {op, v:1, id, planId, option, bind[, name]} –
+  // genau die Form, die der Helfer annimmt (ControlCommands.java). fp: Kadris Strukturfingerabdruck kadri-dash-fp/1 des
+  // gebundenen MPD (64 Hex); played: Hinweis auf die gespielten Darstellungen (bis 8 Nummern 0…4095, ohne Wiederholung,
+  // Komma-getrennt) – nie Sicherheitsevidenz. Keine Cookies, keine Header, keine anderen Felder.
+  const DASH_FP = /^[0-9a-f]{64}$/;
+  function dashPlayedValid(p) {
+    if (typeof p !== 'string' || !/^(0|[1-9][0-9]{0,3})(,(0|[1-9][0-9]{0,3})){0,7}$/.test(p)) return false;
+    const xs = p.split(',').map(Number);
+    return xs.every((x) => x <= 4095) && new Set(xs).size === xs.length;
+  }
+  function dashMessage(op, a) {
+    if (!a || typeof a !== 'object') return null;
+    const keys = Object.keys(a);
+    const bind = hlsBind(a.bind);
+    if (!bind) return null;
+    if (op === 'dashplan') {
+      if (!keys.every((k) => k === 'url' || k === 'fp' || k === 'bind' || k === 'played' || k === 'ref' || k === 'ua')) return null;
+      const url = typeof a.url === 'string' ? a.url : '';
+      if (!url || url.length > 2048 || !DL_URL.test(url) || typeof a.fp !== 'string' || !DASH_FP.test(a.fp)) return null;
+      const m = { op, v: 1, url, fp: a.fp, bind };
+      if (a.played !== undefined) { if (!dashPlayedValid(a.played)) return null; m.played = a.played; }
+      return withContext(m, a);
+    }
+    const m = hlsMessage('hlsstart', a);   // dieselben Regeln wie hlsstart (Kennung, Plan, Option, Bindung, Name)
+    return m ? Object.assign(m, { op: 'dashstart' }) : null;
+  }
   function downloadMessage(op, a) {
     if (op === 'hlsplan' || op === 'hlsstart') return hlsMessage(op, a);
+    if (op === 'dashplan' || op === 'dashstart') return dashMessage(op, a);
     if (!a || typeof a !== 'object' || typeof a.id !== 'string' || !DL_ID.test(a.id)) return null;
     const keys = Object.keys(a);
     if (op === 'dlstatus' || op === 'dlcancel') return keys.every((k) => k === 'id') ? { op, id: a.id } : null;
@@ -204,7 +232,8 @@
     async function exchange(obj) {
       const s = session;
       let reply;
-      try { reply = await transport.post('/p1/ch/rec', s.ch.seal_control(new TextEncoder().encode(JSON.stringify(obj))), obj.op === 'hlsplan' ? 'hlsplan' : undefined); }
+      // (dashplan lädt und prüft beim Helfer ebenfalls ein Manifest: dasselbe feste Zeitprofil wie hlsplan)
+      try { reply = await transport.post('/p1/ch/rec', s.ch.seal_control(new TextEncoder().encode(JSON.stringify(obj))), obj.op === 'hlsplan' || obj.op === 'dashplan' ? 'hlsplan' : undefined); }
       catch (e) {
         if (session === s) drop();
         if (e instanceof ChannelError) throw e;
@@ -341,5 +370,6 @@
   NS.downloadMessage = downloadMessage;
   NS.requestContext = requestContext;
   NS.hlsBindValid = (b) => !!hlsBind(b);
+  NS.dashPlayedValid = dashPlayedValid;
   NS.retryableAfterStaleSession = retryableAfterStaleSession;
 })(typeof self !== 'undefined' ? self : globalThis);

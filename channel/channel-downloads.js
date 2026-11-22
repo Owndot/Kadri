@@ -59,6 +59,13 @@
 
   // HLS: Orte, an denen der Helfer einen HTTP-Fehler melden kann (Hauptliste, Medienliste, Init, Segment)
   const HLS_LOCS = ['master', 'video_list', 'audio_list', 'video_init', 'audio_init', 'video_segment', 'audio_segment'];
+  // S3c: DASH: Orte eines HTTP-Fehlers beim Helfer (MPD, Init, Stück) – nur feste Codes und Positionsnummern
+  const DASH_LOCS = ['mpd', 'video_init', 'audio_init', 'video_segment', 'audio_segment'];
+  // Optional, additive helper diagnostic for dashplan: fixed phase only.
+  function dashPlanDiagnostic(d) {
+    if (!d || d.v !== 1 || !['mpd_fetch', 'mpd_parse', 'fingerprint', 'profile', 'options'].includes(d.phase)) return null;
+    return { v: 1, phase: d.phase };
+  }
 
   // storage: { get(): Promise<array|undefined>, set(array): Promise } · digest(text): Promise<hex> · random(): hex(32)
   function createDownloads({ channel, storage, digest, random, now = () => Date.now(), setTimer = (f, ms) => setTimeout(f, ms) }) {
@@ -69,21 +76,30 @@
     // P4c: unbestätigter HLS-Start (Antwort verloren): Plan-Kennung und Auswahl, nur im Arbeitsspeicher, damit die
     // Nachprüfung denselben Start mit DERSELBEN Kennung erneut senden kann (der Helfer startet je Kennung einmal).
     const hlsPending = new Map();
+    // S3c: dasselbe für DASH (Plan-Kennung, Auswahl, Name; nur im Arbeitsspeicher)
+    const dashPending = new Map();
     let chain = Promise.resolve();
     const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
     let caps = null;
     let ctxCaps = null;   // { at, ok }: meldet der Helfer "ctx":1 (Anfragekontext)? 60 s zwischengespeichert
+    let dashCtxCaps = null;   // S3c: dasselbe für DASH ("dashdl":{…,"ctx":1})
 
     // Anfragekontext nur an Helfer, die ihn annehmen (alte Helfer lehnten das ganze dlstart/hlsplan ab). Ohne Antwort
     // oder ohne Feld: ohne Kontext senden – wie bisher.
-    async function contextFor(ctx) {
+    async function contextFor(ctx, dash) {
       if (!ctx || (!ctx.ref && !ctx.ua) || typeof channel.status !== 'function') return null;
-      if (!ctxCaps || now() - ctxCaps.at >= 60_000) {
+      const c0 = dash ? dashCtxCaps : ctxCaps;
+      let cc = c0;
+      if (!cc || now() - cc.at >= 60_000) {
         let ok = false;
-        try { const st = await channel.status(); ok = !!(st && st.hls && st.hls.v === 1 && st.hls.ctx === 1); } catch (e) { ok = false; }
-        ctxCaps = { at: now(), ok };
+        try {
+          const st = await channel.status();
+          ok = dash ? !!(st && dashCapable(st) && st.dashdl.ctx === 1) : !!(st && st.hls && st.hls.v === 1 && st.hls.ctx === 1);
+        } catch (e) { ok = false; }
+        cc = { at: now(), ok };
+        if (dash) dashCtxCaps = cc; else ctxCaps = cc;
       }
-      if (!ctxCaps.ok) return null;
+      if (!cc.ok) return null;
       const c = {};
       if (typeof ctx.ref === 'string') c.ref = ctx.ref;
       if (typeof ctx.ua === 'string') c.ua = ctx.ua;
@@ -107,8 +123,8 @@
     const view = (j) => Object.assign({ id: j.id, name: j.name, state: j.state, bytes: j.bytes, total: j.total, reason: j.reason, at: j.at },
       j.wait ? { wait: j.wait } : {},
       j.check && !TERMINAL.has(j.state) ? { check: j.check } : {},
-      j.kind === 'hls' ? { kind: 'hls', done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {},
-      j.kind === 'hls' && j.loc ? { loc: j.loc } : {});
+      j.kind === 'hls' || j.kind === 'dash' ? { kind: j.kind, done: j.done || 0, of: j.of || 0, phase: j.phase || '' } : {},
+      (j.kind === 'hls' || j.kind === 'dash') && j.loc ? { loc: j.loc } : {});
 
     // Antwort des Helfers in den Auftrag übernehmen (nur bekannte Felder und Werte).
     function apply(j, r) {
@@ -133,7 +149,16 @@
       j.reason = typeof r.reason === 'string' && /^[a-z0-9_]{0,40}$/.test(r.reason) ? r.reason : '';
       // P4c: der Helfer wartet selbst auf Netz bzw. den nächsten Versuch (der Auftrag läuft weiter)
       j.wait = r.state === 'running' && (r.wait === 'offline' || r.wait === 'retry') ? r.wait : '';
-      if (r.kind === 'hls' || j.kind === 'hls') {
+      if (r.kind === 'dash' || j.kind === 'dash') {
+        // S3c: DASH-Auftrag (gleiche Felder wie HLS; Fehlerort: MPD, Init, Stück)
+        if (r.kind !== 'dash' || (j.kind && j.kind !== 'dash')) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }   // nie die Art wechseln
+        j.kind = 'dash';
+        j.done = Number.isSafeInteger(r.done) && r.done >= 0 ? r.done : j.done || 0;
+        j.of = Number.isSafeInteger(r.of) && r.of >= 0 ? r.of : j.of || 0;
+        j.phase = ['fetch', 'mux', 'verify', 'save'].includes(r.phase) ? r.phase : '';
+        const n = (x, max) => Number.isSafeInteger(x) && x >= -1 && x <= max;
+        j.loc = DASH_LOCS.includes(r.at) && n(r.at_index, 100000) ? { at: r.at, index: r.at_index } : null;
+      } else if (r.kind === 'hls' || j.kind === 'hls') {
         if (r.kind !== 'hls') { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }   // nie die Art wechseln
         j.kind = 'hls';
         j.done = Number.isSafeInteger(r.done) && r.done >= 0 ? r.done : j.done || 0;
@@ -146,7 +171,7 @@
       }
       j.seen = now();
       if (j.check) j.check = '';   // P4c-3: der Helfer hat geantwortet
-      if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); }
+      if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); dashPending.delete(j.id); }
       return r.state;
     }
 
@@ -232,6 +257,14 @@
         if (s === 'running' && j.state === 'cancelling') {
           // Abbruch kam (noch) nicht an, etwa wegen eines Verbindungsabbruchs: erneut senden (dlcancel ist idempotent).
           try { apply(j, await channel.download('dlcancel', { id })); } catch (e) { /* nächste Abfrage versucht es wieder */ }
+        } else if (s === 'unknown' && j.kind === 'dash') {
+          // S3c: unbestätigter DASH-Start: derselbe Start mit derselben Kennung, solange Plan und Auswahl im Speicher sind
+          const dp = dashPending.get(id);
+          if (j.state === 'cancelling') { dashPending.delete(id); }
+          else if (dp && plans.get(dp.planId)) {
+            try { await dashSend(j, plans.get(dp.planId), dp.option, dp.name); }
+            catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : (e.reason || 'not_started'); dashPending.delete(id); } }
+          } else { j.state = 'failed'; j.reason = 'not_started'; dashPending.delete(id); }
         } else if (s === 'unknown' && j.kind === 'hls') {
           // P4c: unbestätigter HLS-Start: derselbe Start mit derselben Kennung, solange Plan und Auswahl im Speicher sind
           const hp = hlsPending.get(id);
@@ -437,6 +470,96 @@
       });
     }
 
+    // ---------------------------------------------------------------- S3c: DASH-Streams
+    const DASH_VIDEO = /^(avc1|avc3)\.[0-9a-f]{6}$/i;
+    // Antwort auf dashplan streng übernehmen: nur bekannte Felder, Zahlen begrenzt, Texte bereinigt; nie eine Adresse.
+    // Angeboten wird nur, was der Helfer speichert: fMP4/H.264 + AAC-LC (mp4a.40.2) – jede andere Option entfällt.
+    function dashPlanOf(r) {
+      if (!r || r.ok !== true || typeof r.planId !== 'string' || !HEX32.test(r.planId) || r.fp !== 'kadri-dash-fp/1' ||
+          !Array.isArray(r.options) || !r.options.length || r.options.length > 256) return null;
+      const opts = [];
+      for (const o of r.options) {
+        if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !HEX24.test(o.id)) return null;
+        const n = (x) => (Number.isSafeInteger(x) && x >= 0 && x <= 1e9 ? x : 0);
+        if (typeof o.video !== 'string' || !DASH_VIDEO.test(o.video) || o.audio !== 'mp4a.40.2') continue;
+        const lang = typeof o.lang === 'string' && /^[A-Za-z0-9-]{1,16}$/.test(o.lang) ? o.lang : '';
+        opts.push({ id: o.id, height: n(o.height), width: n(o.width), bandwidth: n(o.bandwidth), video: o.video.toLowerCase(), audio: 'mp4a.40.2', lang, played: o.played === true });
+      }
+      if (!opts.length) return null;
+      const duration = typeof r.duration === 'number' && isFinite(r.duration) && r.duration >= 0 ? r.duration : 0;
+      const expiresSec = Number.isSafeInteger(r.expiresSec) && r.expiresSec > 0 && r.expiresSec <= 3600 ? r.expiresSec : 600;
+      return { planId: r.planId, duration, expiresSec, options: opts };
+    }
+    const sameDashOption = (a, b) => a.height === b.height && a.width === b.width && a.bandwidth === b.bandwidth && a.lang === b.lang && a.video === b.video;
+
+    // dashplan: Optionen (Qualität × Ton) für einen vom Nutzer gewählten, an genau dieses Video gebundenen DASH-Stream.
+    // fp: Kadris Fingerabdruck des gebundenen MPD (der Helfer lehnt ein abweichendes MPD ab); played: Hinweis.
+    function dashPlan(rawUrl, fp, bind, played, rawCtx) {
+      return serial(async () => {
+        const url = normalizeUrl(rawUrl);
+        if (!url || typeof fp !== 'string' || !/^[0-9a-f]{64}$/.test(fp)) { const e = new Error('input'); e.kind = 'input'; throw e; }
+        const ctx = await contextFor(rawCtx, true);
+        const key = await digest('dash\n' + url);
+        const args = Object.assign({ url, fp, bind }, played ? { played } : {}, ctx || {});
+        const r = await channel.download('dashplan', args);
+        if (r && r.ok === false) {
+          const ok = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason);
+          const e = new Error(ok ? 'plan' : 'unsupported'); e.kind = ok ? 'plan' : 'unsupported'; if (ok) e.reason = r.reason;
+          if (ok) e.diag = dashPlanDiagnostic(r.diag);
+          throw e;
+        }
+        const p = dashPlanOf(r);
+        if (!p) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }
+        keepPlan(Object.assign({ kind: 'dash', key, url, fp, bind, played: played || '', ctx, at: now() }, p));
+        const all = await load();
+        for (const x of all) if (x.kind === 'dash' && x.key === key && !TERMINAL.has(x.state)) await stillActive(all, x);
+        const job = all.find((x) => x.key === key && x.kind === 'dash' && !TERMINAL.has(x.state));
+        return { planId: p.planId, duration: p.duration, options: p.options, job: job ? view(job) : null };
+      });
+    }
+    // dashstart mit gespeicherter Kennung; ist der Plan beim Helfer abgelaufen (plan_stale, z. B. neue Kanal-Sitzung oder
+    // 10 min um), genau einmal neu planen (gleicher Fingerabdruck) und dieselbe Auswahl erneut senden – DIESELBE Kennung.
+    async function dashSend(j, plan, option, name) {
+      const args = (p, o) => Object.assign({ id: j.id, planId: p.planId, option: o, bind: p.bind }, name != null ? { name } : {});
+      try { return apply(j, await channel.download('dashstart', args(plan, option))); }
+      catch (e) {
+        const stale = (e && e.kind === 'plan-rejected' && e.reason === 'plan_stale') || (e && e.kind === 'stale-session' && e.notSent);
+        if (!stale) throw e;
+        const want = plan.options.find((o) => o.id === option);
+        const fresh = dashPlanOf(await channel.download('dashplan', Object.assign({ url: plan.url, fp: plan.fp, bind: plan.bind }, plan.played ? { played: plan.played } : {}, plan.ctx || {})));
+        const again = fresh && want && fresh.options.filter((o) => sameDashOption(o, want));
+        if (!again || again.length !== 1) { const e2 = new Error('plan-changed'); e2.kind = 'plan-rejected'; e2.reason = 'plan_changed'; throw e2; }
+        const np = Object.assign({ kind: 'dash', key: plan.key, url: plan.url, fp: plan.fp, bind: plan.bind, played: plan.played, ctx: plan.ctx, at: now() }, fresh);
+        keepPlan(np);
+        return apply(j, await channel.download('dashstart', args(np, again[0].id)));
+      }
+    }
+    function dashStart(planId, option, rawName) {
+      return serial(async () => {
+        const plan = plans.get(planId);
+        if (!plan || plan.kind !== 'dash' || !plan.options.some((o) => o.id === option)) { const e = new Error('plan-rejected'); e.kind = 'plan-rejected'; e.reason = 'plan_stale'; throw e; }
+        const jobs = await load();
+        const same = jobs.find((x) => x.key === plan.key && x.kind === 'dash' && !TERMINAL.has(x.state));
+        if (same && await stillActive(jobs, same)) return { job: view(same), existing: true };
+        const named = rawName != null && String(rawName).trim() !== '';
+        const j = { id: random(), key: plan.key, kind: 'dash', name: cleanName(rawName), named, state: 'starting', bytes: 0, total: -1, reason: '',
+          done: 0, of: 0, phase: '', at: now(), seen: 0 };
+        jobs.unshift(j);
+        await save(jobs);                // erst gespeichert, dann gesendet
+        dashPending.set(j.id, { planId, option, name: named ? j.name : null });
+        try {
+          await dashSend(j, plan, option, named ? j.name : null);
+        } catch (e) {
+          if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); followUp(j.id); return { job: view(j), existing: false }; }
+          dashPending.delete(j.id);
+          await save(jobs.filter((x) => x.id !== j.id));
+          throw e;
+        }
+        await save(jobs);
+        return { job: view(j), existing: false };
+      });
+    }
+
     // Kann der gekoppelte Helfer direkte Downloads? (dlstatus einer nie vergebenen Kennung; 60 s zwischengespeichert)
     function capabilities() {
       return serial(async () => {
@@ -444,7 +567,7 @@
         let value;
         try {
           const r = await channel.download('dlstatus', { id: PROBE_ID });
-          value = { reachable: true, supported: r.ok === true && r.state === 'unknown', hls: false, ctx: false };
+          value = { reachable: true, supported: r.ok === true && r.state === 'unknown', hls: false, ctx: false, dash: false };
           // P4b: HLS nur, wenn der Helfer es im Status meldet (alte Helfer: kein Feld → kein Angebot)
           if (value.supported && typeof channel.status === 'function') {
             try {
@@ -452,15 +575,23 @@
               value.hls = !!(st && st.hls && st.hls.v === 1);
               value.ctx = value.hls && st.hls.ctx === 1;
               ctxCaps = { at: now(), ok: value.ctx };
-            } catch (e) { value.hls = false; }
+              // S3c: DASH nur, wenn der Helfer genau dieses Profil und diesen Fingerabdruck meldet (alte Helfer: kein Angebot)
+              value.dash = !!(st && dashCapable(st));
+              dashCtxCaps = { at: now(), ok: value.dash && st.dashdl.ctx === 1 };
+            } catch (e) { value.hls = false; value.dash = false; }
           }
-        } catch (e) { value = { reachable: false, supported: false, hls: false, error: e.kind || 'error' }; }
+        } catch (e) { value = { reachable: false, supported: false, hls: false, dash: false, error: e.kind || 'error' }; }
         if (value.reachable) caps = { at: now(), value };
         return value;
       });
     }
 
-    return { start, status, cancel, find, list, capabilities, hlsPlan, hlsStart, hlsResume };
+    return { start, status, cancel, find, list, capabilities, hlsPlan, hlsStart, hlsResume, dashPlan, dashStart };
+  }
+  // S3c: Fähigkeit "dashdl" des Helfers: genau v 1, Profil fmp4-avc-aac, Fingerabdruck kadri-dash-fp/1
+  function dashCapable(st) {
+    const d = st && st.dashdl;
+    return !!(d && typeof d === 'object' && d.v === 1 && d.fp === 'kadri-dash-fp/1' && Array.isArray(d.profiles) && d.profiles.indexOf('fmp4-avc-aac') >= 0);
   }
 
   // Für Anzeigen (Menü, Player): feste Texte je Zustand und Grund – nie Server-Text oder URL.
@@ -476,7 +607,7 @@
       : (j.of > 0 && j.done <= j.of ? j.done + '/' + j.of + ' Teile' + (j.bytes > 0 ? ' · ' : '') : '') + loaded());
     const exact = j.total > 0 && j.bytes >= 0 && j.bytes <= j.total;
     const progress = j.state === 'running' || j.state === 'cancelling' || ((j.state === 'starting' || j.state === 'unconfirmed') && j.bytes > 0)
-      ? (j.kind === 'hls' ? hlsProgress()
+      ? (j.kind === 'hls' || j.kind === 'dash' ? hlsProgress()
         : exact ? Math.floor(j.bytes * 100 / j.total) + ' % · ' + mb(j.bytes) + ' / ' + mb(j.total) + ' MB' : loaded())
       : j.state === 'done' && j.total > 0 ? mb(j.total) + ' MB' : '';   // exakt die gespeicherte Datei
     // P4c-3: letzte Abfrage beim Helfer gescheitert → kein „Lädt …“/„Startet …“ ohne Ende, sondern der Grund.
@@ -490,7 +621,8 @@
       case 'cancelling': return { label: lost ? 'Abbruch angefordert – ' + lost : 'Wird abgebrochen …', progress };
       case 'done': return { label: 'Gespeichert in Download/Video-Assistent', progress };
       case 'cancelled': return { label: 'Abgebrochen', progress };
-      case 'interrupted': return { label: j.kind === 'hls' ? 'Unterbrochen – Helfer-App öffnen, in ihrer Benachrichtigung oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
+      case 'interrupted': return { label: j.kind === 'dash' ? 'Unterbrochen – in der Benachrichtigung der Helfer-App fortsetzen oder erneut speichern' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
+        : j.kind === 'hls' ? 'Unterbrochen – Helfer-App öffnen, in ihrer Benachrichtigung oder im Player fortsetzen' + (j.reason ? ' (' + reasonText(j.reason) + ')' : '')
         : 'Unterbrochen – öffne die Helfer-App (setzt bis zu 6 h automatisch fort) oder starte erneut', progress };
       default: return { label: reasonText(j.reason), progress };
     }
@@ -521,9 +653,21 @@
       av_duration_mismatch: 'Bild und Ton passen nicht zusammen', container_mismatch: 'Bild und Ton passen nicht zusammen',
       discontinuity: 'Stream mit Unterbrechungen – nicht unterstützt', byterange: 'Stream-Form nicht unterstützt', remux: 'Zusammensetzen fehlgeschlagen',
       internal: 'Interner Fehler der Helfer-App', expired: 'Unterbrochener Download abgelaufen', incomplete: 'Teile fehlen – bitte erneut starten',
+      // S3c: DASH (feste Codes des Helfers, DashEngine/Fmp4Inspect)
+      manifest_mismatch: 'Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert', fingerprint_missing: 'Manifest nicht geprüft – bitte erneut versuchen',
+      dash_no_audio: 'Stream ohne Ton – nicht gespeichert', media_duration: 'Stücke passen nicht zur angegebenen Länge – nichts gespeichert',
+      segment_timing: 'Stücke ohne Zeitangaben – nicht speicherbar', codec_mismatch: 'Format weicht von den Angaben ab – nicht speicherbar',
+      remux_io: 'Zusammensetzen fehlgeschlagen – nichts gespeichert', init_size: 'Stream-Form nicht unterstützt', init_box: 'Stream-Form nicht unterstützt',
+      init_track: 'Stream-Form nicht unterstützt', mp4_structure: 'Stream-Form nicht unterstützt', mp4_boxes: 'Stream-Form nicht unterstützt', segment_box: 'Stream-Form nicht unterstützt',
+      fingerprint: 'Manifest nicht lesbar – nicht speicherbar', mpd_size: 'Manifest zu groß', manifest_size: 'Manifest zu groß',
     };
     if (r.startsWith('verify_')) return 'Prüfung des Ergebnisses fehlgeschlagen – nichts gespeichert';
     if (T[r]) return T[r];
+    // S3c: Profilgründe des Helfers (DashProfile, mit "_" statt "-")
+    if (r === 'dash_live') return 'Live-Stream – nicht speicherbar';
+    if (r === 'dash_protected') return 'Stream ist verschlüsselt (DRM) – nicht speicherbar';
+    if (r === 'dash_codec') return 'Kein unterstütztes Format (H.264/AAC)';
+    if (r.startsWith('dash_')) return 'Stream-Form nicht unterstützt';
     if (r.startsWith('range_')) return 'Fortsetzen nicht möglich';
     return 'Download fehlgeschlagen';
   }
@@ -544,6 +688,8 @@
 
   NS.createDownloads = createDownloads;
   NS.planDiagnostic = planDiagnostic;
+  NS.dashPlanDiagnostic = dashPlanDiagnostic;
+  NS.dashCapable = dashCapable;
   NS.normalizeDownloadUrl = normalizeUrl;
   NS.downloadName = cleanName;
   NS.describeDownload = describe;

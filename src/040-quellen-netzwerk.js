@@ -360,6 +360,13 @@
         info.kind = 'dash';
         try { info.dash = dashSummaryFromParsed(parsed); } catch (e) { info.dash = null; }
         try { info.dashIdx = dashSegmentIndex(parsed, base); } catch (e) { info.dashIdx = null; }
+        // S3c: Strukturfingerabdruck (kadri-dash-fp/1) und S3-Vorprüfung gegen die finale Adresse des MPD (src/039) – für
+        // den Plan beim Helfer; nie in Registry, Diagnose oder Speicher (nur Hex und feste Gründe, privat in diesem Fenster)
+        try {
+          const doc = new URL(base, location.href).href.split('#')[0];
+          const f = dashFingerprint(text, parsed, doc);
+          info.dashFp = f && f.fp ? { fp: f.fp, gate: f.gate, url: doc } : { error: (f && f.error) || 'fp' };
+        } catch (e) { info.dashFp = { error: 'fp' }; }
         info.dashHits = []; info.dashInit = 0;
         [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
@@ -466,6 +473,20 @@
     return { u: u, dur: media.dur, live: media.live };
   }
   // Zusammenfassung eines gelesenen DASH-Manifests (src/038) zu dieser Adresse – oder null
+  // S3c: was der Plan beim Helfer braucht – nur für ein an GENAU dieses Video gebundenes MPD (Aufrufer prüft die Bindung):
+  // finale Adresse, Fingerabdruck, Vorprüfung und die gespielten Darstellungen seit from (Nummern in Dokumentreihenfolge,
+  // häufigste zuerst, höchstens 8). null, wenn das MPD nicht (mehr) gelesen vorliegt.
+  function dashOfferOf(u, from) {
+    let k = '';
+    try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) { return null; }
+    const p = k && dashInfo.get(k);
+    if (!p || !p.dash || p.dash.error || !p.dashFp) return null;
+    if (p.dashFp.error) return { error: p.dashFp.error };
+    const n = new Map();
+    (p.dashHits || []).forEach((h) => { if (h.t >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
+    const played = Array.from(n.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map((x) => x[0]);
+    return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
+  }
   function dashSummaryOf(u) { let k = ''; try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) {} const p = k && dashInfo.get(k); return p && p.dash ? p.dash : null; }
   // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)
   function streamLen(u) {

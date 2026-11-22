@@ -152,7 +152,7 @@
       try { if (vid.currentSrc !== new URL(d).href) return ''; } catch (e) { return ''; }
       return !/\.(webm|ogv|ogg|mkv|mov|avi)(\?|#|$)/i.test(d) ? d : '';
     };
-    st.hdl = { ok: false, hls: false, checked: '', pending: null, gen: 0, job: null, url: '', busy: false, timer: 0 };
+    st.hdl = { ok: false, hls: false, dash: false, checked: '', pending: null, gen: 0, job: null, url: '', busy: false, timer: 0 };
     // ---------- Downloadauswahl aus dem gemeinsamen Quellenbestand (P2) ----------
     // Angeboten wird jede MP4, die nach den Belegen eigenständig, an dieses Video gebunden und auswählbar ist – unabhängig
     // davon, was der Player gerade spielt (HLS läuft weiter, nichts wird umgeschaltet). Zwei Herkünfte: (1) die vom eigenen
@@ -208,6 +208,14 @@
       return out;
     }
     const hlsAttemptable = (assume) => hlsOptions({ hls: assume || st.hdl.hls }).filter((o) => o.state === 'attemptable');
+    // ---------- S3c: DASH-Streams über die Helfer-App ----------
+    // Nur ein MPD, das an das Originalvideo gebunden ist (Beleg dash-segments, genau eines – selectDashStreams); Angebot erst
+    // nach Kadris Vorprüfung und mit gemeldeter Fähigkeit "dashdl" (dashOfferFor, src/105). Der eigene Player spielt kein DASH.
+    function dashList(assume) {
+      if (!st.media || !st.media.orig) return [];
+      try { dashObserveFor(orig, st.media.orig); } catch (e) {}
+      return selectDashStreams(mediaRegistry.snapshot(st.media.orig), { dash: assume || st.hdl.dash }).map((o) => Object.assign({ ctx: st.media.orig }, o));
+    }
     // Adresse, für die geprüft wird (caps/find): die geladene eigene Datei, sonst die erste auswählbare Alternative
     function hdlPrimary() {
       const u = hdlUrl();
@@ -219,11 +227,18 @@
       }
       // sonst ein speicherbarer Stream (P4b): caps sagen dann, ob der Helfer HLS kann; find findet einen laufenden Auftrag
       const h = hlsAttemptable(true)[0];
-      if (!h) return '';
-      const r = mediaRegistry.resolveStream(h.ctx, h.sourceId, h.revision);
+      if (h) {
+        const r = mediaRegistry.resolveStream(h.ctx, h.sourceId, h.revision);
+        return r.ok ? r.url : '';
+      }
+      // S3c: sonst ein gebundener DASH-Stream: caps sagen, ob der Helfer DASH speichert
+      const dd = dashList(true).find((x) => x.state === 'attemptable');
+      if (!dd) return '';
+      const r = mediaRegistry.resolveDash(dd.ctx, dd.sourceId, dd.revision);
       return r.ok ? r.url : '';
     }
-    const hdlShown = () => !!(st.hdl.ok && (hdlAttemptable(false).length || (st.hdl.hls && hlsAttemptable(false).length)));
+    const hdlShown = () => !!(st.hdl.ok && (hdlAttemptable(false).length || (st.hdl.hls && hlsAttemptable(false).length) ||
+      (st.hdl.dash && dashList(false).some((x) => x.state === 'attemptable'))));
     // Gehört der laufende Auftrag zu diesem Player (eine seiner bekannten Quellen)?
     const hdlJobHere = () => !!st.hdl.url && (st.hdl.url === hdlUrl() || !!(st.media.orig && mediaRegistry.idOf(st.media.orig, st.hdl.url)) ||
       !!(st.media.own && mediaRegistry.idOf(st.media.own, st.hdl.url)));
@@ -306,6 +321,7 @@
         st.hdl.err = (v && v.error) || (r && r.error && r.error.kind) || '';   // fester Code (z. B. unpaired), nie Text
         st.hdl.ok = !!(v && v.supported);
         st.hdl.hls = !!(v && v.supported && v.hls);   // P4b: nur ein Helfer, der HLS meldet (alte: nie)
+        st.hdl.dash = !!(v && v.supported && v.dash);   // S3c: nur ein Helfer, der "dashdl" meldet
         if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
         if (!st.hdl.ok) { st.hdl.checked = u; drop('unsupported'); return; }
         hdlMark('find');
@@ -396,6 +412,50 @@
           : 'Helfer-App lädt den Stream – Fortschritt hier im Menü und in der Benachrichtigung');
       });
     }
+    // S3c: Plan für DASH (der Helfer lädt das MPD, vergleicht Kadris Fingerabdruck, prüft das Profil) und eindeutig
+    // zugeordnete Optionen; gestartet wird nur per Tipp (dashstart)
+    function dashPlanMenu(d) {
+      if (!d || st.hdl.busy) return;
+      const sel = mediaRegistry.resolveDash(d.x.ctx, d.x.sourceId, d.x.revision);
+      if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut auswählen'); return; }
+      st.hdl.busy = true;
+      toast('Helfer-App prüft den Stream …');
+      const info = Object.assign(hdlDiagInfo(d.x, d.offer.url), { stream: true, dash: true, stage: 'dashplan' });
+      helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {})).then((r) => {
+        st.hdl.busy = false;
+        if (!r || !r.ok || !r.value || !Array.isArray(r.value.options)) hdlDiagFailure(info, r);
+        if (vp !== st) return;
+        if (!r) { toast('Helfer-App nicht erreichbar'); return; }
+        if (!r.ok || !r.value || !Array.isArray(r.value.options)) { toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
+        const p = r.value;
+        if (p.job && hdlActive(p.job)) { st.hdl.url = d.offer.url; hdlSet(p.job, true); toast(tr('Läuft schon') + ': ' + hdlText(p.job)); return; }
+        const its = dashOptionItems(p, d.offer.gate);
+        if (!its.length) { toast('Auswahl nicht eindeutig zuordenbar – nicht angeboten'); return; }
+        const dur = p.duration > 0 ? fmtTime(p.duration) + ' · ' : '';
+        openMenu('DASH-Stream speichern', its.slice(0, 12).map((it) => ({
+          label: it.label,
+          sub: (it.o.played ? tr('läuft gerade') + ' · ' : '') + dur + (it.o.bandwidth ? Math.round(it.o.bandwidth / 1000) + ' kbit/s · ' : '') + 'H.264 + AAC',
+          fn: () => dashGo(d.offer.url, p.planId, it.o, d.x) })));
+      });
+    }
+    function dashGo(u, planId, x, o) {
+      if (st.hdl.busy) return;
+      st.hdl.busy = true;
+      toast('Helfer-App startet den Download …');
+      const info = Object.assign(hdlDiagInfo(o, u), { stream: true, dash: true, planned: true, stage: 'dashstart' });
+      helperDl('dashstart', { planId, option: x.id, name: (pageTitle() || 'Video').slice(0, 100) }).then((r) => {
+        st.hdl.busy = false;
+        if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, null);
+        else hdlDiagFailure(info, r);
+        if (vp !== st) return;
+        if (!r) { toast('Helfer-App nicht erreichbar'); return; }
+        if (!r.ok) { toast((r.error && r.error.message) || 'Helfer-App: Verbindung fehlgeschlagen'); return; }
+        st.hdl.url = u;
+        hdlSet(r.value.job, true);
+        toast(r.value.job.state === 'unconfirmed' ? 'Verbindung unterbrochen – Stand wird geprüft'
+          : 'Helfer-App lädt den Stream – Fortschritt hier im Menü und in der Benachrichtigung');
+      });
+    }
     function hdlCancel() {
       const j = st.hdl.job;
       if (!hdlActive(j)) return;
@@ -437,6 +497,12 @@
       const sOpts = st.hdl.ok ? hlsOptions({ hls: st.hdl.hls }) : [];
       const streams = sOpts.filter((o) => o.state === 'attemptable');
       const j = hdlActive(st.hdl.job) && hdlJobHere() ? st.hdl.job : null;
+      // S3c: gebundenes DASH mit Vorprüfung und Fähigkeit (dashOfferFor) – sonst ein fester Grund für die Unterzeile des
+      // Hinweises (dashWhy; nur zusammen mit dem Hinweis „DASH-Stream erkannt“ gezeigt)
+      let dashD = null;
+      try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig)); } catch (e) { dashD = null; }
+      const dashOk = dashD && dashD.offer ? dashD : null;
+      const dashWhy = dashD && dashD.reason ? dashD.reason : '';
       // DASH (nur für den Hinweis, nie ein Angebot): allein aus den Belegen der Registry (Originalvideo, eigener Player) –
       // sicher gebunden bzw. nur vermutet (siehe mediaDashState). Eine Endung „.mpd“ ist kein Beleg für die Zuordnung.
       let dash = '';
@@ -444,7 +510,7 @@
         if (st.media && st.media.orig) dashObserveFor(orig, st.media.orig);   // Stückfolgen seit dem Öffnen nachtragen
         dash = mediaDashState([st.media && st.media.orig ? mediaRegistry.snapshot(st.media.orig) : [], st.media && st.media.own ? mediaRegistry.snapshot(st.media.own) : []]);
       } catch (e) { dash = ''; }
-      if (j || can.length || streams.length) {
+      if (j || can.length || streams.length || dashOk) {
         st.hdl.menu = true;
         if (j) {
           items.push({ label: 'Helfer-App: ' + tr(j.label), sub: j.progress || 'Stand wird abgefragt', stay: true, fn: () => {} });
@@ -459,11 +525,13 @@
               tr(hdlEvidenceText(o)), fn: () => hdlStart(o) } }))
             .concat(streams.slice(0, 2).map((o) => ({ loaded: o.loaded, item: { label: 'Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
               tr(hdlEvidenceText(o)), fn: () => hlsPlanMenu(o) } })))
+            .concat(dashOk ? [{ loaded: true, item: { label: 'DASH-Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
+              tr('Stücke dieses Streams gerade geladen'), fn: () => dashPlanMenu(dashOk) } }] : [])
             .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).forEach((e) => items.push(e.item));
         }
       } else if (st.hdl.ok) {
         // erkannt, aber nicht über die Helfer-App: verständlich sagen warum – ohne Adresse
-        if (dash === 'bound') items.push({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} });
+        if (dash === 'bound') items.push(Object.assign({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} }, dashWhy ? { sub: dashWhy } : {}));
         else if ((st.hls || PLAYLIST_RE.test(st.cur || '')) && !st.hdl.hls) items.push({ label: 'Helfer-App: Stream erkannt', sub: 'Diese Helfer-App-Version speichert keine Streams', stay: true, fn: () => {} });
         else if (sOpts.some((o) => o.reason === 'ambiguous' || o.reason === 'not-bound')) items.push({ label: 'Helfer-App: Stream nicht sicher zugeordnet', sub: 'gehört nicht nachweislich zu diesem Video – nicht angeboten', stay: true, fn: () => {} });
         else if (sOpts.some((o) => o.reason === 'protected')) items.push({ label: 'Helfer-App: Stream geschützt', sub: 'verschlüsselt (DRM/AES) – nicht speicherbar', stay: true, fn: () => {} });
@@ -479,7 +547,7 @@
         else if (s === 'unreachable') items.push(st.hdl.err === 'unpaired' || st.hdl.err === 'rejected' ? { label: pageDlHelperText(st.hdl.err), stay: true, fn: () => {} }
           : { label: 'Helfer-App nicht erreichbar', sub: 'App öffnen und ⬇ erneut tippen', stay: true, fn: () => {} });
         else if (s === 'unsupported') items.push({ label: 'Helfer-App: diese Version kann keine direkten Downloads', sub: 'Helfer-App aktualisieren', stay: true, fn: () => {} });
-        else if (dash === 'bound') items.push({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} });
+        else if (dash === 'bound') items.push(Object.assign({ label: 'DASH-Stream erkannt – derzeit nicht unterstützt', stay: true, fn: () => {} }, dashWhy ? { sub: dashWhy } : {}));
         else if (dash === 'suspected') items.push({ label: 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt', stay: true, fn: () => {} });
         else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
       }

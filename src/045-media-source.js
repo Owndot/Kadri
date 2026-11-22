@@ -176,7 +176,8 @@
   // ---------- P4b: HLS-Streams über die Helfer-App ----------
   // Speicherbar (Versuch) ist eine HLS-Liste (Haupt- oder Medienliste), die an genau dieses Video gebunden und nicht als
   // verschlüsselt bekannt ist. Ob sie wirklich ein unterstütztes VOD-Profil ist (H.264/AAC, TS/fMP4, ohne AES/DRM, nicht
-  // live), prüft erst der Helfer streng beim Plan (hlsplan) – hier kein Abruf. DASH nur erkannt, nie angeboten.
+  // live), prüft erst der Helfer streng beim Plan (hlsplan) – hier kein Abruf. DASH hat eine eigene, strengere Auswahl
+  // (S3c: selectDashStreams, nur mit Beleg dash-segments) – über diesen HLS-Weg nie.
   function mediaStreamState(s) {
     if (s.kind === 'dash') return { state: 'unavailable', reason: 'dash-not-supported' };
     if (s.kind !== 'hls') return { state: 'unavailable', reason: 'not-a-stream' };
@@ -201,6 +202,34 @@
       else if (s.association.state === 'ambiguous' && !st) st = 'suspected';
     }));
     return st;
+  }
+  // ---------- S3c: DASH-Streams über die Helfer-App ----------
+  // Auswählbar (Versuch) ist nur ein DASH-Manifest, das an GENAU dieses Video gebunden ist – mit dem Beleg „dash-segments“
+  // (seine Stücke wurden nachweislich in Folge geladen, src/038 dashBindDecision) – und nicht als geschützt bekannt. Andere
+  // Belege (Endung, zeitliche Nähe, Seitendaten) genügen für DASH nie. Ob das MPD dem S3-Profil entspricht (fMP4, H.264,
+  // AAC-LC, statisch, eine Periode, ohne ContentProtection), prüft Kadri danach am gelesenen Text (src/039) und der Helfer
+  // beim Plan selbst (er lädt das MPD und vergleicht den Fingerabdruck). Reine Funktion; kein Abruf.
+  function mediaDashStreamState(s) {
+    if (!s || s.kind !== 'dash') return { state: 'unavailable', reason: 'not-dash' };
+    if (s.role !== 'manifest' && s.role !== 'unknown') return { state: 'unavailable', reason: 'not-standalone' };
+    if (['encrypted', 'drm'].indexOf(s.protection) >= 0) return { state: 'unavailable', reason: 'protected' };
+    if (s.association.state !== 'bound' || s.association.evidence.indexOf('dash-segments') < 0)
+      return { state: 'candidate', reason: s.association.state === 'unbound' ? 'not-bound' : 'ambiguous' };
+    return { state: 'attemptable', reason: null };
+  }
+  // Auswahl „DASH-Stream speichern …“: höchstens EIN gebundenes Manifest; mehrere gleichzeitig gebundene (z. B. zwei
+  // Videos oder ein Wechsel ohne neuen Medienstart) sind nicht eindeutig zuordenbar → keines (ambiguous).
+  function selectDashStreams(snapshot, caps) {
+    const out = [];
+    (snapshot || []).forEach((s) => {
+      if (!s || s.kind !== 'dash') return;
+      let d = mediaDashStreamState(s);
+      if (d.state === 'attemptable' && !(caps && caps.dash)) d = { state: 'unavailable', reason: 'helper-unavailable' };
+      out.push({ sourceId: s.sourceId, revision: s.revision, state: d.state, reason: d.reason, role: s.role,
+        identity: 'played', loaded: d.state === 'attemptable' });
+    });
+    if (out.filter((x) => x.state === 'attemptable').length > 1) out.forEach((x) => { if (x.state === 'attemptable') Object.assign(x, { state: 'candidate', reason: 'ambiguous', loaded: false }); });
+    return out;
   }
   // Auswahl „Stream speichern …“: gebundene Haupt-/Medienlisten; tatsächlich geladene zuerst, Hauptliste vor Medienliste.
   function selectStreams(snapshot, caps) {

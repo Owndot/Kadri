@@ -169,10 +169,21 @@
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
       return { ok: true, url: urls.get(sourceId), bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };
     }
+    // S3c: wie resolveStream, für ein DASH-Manifest (nur mit Beleg dash-segments, siehe mediaDashStreamState)
+    function resolveDash(ctx, sourceId, revision) {
+      const p = playerOf(ctx);
+      if (!p) return { ok: false, reason: 'stale-context' };
+      const s = p.sources.get(sourceId);
+      if (!s) return { ok: false, reason: 'unknown-source' };
+      if (revision !== s.revision) return { ok: false, reason: 'stale-revision' };
+      const d = mediaDashStreamState(s);
+      if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
+      return { ok: true, url: urls.get(sourceId), bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };
+    }
     // Ist diese genaue Adresse für den Player bekannt? (nur Kennung, keine Adresse heraus)
     function idOf(ctx, url) { const p = playerOf(ctx); return (p && p.byUrl.get(url)) || ''; }
     const stats = () => ({ players: live.length, sources: total });
-    return { contextFor, observe, snapshot, invalidate, subscribe, selectPlayback, resolveSelection, resolveStream, idOf, stats };
+    return { contextFor, observe, snapshot, invalidate, subscribe, selectPlayback, resolveSelection, resolveStream, resolveDash, idOf, stats };
   }
   const mediaRegistry = createMediaRegistry();
   // ---------- Adapter: vorhandene Erkennung liefert Beobachtungen (keine neue Site-Logik) ----------

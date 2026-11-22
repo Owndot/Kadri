@@ -164,6 +164,50 @@
   // abweichende, zusätzliche oder umsortierte Parameter → kein Treffer (Identität nicht nachweisbar → ambiguous).
   // Grenzen: höchstens 64 Darstellungen, 20000 Zeitleisten-Einträge je Darstellung, 20000 Listeneinträge.
   const DASH_IDX = Object.freeze({ reps: 64, timeline: 20000, list: 20000 });
+  // S3c: Vorlagen wie der Helper (DashTemplate, ISO/IEC 23009-1 5.3.9.4.4) in EINEM Durchgang: $$, $RepresentationID$
+  // (ohne Format, nur unschädliche Zeichen), $Bandwidth$ und $Bandwidth%0[w]d$ (mit führenden Nullen auf w Stellen – vorher
+  // wurde das Format ignoriert), $Number$/$Time$ (je optional %0[w]d, w 1–20) → slot. Alles andere ($SubNumber$, unbekannte
+  // Namen, offenes "$") → null. bw: Bandbreite als Dezimaltext ohne führende Nullen ("0", wenn nicht angegeben).
+  // Ergebnis { text, kind: 'number' | 'time' | '', width } – eine Medienvorlage braucht genau einen Zahlenplatzhalter.
+  const DASH_TPL_ID = /^[A-Za-z0-9._~=,;!*()+&:@-]{1,256}$/;
+  function dashTplExpand(tpl, id, bw, media, slot) {
+    const s = String(tpl);
+    let out = '', kind = '', width = 0, i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      if (c !== '$') { out += c; i++; continue; }
+      const end = s.indexOf('$', i + 1);
+      if (end < 0) return null;
+      const ident = s.slice(i + 1, end);
+      i = end + 1;
+      if (!ident) { out += '$'; continue; }
+      const pc = ident.indexOf('%');
+      const name = pc >= 0 ? ident.slice(0, pc) : ident, fmt = pc >= 0 ? ident.slice(pc) : null;
+      let w = 0;
+      if (fmt !== null) { const m = /^%0([1-9][0-9]?)d$/.exec(fmt); if (!m || Number(m[1]) > 20) return null; w = Number(m[1]); }
+      if (name === 'RepresentationID') { if (fmt !== null || typeof id !== 'string' || !DASH_TPL_ID.test(id)) return null; out += id; }
+      else if (name === 'Bandwidth') out += String(bw).padStart(w, '0');
+      else if (name === 'Number' || name === 'Time') { if (!media || kind) return null; kind = name === 'Number' ? 'number' : 'time'; width = w; out += slot; }
+      else return null;
+    }
+    if (media && !kind) return null;
+    return { text: out, kind: kind, width: width };
+  }
+  // Bandbreite wie beim Helper (DashNum.parseU): nur Ziffern (XML-Leerraum am Rand), ohne führende Nullen; fehlt → "0"; sonst null
+  const dashBwText = (raw) => {
+    if (raw == null) return '0';
+    const t = String(raw).replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, '');
+    if (!/^[0-9]{1,40}$/.test(t)) return null;
+    const v = t.replace(/^0+(?=\d)/, '');
+    return v.length <= 10 ? v : null;
+  };
+  // Marke an der Stelle des Zahlenplatzhalters für die Auflösung: nur Ziffern ("8", (längste 9er-Folge + 1) × "9", "8") –
+  // kann in Vorlage, eingesetzten Werten und Basis nicht vorkommen (anders als eine feste Wortmarke, die in einer
+  // Darstellungs-ID oder Adresse stehen könnte); die Auflösung ändert keine Ziffern. Gefunden wird sie über die 9er-Folge.
+  function dashMark(text, base) {
+    const run = (x) => { let b = 0, c = 0; for (let i = 0; i < x.length; i++) { c = x[i] === '9' ? c + 1 : 0; if (c > b) b = c; } return b; };
+    return '8' + '9'.repeat(Math.max(run(text), run(base)) + 1) + '8';
+  }
   // Vergleichsschlüssel einer Adresse für DASH: alles außer dem #-Teil (nur intern; nie in Registry-Zusammenfassung/Diagnose)
   const dashUrlKey = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin + x.pathname + x.search : ''; } catch (e) { return ''; } };
   const dashEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -176,27 +220,34 @@
     const tplTimeline = (chain) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); const tl = t && dashKid(t, 'SegmentTimeline'); if (tl) return tl; } return null; };
     let mpdBase;
     try { mpdBase = baseOf(root, new URL(mpdUrl).href); } catch (e) { return out; }
+    // S3c: Nummer jeder Darstellung in Dokumentreihenfolge über alle Perioden – dieselbe wie beim Helper (Plan, "played")
+    let g = -1;
     dashKids(root, 'Period').forEach((per) => {
       const perBase = baseOf(per, mpdBase);
       dashKids(per, 'AdaptationSet').forEach((a) => {
         const aBase = baseOf(a, perBase);
         dashKids(a, 'Representation').forEach((r) => {
+          g++;
           if (out.reps.length >= DASH_IDX.reps) return;
           const base = baseOf(r, aBase), chain = [r, a, per];
-          const id = r.getAttribute('id') || '', bw = r.getAttribute('bandwidth') || '';
-          const rep = { i: out.reps.length, kind: '', mode: '', prefix: '', re: null, start: 1, times: null, dur: 0, list: null, init: '' };
-          const fill = (tpl) => String(tpl).replace(/\$RepresentationID\$/g, id).replace(/\$Bandwidth(%0\d+d)?\$/g, bw).replace(/\$\$/g, '$');
+          const id = r.getAttribute('id'), bw = dashBwText(r.getAttribute('bandwidth'));
+          const rep = { i: g, kind: '', mode: '', prefix: '', re: null, width: 0, start: 1, times: null, dur: 0, list: null, init: '' };
+          // S3c: eine Vorlage, die der Helper ablehnen würde (ungültige ID, Format, unbekannter Platzhalter), ergibt keine Muster
+          const fill = (tpl) => { const x = bw === null ? null : dashTplExpand(tpl, id, bw, false, ''); return x ? x.text : null; };
           const media = tplAttr(chain, 'media');
           if (media != null) {
-            const tpl = fill(media);
-            const hasNum = /\$Number(%0\d+d)?\$/.test(tpl), hasTime = /\$Time(%0\d+d)?\$/.test(tpl);
             // genau EIN Zahlen-Platzhalter (sonst ist die Stücknummer nicht eindeutig ablesbar)
-            if (hasNum === hasTime || (tpl.match(/\$(Number|Time)(%0\d+d)?\$/g) || []).length !== 1) { out.single++; return; }
-            const tok = 'KADRIIDXTOKEN9Q';
+            const ex = bw === null ? null : dashTplExpand(media, id, bw, true, '\u0001');
+            if (!ex) { out.single++; return; }
+            const hasNum = ex.kind === 'number', hasTime = ex.kind === 'time';
+            // Marke nur aus Ziffern, kollisionsfrei gegen Vorlage, eingesetzte Werte und Basis (siehe dashMark)
+            const tok = dashMark(ex.text, base);
             let abs = '';
-            try { abs = dashUrlKey(new URL(tpl.replace(/\$(Number|Time)(%0\d+d)?\$/, tok), base).href); } catch (e) { abs = ''; }
+            try { abs = dashUrlKey(new URL(ex.text.replace('\u0001', tok), base).href); } catch (e) { abs = ''; }
             if (!abs || abs.split(tok).length !== 2) { out.single++; return; }
             const parts = abs.split(tok);
+            try { if (new URL(abs).origin.indexOf(tok) >= 0) { out.single++; return; } } catch (e) { out.single++; return; }   // Marke im Host
+            rep.width = ex.width;
             rep.prefix = parts[0];
             rep.re = new RegExp('^' + dashEsc(parts[0]) + '(\\d{1,20})' + dashEsc(parts[1]) + '$');
             // nur für die Diagnose (dashDiagClassify): Herkunft, Pfad und Query getrennt – nie für die Bindung
@@ -224,7 +275,8 @@
               if (!rep.times && !(rep.dur > 0)) { out.single++; return; }
             }
             const ini = tplAttr(chain, 'initialization');
-            if (ini) { try { rep.init = dashUrlKey(new URL(fill(ini), base).href); } catch (e) {} }
+            const iniText = ini ? fill(ini) : null;
+            if (iniText) { try { rep.init = dashUrlKey(new URL(iniText, base).href); } catch (e) {} }
           } else {
             let sl = null;
             for (let i = 0; i < chain.length && !sl; i++) sl = dashKid(chain[i], 'SegmentList');
@@ -258,6 +310,10 @@
       if (!r.re || key.indexOf(r.prefix) !== 0) continue;
       const m = r.re.exec(key);
       if (!m) continue;
+      // S3c: genau die Schreibweise, die die Vorlage erzeugt (%0[w]d: auf w Stellen mit Nullen; ohne Format: keine
+      // führenden Nullen) – "seg-7" ist nicht das Stück "seg-00007"; Werte nur bis 2^53−1 (exakt wie beim Helper)
+      const nv = m[1].length <= 16 ? Number(m[1]) : NaN;
+      if (!Number.isSafeInteger(nv) || String(nv).padStart(r.width || 0, '0') !== m[1]) continue;
       if (r.mode === 'number') { const n = Number(m[1]) - r.start; if (n >= 0) return { rep: r.i, idx: n }; continue; }
       if (r.times) { const k = r.times.get(String(Number(m[1]))); if (k !== undefined) return { rep: r.i, idx: k }; continue; }
       if (r.dur > 0) { const q = Number(m[1]) / r.dur; if (Number.isInteger(q)) return { rep: r.i, idx: q }; }

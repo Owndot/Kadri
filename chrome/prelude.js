@@ -33,9 +33,10 @@
     // P4b: hlsplan/hlsstart/hlsresume (Stream speichern) – dieselben Grenzen, dazu Plan-/Optionskennung und die
     // Bindung an Player/Medien-Epoche/Revision der Quelle (nur Kennungen und Zahlen).
     const KADRI_DOWNLOAD = async (op, a) => {
-      if (!['start', 'find', 'status', 'cancel', 'caps', 'hlsplan', 'hlsstart', 'hlsresume'].includes(op)) return null;
+      // S3c: dashplan/dashstart (DASH speichern) – dazu der Fingerabdruck des gebundenen MPD und die gespielten Darstellungen
+      if (!['start', 'find', 'status', 'cancel', 'caps', 'hlsplan', 'hlsstart', 'hlsresume', 'dashplan', 'dashstart'].includes(op)) return null;
       const msg = { t: 'kadri-download', op };
-      for (const k of ['url', 'name', 'id', 'planId', 'option']) if (a && typeof a[k] === 'string') msg[k] = a[k];
+      for (const k of ['url', 'name', 'id', 'planId', 'option', 'fp', 'played']) if (a && typeof a[k] === 'string') msg[k] = a[k];
       if (a && a.bind && typeof a.bind === 'object' && typeof a.bind.player === 'string') msg.bind = { player: a.bind.player, gen: a.bind.gen, rev: a.bind.rev };
       const r = await api.runtime.sendMessage(msg);
       return r && typeof r === 'object' ? r : null;

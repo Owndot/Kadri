@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<d:MPD xmlns:d="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT20S"><d:Period><d:AdaptationSet mimeType="video/mp4" codecs="avc1.4d401e"><d:SegmentTemplate timescale="1000" duration="4000" initialization="i.mp4" media="$Number$.m4s"/><d:Representation id="v" bandwidth="1"/></d:AdaptationSet></d:Period></d:MPD>

@@ -86,8 +86,9 @@ for (const [name, snap, caps, want] of [
 // gespielten Adresse ist kein Beleg (Quellprüfung der Stelle, die den Hinweis bestimmt)
 {
   const p = fs.readFileSync(path.join(root, 'src/180-player-bedienung.js'), 'utf8');
-  const i = p.indexOf('let dash = '), block = p.slice(i, p.indexOf('if (j || can.length || streams.length)', i));
+  // (S3c: die Bedingung danach nennt zusätzlich das geprüfte DASH-Angebot – dashOk, src/105 dashOfferFor)
+  const i2 = p.indexOf('let dash = '), end = p.indexOf('if (j || can.length || streams.length || dashOk)', i2), block = p.slice(i2, end);
   check('eigener Player: DASH-Hinweis nur aus mediaDashState (Registry), keine Ableitung aus der Adresse',
-    i > 0 && /dash = mediaDashState\(/.test(block) && !/\.mpd|st\.cur|'bound'/.test(block), block);
+    i2 > 0 && end > i2 && /dash = mediaDashState\(/.test(block) && !/\.mpd|st\.cur|'bound'/.test(block), block);
 }
 console.log('RESULT dash-message PASS ' + passed + '/' + passed);
