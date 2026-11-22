@@ -243,6 +243,11 @@ with sync_playwright() as p:
         if OFFER in pitems: break
         pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.6)
     check('eigener Player: dasselbe Angebot „%s“ im Download-Menü' % OFFER, OFFER in pitems, pitems)
+    pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.4)
+    dg = diag()
+    check('S3g G3: Diagnose im geöffneten Player nennt DASH-Fähigkeit und DASH-Auswahl (Angebot attemptable)',
+          re.search(r'^Player: offen .* Helfer-Downloads unterstützt \(HLS ja, DASH ja\)$', dg, re.M) and re.search(r'^  Auswahl MP4: .* · Stream: .* · DASH: attemptable ×1$', dg, re.M),
+          [l for l in dg.split('\n') if l.startswith('Player:') or l.startswith('  Auswahl')])
 
     # ---------- Tonauswahl im Sheet: immer benannt, nie stillschweigend ----------
     def plan_items(m):

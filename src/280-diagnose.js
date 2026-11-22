@@ -213,7 +213,7 @@
       const v = p.vid;
       L.push('Player: offen · Modus ' + p.mode + ' · Wiedergabe ' + (p.hls ? 'hls' : anonKind(p.cur || '')) +
         (v ? ' · Bereitschaft ' + v.readyState + (v.error ? ' · Fehler ' + v.error.code : '') + ' · Auflösung ' + Math.min(v.videoWidth || 0, v.videoHeight || 0) + 'p' : '') +
-        ' · Helfer-Downloads ' + (p.hdl ? (p.hdl.ok ? 'unterstützt' : p.hdl.pending ? 'wird geprüft' : 'nicht bestätigt') : '-'));
+        ' · Helfer-Downloads ' + (p.hdl ? (p.hdl.ok ? 'unterstützt (HLS ' + (p.hdl.hls ? 'ja' : 'nein') + ', DASH ' + (p.hdl.dash ? 'ja' : 'nein') + ')' : p.hdl.pending ? 'wird geprüft' : 'nicht bestätigt') : '-'));
       [['Originalvideo', p.media && p.media.orig], ['eigener Player', p.media && p.media.own]].forEach((c) => {
         if (!c[1]) return;
         let snap = [];
@@ -221,7 +221,8 @@
         L.push('Quellen ' + c[0] + ' (' + snap.length + '):');
         anonSnapLines(L, snap);
         // was der eigene Player selbst belegt hat, aber die Auswahl am schwebenden Knopf (Originalvideo) nicht sieht
-        try { L.push('  Auswahl MP4: ' + anonPick(selectDownloads(snap, { supported: true })) + ' · Stream: ' + anonPick(selectStreams(snap, { hls: true }))); } catch (e) {}
+        try { L.push('  Auswahl MP4: ' + anonPick(selectDownloads(snap, { supported: true })) + ' · Stream: ' + anonPick(selectStreams(snap, { hls: true })) +
+          ' · DASH: ' + anonPick(selectDashStreams(snap, { dash: !!(p.hdl && p.hdl.dash) }))); } catch (e) {}   // S3g: DASH mit der Fähigkeit dieses Players
       });
     } else L.push('Player: geschlossen');
     // Netzwerk: Art und Rolle der beobachteten Adressen (Rolle aus gelesenen Listen, sonst eindeutige Muster) – nur Zählungen
