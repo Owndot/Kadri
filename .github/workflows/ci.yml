@@ -11,7 +11,9 @@ permissions:
 jobs:
   build-test:
     if: github.head_ref != 'codex/pip-lifecycle' && github.head_ref != 'codex/pairing-key-recovery' && github.head_ref != 'codex/browser-proxy-memory'
-    runs-on: ubuntu-latest
+    # S3d: vorerst ubuntu-24.04 (ubuntu-latest ist jetzt 26.04: Playwright 1.56 installiert dort kein Chromium,
+    # pyyaml 6.0.2 hat kein passendes Wheel); wie im Helfer seit Runde 6. Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +176,9 @@ jobs:
   dnr-scope:
     # Kadris Schutzregeln gelten nur für Kadris eigene Anfragen, nie für Service Worker fremder Webseiten
     # (Chromium: Mutationsprobe; Firefox: echter Browser vom Runner, Kadri als temporäre Erweiterung).
-    runs-on: ubuntu-latest
+    # S3d: vorerst ubuntu-24.04 (ubuntu-latest ist jetzt 26.04: Playwright 1.56 installiert dort kein Chromium,
+    # pyyaml 6.0.2 hat kein passendes Wheel); wie im Helfer seit Runde 6. Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -217,7 +221,9 @@ jobs:
     # Sicherer Kanal zur Helfer-App in der normalen Chrome-Fassung. Gegenstelle ist der echte ChannelServer der Helper-App
     # (Commit in vendor/kadri-pairing-poc/SOURCE) auf einem Desktop-JVM; nur das Gerät ist nachgebildet.
     # Nichts wird veröffentlicht; keine APK, keine Erweiterung als Artefakt.
-    runs-on: ubuntu-latest
+    # S3d: vorerst ubuntu-24.04 (ubuntu-latest ist jetzt 26.04: Playwright 1.56 installiert dort kein Chromium,
+    # pyyaml 6.0.2 hat kein passendes Wheel); wie im Helfer seit Runde 6. Tests unverändert
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
