@@ -272,6 +272,10 @@ with sync_playwright() as p:
     tap_dl()
     sxy = center_of(cdp, 'dli', 'Stream mit Helper herunterladen …', 15)
     check('HLS: Stream-Eintrag im Blatt', bool(sxy), [label(n) for n in find(cdp, 'dli')])
+    if not sxy:   # S3g: nur Diagnose bei Fehlschlag (CI-only): Zustand von Knopf und Video, keine Änderung am Ablauf
+        print('DIAG HLS-Blatt: pill_on=%s video=%s' % (pill_on(), pg.evaluate('() => { const v = document.getElementById("v"); '
+              'return { t: +v.currentTime.toFixed(2), d: +v.duration.toFixed(2), paused: v.paused, ended: v.ended, muted: v.muted, rs: v.readyState, '
+              'err: v.error && v.error.code, adb: v.webkitAudioDecodedByteCount, vdb: v.webkitVideoDecodedByteCount }; }')), flush=True)
     if sxy:
         tap(pg, sxy)
         check('HLS: Qualitätsauswahl erscheint (Blatt ersetzt)', wait(lambda: any(label(n).startswith('Stream') for n in find(cdp, 'dlh')), 20), [label(n) for n in find(cdp, 'dlh')])
