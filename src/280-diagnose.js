@@ -114,16 +114,34 @@
         ' · Bereitschaft ' + v.readyState + (v.error ? ' · Fehler ' + v.error.code : '') + ' · Auflösung ' + Math.min(v.videoWidth || 0, v.videoHeight || 0) + 'p' +
         ' · gepuffert ' + Math.round(buf) + ' s · DRM ' + (v.mediaKeys ? 'ja' : 'nein') + (shadowVids.indexOf(v) >= 0 ? ' · im Shadow-DOM' : '') +
         (v.ownerDocument !== document ? ' · in leerem Unterfenster' : ''));
-      // dieselbe Auswertung wie beim Tipp auf ⬇ (ohne Abruf; Fähigkeiten der Helfer-App hier angenommen)
-      const caps = { supported: true, hls: true };
-      let o = null;
+      // dieselbe Auswertung wie beim Tipp auf ⬇ (ohne Abruf). S3g: mit den zuletzt tatsächlich gemeldeten Fähigkeiten der
+      // Helfer-App (hdlCapsSeen, src/080); noch nie abgefragt: MP4/HLS wie bisher angenommen, DASH ausdrücklich „unbekannt“
+      const hc = typeof hdlCapsSeen !== 'undefined' ? hdlCapsSeen : null;
+      const known = !!(hc && hc.reachable && hc.supported);
+      const caps = known ? { supported: true, hls: hc.hls, dash: hc.dash } : { supported: true, hls: true };
+      const yn = (b) => (b ? 'ja' : 'nein');
+      L.push('Helfer-Fähigkeiten: ' + (!hc ? 'noch nicht abgefragt (⬇ antippen fragt ab)'
+        : (!hc.reachable ? 'nicht erreichbar' + (hc.error ? ' (' + hc.error + ')' : '') : !hc.supported ? 'keine direkten Downloads'
+          : 'MP4 ja · HLS ' + yn(hc.hls) + ' · DASH ' + yn(hc.dash)) + ' · abgefragt vor ' + Math.max(0, Math.round((Date.now() - hc.at) / 1000)) + ' s'));
+      let o = null, pre = null;
       try { o = pageDlOptions(v, caps); } catch (e) {}
+      // Kadris Vorprüfung des gebundenen MPD unabhängig von der Helfer-Fähigkeit (wie dashOfferFor mit DASH-Fähigkeit)
+      try { pre = pageDlOptions(v, Object.assign({}, caps, { dash: true })).dashOffer; } catch (e) {}
       let snap = [];
       try { const c = mediaRegistry.contextFor(v); if (c) snap = mediaRegistry.snapshot(c); } catch (e) {}
       L.push('Quellen am Video (' + snap.length + '):');
       anonSnapLines(L, snap);
-      if (o) L.push('Auswahl MP4: ' + anonPick(o.all) + ' · Auswahl Stream: ' + anonPick(o.allS) +
-        (o.mp4.length + o.hls.length ? '' : ' · Hinweis im Menü: ' + pageDlReason(o, caps)));
+      if (o) {
+        const dashOk = !!(o.dashOffer && o.dashOffer.offer);
+        const preOk = !!(pre && pre.offer);
+        const hint = o.mp4.length + o.hls.length || dashOk ? ''
+          : !known && preOk ? 'abhängig von der Helfer-Fähigkeit (noch nicht abgefragt)'
+            : pageDlReason(o, caps) + (pageDlReasonSub(o) ? ' – ' + pageDlReasonSub(o) : '');
+        L.push('Auswahl MP4: ' + anonPick(o.all) + ' · Auswahl Stream: ' + anonPick(o.allS) + (hint ? ' · Hinweis im Menü: ' + hint : ''));
+        L.push('Auswahl DASH: Manifest ' + (o.dash === 'bound' ? 'gebunden' : o.dash === 'suspected' ? 'nur vermutet (nicht gebunden)' : 'keines gebunden') +
+          (o.dash === 'bound' ? ' · Kadri-Vorprüfung ' + (preOk ? 'bestanden' : 'abgelehnt (' + ((pre && pre.code) || 'unbekannt') + ')') +
+            ' · Angebot ' + (dashOk ? 'ja' : !preOk ? 'nein' : known ? 'nein (helper-no-dash)' : 'abhängig von der Helfer-Fähigkeit') : ''));
+      }
       // DASH (S2): Stückprüfung je gelesenem MPD – nur Zählungen und Grund
       try {
         const b = dashBindingFor(v);
@@ -131,7 +149,9 @@
           const r = b.res[e.key] || {};
           L.push('DASH-Stückprüfung ' + (i + 1) + '/' + b.list.length + ': Treffer ' + (r.hits || 0) + ' · Darstellungen mit Treffern ' + (r.reps || 0) +
             ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
-            ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')');
+            ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')' +
+            // S3g: S3-Vorprüfung dieses MPD (am gelesenen Text, src/039) – fester Code, auch wenn es (noch) nicht gebunden ist
+            ' · Vorprüfung ' + (!e.p.dashFp || e.p.dashFp.error ? 'nicht prüfbar' : e.p.dashFp.gate && e.p.dashFp.gate.ok ? 'bestanden' : dashGateCode(e.p.dashFp.gate && e.p.dashFp.gate.reason)));
         });
         // Stufe-1-Diagnose: jeder vom Beobachter seit dem Videostart gemeldete Abruf stufenweise gegen dieses MPD
         // (src/038 dashDiagClassify). Nur Zählungen; nur „exakt“ ist Bindungsevidenz, die übrigen Stufen sind rein diagnostisch.

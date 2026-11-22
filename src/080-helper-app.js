@@ -11,7 +11,18 @@
   // selbst, ohne Cookies oder Sitzung des Browsers. Sonst (Userscript, Firefox, Helfer aus) gibt es diesen Weg nicht.
   async function helperDl(op, args) {
     if (CONFIG.systemHelper === false || typeof KADRI_DOWNLOAD !== 'function') return null;
-    try { return await KADRI_DOWNLOAD(op, args || {}); } catch (e) { return null; }
+    let r = null;
+    try { r = await KADRI_DOWNLOAD(op, args || {}); } catch (e) { return null; }
+    if (op === 'caps') { try { hdlCapsNote(r); } catch (e) {} }   // nur für die Diagnose; Antwort unverändert
+    return r;
+  }
+  // S3g: zuletzt gemeldete Fähigkeiten des Helfers (nur Wahrheitswerte, fester Fehlercode und Zeit) – damit die Diagnose
+  // den tatsächlichen Stand zeigt statt einer Annahme. Ändert keine Entscheidung (Menüs fragen weiter selbst nach).
+  let hdlCapsSeen = null;
+  function hdlCapsNote(r) {
+    const v = r && r.ok && r.value;
+    hdlCapsSeen = { at: Date.now(), reachable: !!(v && v.reachable), supported: !!(v && v.supported), hls: !!(v && v.supported && v.hls),
+      dash: !!(v && v.supported && v.dash), error: hdlDiagCode((v && v.error) || (r && r.error && r.error.kind)) };
   }
   // ---------- Diagnose der Helfer-Downloads (Seitenleben, NICHT an den Player gebunden; nie eine Adresse) ----------
   // Je gestartetem oder gefundenem Auftrag: Herkunft/Bindung/Art der Quelle (aus der Registry, ohne Adresse), Alter beim
@@ -78,7 +89,8 @@
       if (typeof local === 'function') hdlDiagLocal.set(d, local);
       hdlDiagWatch(d);
     }
-    d.type = job.kind === 'hls' || info.stream ? 'hls' : 'mp4';
+    // S3g: DASH-Aufträge als eigener Typ (vorher 'hls', weil sie als Stream starten) – Helfer meldet kind "dash"
+    d.type = job.kind === 'dash' || info.dash ? 'dash' : job.kind === 'hls' || info.stream ? 'hls' : 'mp4';
     hdlDiagUpdate(job);
     return d;
   }
@@ -90,10 +102,10 @@
     d.reason = hdlDiagCode(job.reason);
     d.check = hdlDiagCode(job.check);
     d.phase = ['fetch', 'mux', 'verify', 'save'].indexOf(job.phase) >= 0 ? job.phase : '';
-    if (d.type === 'hls') {
+    if (d.type === 'hls' || d.type === 'dash') {
       d.done = Number.isSafeInteger(job.done) && job.done >= 0 ? job.done : 0;
       d.of = Number.isSafeInteger(job.of) && job.of >= 0 ? job.of : 0;
-      d.loc = hdlLocValid(job.loc) || d.loc || null;   // erster gemeldeter Fehlerort bleibt für die Diagnose
+      if (d.type === 'hls') d.loc = hdlLocValid(job.loc) || d.loc || null;   // erster gemeldeter Fehlerort bleibt für die Diagnose
     }
     if ((d.state === 'failed' || d.state === 'interrupted') && previous !== d.state + ':' + d.reason) {
       d.failAfter = Math.round((Date.now() - d.at) / 1000);
@@ -211,6 +223,8 @@
   function hdlDiagProbe(d) {
     const u = hdlDiagUrl.get(d), x = gmXhr();
     if (d.probe) return;
+    // S3g: DASH-Auftrag: die fehlerhafte Ressource ist unbekannt (das MPD wäre KEIN Vergleich) – wie bisher kein Abruf
+    if (d.type === 'dash') { d.probe = 'nicht durchgeführt (DASH-Ressource unbekannt)'; return; }
     // HLS-Auftrag: nur mit gemeldetem Fehlerort; die Ressource wird aus der Hauptliste der Seite nachgebildet
     const walk = d.type === 'hls' && d.stage !== 'hlsplan';
     if (walk && !d.loc) { d.probe = 'nicht durchgeführt (HLS-Ressource unbekannt)'; return; }
@@ -281,8 +295,8 @@
   function hdlDiagText(d) {
     if (!d) return '-';
     const status = /^(?:range_)?http_(\d{3})$/.exec(d.reason || '');
-    const type = d.type || (d.stream ? 'hls' : d.kind === 'mp4' ? 'mp4' : '?');
-    const phase = d.state === 'rejected' && d.stage === 'hlsplan' ? 'hlsplan' : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
+    const type = d.type || (d.dash ? 'dash' : d.stream ? 'hls' : d.kind === 'mp4' ? 'mp4' : '?');
+    const phase = d.state === 'rejected' && (d.stage === 'hlsplan' || d.stage === 'dashplan') ? d.stage : status && type === 'mp4' ? (d.reason.indexOf('range_') === 0 ? 'mp4-range' : 'mp4-get') : d.phase || 'unbekannt';
     return 'Typ ' + type + ' · Zustand ' + (d.state || '?') + (d.reason ? ' · Grund ' + d.reason + ' nach ' + d.failAfter + ' s' : '') +
       (status ? ' · HTTP ' + status[1] : '') + ' · Phase ' + phase + (d.stage ? ' · Aufruf ' + d.stage : '') +
       (d.planPhase ? ' · Planungsschritt ' + d.planPhase + ' · Listen verarbeitet ' + d.playlists + ' · Medienabrufe noch nicht begonnen' : '') +
@@ -290,6 +304,8 @@
       (type === 'hls' ? ' · Planung ' + (d.planned ? 'erfolgreich (erste Option)' : 'unbekannt') +
         (d.planPhase ? ' · Ressourcen 0 (Planung)' : ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?') +
         (d.loc ? ' · Fehlerort ' + hdlLocText(d.loc) : ' · genaue Fehlerressource/Segmentzahl unbekannt')) : '') +
+      (type === 'dash' ? ' · Planung ' + (d.planned ? 'erfolgreich (gewählte Option)' : d.state === 'rejected' ? 'abgelehnt' : 'unbekannt') +
+        (d.state === 'rejected' ? '' : ' · Ressourcen ' + (Number.isSafeInteger(d.done) ? d.done + '/' + d.of + ' (inkl. Init)' : '?')) : '') +
       ' · Quelle ' + (d.kind || '?') + '/' + (d.role || '?') + (d.height ? ' ' + d.height + 'p' : '') + ' · Herkunft ' + (d.origin || '?') +
       ' · Bindung ' + (d.binding || '?') + ' · im Player geladen ' + (d.loaded ? 'ja' : 'nein') +
       ' · Identität ' + (d.identity === 'played' ? 'diese Wiedergabe' : d.identity === 'declared' ? 'laut Seite' : '?') +

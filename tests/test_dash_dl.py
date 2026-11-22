@@ -148,8 +148,22 @@ with sync_playwright() as p:
     ctx, sw, udir = launch(p)
     ext_id = sw.url.split('/')[2]
     check('Kopplung über die Einstellungsseite', pair_helper(ctx, ext_id, helper) == 'Verbunden')
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
     pg = ctx.pages[0] if ctx.pages else ctx.new_page()
     errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
+    # S3g: anonymisierte Diagnose (wie auf dem Gerät: Kadri-Menü → Diagnose → „Anonymisiert kopieren“)
+    def diag():
+        tab = sw.evaluate('async () => (await chrome.tabs.query({})).find((t) => /\\/d\\/page\\.html/.test(t.url)).id')
+        sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" }, { frameId: 0 })', tab)
+        wait(lambda: pg.evaluate(js('return !!r.querySelector(".diag .danon");')), 8)
+        pg.evaluate('() => navigator.clipboard.writeText("-")')
+        pg.evaluate(js('r.querySelector(".diag .danon").click(); return true;'))
+        got = ['']
+        wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+        pg.evaluate(js('const b = Array.from(r.querySelectorAll(".diag button")).find((x) => x.textContent === "Schließen"); if (b) b.click(); return true;'))
+        return got[0]
+    dline = lambda dg, start: next((l for l in dg.split('\n') if l.startswith(start)), '')
+    danon = lambda dg: not re.search(r'://|127\.0\.0|/d/|manifest\.mpd|chunk-|init-\d', dg)
     def open_case(m):
         pg.goto(VID + '/d/page.html?m=' + m); pg.bring_to_front()
         pg.wait_for_function('() => window.__played >= 1', timeout=40000)
@@ -176,6 +190,15 @@ with sync_playwright() as p:
     open_case('ok')
     it = sheet(keep=True)
     check('gebunden (Stücke in Folge), Profil passt, Helfer meldet dashdl: Angebot „%s“ im schwebenden Menü' % OFFER, OFFER in labels(it) and DB not in labels(it), it)
+    close_sheet(); dg = diag()
+    check('S3g G1: Diagnose zeigt die tatsächlichen Helfer-Fähigkeiten (MP4 ja · HLS ja · DASH ja)',
+          dline(dg, 'Helfer-Fähigkeiten: ').startswith('Helfer-Fähigkeiten: MP4 ja · HLS ja · DASH ja · abgefragt vor '), dline(dg, 'Helfer-Fähigkeiten'))
+    check('S3g G1: „Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung bestanden · Angebot ja“, kein falscher Hinweis „nicht unterstützt“',
+          dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung bestanden · Angebot ja' and 'Hinweis im Menü' not in dg and DB not in dg,
+          [dline(dg, 'Auswahl')] + [dline(dg, 'Auswahl DASH')])
+    check('S3g G1: Stückprüfung nennt die Vorprüfung des MPD („Vorprüfung bestanden“); Diagnose anonym',
+          re.search(r'^DASH-Stückprüfung 1/1: .* Ergebnis bound \(stueckfolge\) · Vorprüfung bestanden$', dg, re.M) and danon(dg), dline(dg, 'DASH-Stückprüfung'))
+    it = sheet(keep=True)
     n0 = len(helper_hits())
     check('Menü öffnen fragt den Helfer nichts zum Stream (kein Abruf des MPD)', not any(x['path'].endswith('.mpd') for x in helper_hits()), helper_hits())
     tap(OFFER)
@@ -196,6 +219,10 @@ with sync_playwright() as p:
     files = ['']
     wait(lambda: files.__setitem__(0, helper.cmd('dl-files')) or ':%d' % want in files[0], 40)
     check('Helfer hat die Datei veröffentlicht (Init + 5 Video- und 6 Tonstücke der gewählten Darstellungen, %d Bytes)' % want, re.search(r'DASH_Test\.mp4:%d\b' % want, files[0]), files[0])
+    dg = diag(); hd = next((l for l in dg.split('\n') if l.startswith(' 1. Typ ')), '')
+    check('S3g G2: Helfer-Download erscheint als „Typ dash“ mit Aufruf dashstart, Planung (gewählte Option) und Ressourcen; nicht als HLS',
+          hd.startswith(' 1. Typ dash · Zustand ') and 'Aufruf dashstart' in hd and 'Planung erfolgreich (gewählte Option)' in hd and re.search(r'Ressourcen \d+/\d+ \(inkl\. Init\)', hd)
+          and 'erste Option' not in hd and 'Quelle dash/manifest' in hd and danon(dg), hd)
     got = [x['path'] for x in helper_hits()[n0:]]
     check('… geladen wurden nur die gewählten Darstellungen (keine Stücke der 180p-Darstellung), nie mit Cookie/Authorization',
           any('chunk-1-00005' in x for x in got) and any('chunk-2-00006' in x for x in got) and not any('chunk-0-' in x or 'init-0' in x for x in got)
@@ -315,6 +342,11 @@ with sync_playwright() as p:
     open_case('heaac'); it = sheet()
     check('MPD nur mit HE-AAC (mp4a.40.5): kein Angebot, Hinweis „%s“ mit Grund „Tonformat nicht unterstützt (nur AAC-LC)“' % DB,
           OFFER not in labels(it) and [DB, 'Tonformat nicht unterstützt (nur AAC-LC)'] in it, it)
+    dg = diag()
+    check('S3g G1: HE-AAC – Diagnose nennt den Ablehnungsgrund der Vorprüfung (dash-audio-codec) und denselben Hinweis wie das Menü',
+          dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung abgelehnt (dash-audio-codec) · Angebot nein'
+          and ('Hinweis im Menü: %s – Tonformat nicht unterstützt (nur AAC-LC)' % DB) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec') and danon(dg),
+          [dline(dg, 'Auswahl'), dline(dg, 'Auswahl DASH'), dline(dg, 'DASH-Stückprüfung')])
     open_case('drm'); it = sheet()
     check('MPD mit ContentProtection: kein Angebot, Grund „geschützt (DRM) – nicht speicherbar“', OFFER not in labels(it)
           and any(x[1] == 'geschützt (DRM) – nicht speicherbar' for x in it), it)
@@ -335,6 +367,10 @@ with sync_playwright() as p:
     check('… Plan abgelehnt: „Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert“, keine Auswahl, kein Auftrag',
           'Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert' in t2[0] and helper.cmd('dl-files') == before
           and not pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === "DASH-Stream speichern");')), (t, t2[0]))
+    dg = diag(); hd = next((l for l in dg.split('\n') if l.startswith(' 1. Typ ')), '')
+    check('S3g G2: abgelehnter Plan erscheint als „Typ dash · Zustand rejected · Grund manifest_mismatch … Phase dashplan · Aufruf dashplan · Planung abgelehnt“',
+          hd.startswith(' 1. Typ dash · Zustand rejected · Grund manifest_mismatch') and 'Phase dashplan' in hd and 'Aufruf dashplan' in hd and 'Planung abgelehnt' in hd
+          and 'Ressourcen' not in hd and danon(dg), hd)
     check('keine Seitenfehler', not errs, errs)
     ctx.close()
 helper.stop()

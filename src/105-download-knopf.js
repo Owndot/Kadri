@@ -36,18 +36,22 @@
   // AAC-LC, statisch, eine Periode, ohne ContentProtection) und der Helfer meldet die Fähigkeit "dashdl" (caps.dash).
   // Ergebnis: { x, offer } – sonst { reason } (fester Hinweistext) oder null (kein gebundenes DASH-Manifest).
   function dashOfferFor(list, from) {
+    // (S3g: je Grund zusätzlich ein fester Code für die anonyme Diagnose – die Entscheidung selbst ist unverändert)
     const bound = (list || []).filter((x) => x.state === 'attemptable' || x.reason === 'helper-unavailable');
-    if (!bound.length) return (list || []).some((x) => x.reason === 'protected') ? { reason: 'geschützt (DRM) – nicht speicherbar' } : null;
+    if (!bound.length) return (list || []).some((x) => x.reason === 'protected') ? { reason: 'geschützt (DRM) – nicht speicherbar', code: 'protected' } : null;
     const x = bound[0];
-    if (x.reason === 'helper-unavailable') return { reason: 'diese Helfer-App-Version speichert kein DASH' };
+    if (x.reason === 'helper-unavailable') return { reason: 'diese Helfer-App-Version speichert kein DASH', code: 'helper-no-dash' };
     const sel = mediaRegistry.resolveDash(x.ctx, x.sourceId, x.revision);
-    if (!sel.ok) return { reason: 'Quelle hat sich geändert – erneut tippen' };
+    if (!sel.ok) return { reason: 'Quelle hat sich geändert – erneut tippen', code: 'source-changed' };
     const offer = dashOfferOf(sel.url, from);
-    if (!offer) return { reason: 'Manifest nicht mehr verfügbar – Video kurz abspielen und erneut tippen' };
-    if (offer.error || !offer.fp) return { reason: 'Manifest nicht prüfbar' };
-    if (!offer.gate || !offer.gate.ok) return { reason: dashGateText(offer.gate && offer.gate.reason) };
+    if (!offer) return { reason: 'Manifest nicht mehr verfügbar – Video kurz abspielen und erneut tippen', code: 'manifest-gone' };
+    if (offer.error || !offer.fp) return { reason: 'Manifest nicht prüfbar', code: 'manifest-unchecked' };
+    if (!offer.gate || !offer.gate.ok) return { reason: dashGateText(offer.gate && offer.gate.reason), code: dashGateCode(offer.gate && offer.gate.reason) };
     return { x: x, sel: sel, offer: offer };
   }
+  const DASH_GATE_CODES = ['dash-live', 'dash-protected', 'dash-multiperiod', 'dash-codec', 'dash-audio-codec', 'dash-no-audio', 'dash-no-video',
+    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit'];
+  const dashGateCode = (r) => (DASH_GATE_CODES.indexOf(r) >= 0 ? r : 'dash-unsupported');
   function dashGateText(r) {
     return ({ 'dash-live': 'Live-Stream – nicht speicherbar', 'dash-protected': 'geschützt (DRM) – nicht speicherbar',
       'dash-multiperiod': 'mehrere Abschnitte (Perioden) – nicht unterstützt', 'dash-codec': 'Format nicht unterstützt (nur H.264 mit AAC)',
