@@ -164,7 +164,7 @@
           const c = { exact: 0, query: 0, host: 0, number: 0, none: 0, init: 0, 'init-query': 0, 'init-host': 0 };
           let n = 0, noneMedia = 0;
           recentRes.forEach((x) => {
-            if ((x.s || x.t) < from) return;
+            if (resAt(x) < from) return;
             n++;
             let k = 'none';
             try { if (e.p.dashIdx) k = dashDiagClassify(e.p.dashIdx, x.k); } catch (er) {}
@@ -172,7 +172,7 @@
             if (k === 'none' && /^(xmlhttprequest|fetch|other|video|audio)$/.test(x.it || '')) noneMedia++;
           });
           L.push('DASH-Abgleich ' + (i + 1) + '/' + b.list.length + ' (Beobachter-Abrufe seit Videostart ' + n +
-            (recentRes.length >= 800 && recentRes[0].t > from ? ', ältere nicht mehr gespeichert' : '') + '): Stücke exakt ' + c.exact +
+            (recentRes.length >= 800 && resAt(recentRes[0]) > from ? ', ältere nicht mehr gespeichert' : '') + '): Stücke exakt ' + c.exact +
             ' · nur Query abweichend ' + c.query + ' · gleicher Pfad, anderer Host ' + c.host + ' · Muster passt, Nummer/Zeitleiste abweichend ' + c.number +
             ' · kein struktureller Treffer ' + c.none + ' (davon xhr/fetch/other/Medien ' + noneMedia + ') · Init exakt ' + c.init +
             ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Bindung zählt nur exakt');
@@ -184,14 +184,14 @@
       const st = v ? startAt.get(v) : 0, from = v ? dashFromOf(v) : Infinity, since = {};
       let ns = 0, cand = 0;
       obsRes.log.forEach((x) => {
-        if ((x.s || x.t) < from) return;
+        if (resAt(x) < from) return;
         ns++;
         const k = x.a + ':' + x.x;
         since[k] = (since[k] || 0) + 1;
         if (/^(xhr|fetch|other|video|audio)$/.test(x.a) && /^(ohne-endung|stueck|mp4|webm|andere)$/.test(x.x)) cand++;
       });
       L.push('Ladevorgänge hier (Beobachter, laufend gezählt, Hauptthread dieses Fensters): gesamt ' + obsRes.n + ' (' + anonCount(obsRes.total) + ')' +
-        (v ? ' · seit Videostart' + (st ? '' : ' (Start unbekannt, seit Seitenwechsel)') + ' ' + ns + (obsRes.dropped && obsRes.log.length && obsRes.log[0].t > from ? ', ältere verworfen' : '') +
+        (v ? ' · seit Videostart' + (st ? '' : ' (Start unbekannt, seit Seitenwechsel)') + ' ' + ns + (obsRes.dropped && obsRes.log.length && resAt(obsRes.log[0]) > from ? ', ältere verworfen' : '') +
           ' (Art:Endung: ' + anonCount(since) + ') · Medien-Kandidaten seit Videostart ' + cand : '') +
         ' · nicht sichtbar: Abrufe aus Workern, anderen Fenstern, WebSocket/WebRTC');
     } catch (e) {}

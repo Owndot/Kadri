@@ -173,7 +173,7 @@
     const from = v ? dashFromOf(v) : 0;
     try {
       recentRes.forEach((x) => {
-        if ((x.s || x.t) < from) return;
+        if (resAt(x) < from) return;
         // (Medienabrufe der Seite: nur xhr/fetch/Medien-Element – „other“ sind u. a. Worker-Skripte, Beacons)
         if (/^(xmlhttprequest|fetch|video|audio)$/.test(x.it || '')) media++;
         if (cand && cand.p.dashIdx) { const k = dashDiagClassify(cand.p.dashIdx, x.k); if (k in cls) cls[k]++; }

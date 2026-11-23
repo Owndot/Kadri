@@ -300,7 +300,10 @@
   // später gelesenes MPD seine schon geladenen Stücke noch zuordnen kann. Privat; nie gespeichert; Adressen nie in die Diagnose (dort nur Zählungen).
   const dashRejected = {};
   const dashRejectedKeys = new Set();   // Adressen (volle, ohne #), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
-  const recentRes = [];   // { k, t, it } – it: Initiator laut Resource Timing (nur für die Diagnose-Zählung)
+  const recentRes = [];   // { k, t, s, it } – it: Initiator laut Resource Timing (nur für die Diagnose-Zählung)
+  // S4b-4: Zeitpunkt eines beobachteten Abrufs für die Medien-Epoche – der Anfragebeginn (Resource Timing startTime), wo er
+  // bekannt ist; nur wo er wirklich unbekannt ist, ausdrücklich die Ankunft. Für Bindung, Angebot und Diagnose derselbe.
+  const resAt = (x) => (x.s > 0 ? x.s : x.t);
   // Diagnose: was der Resource-Timing-BEOBACHTER (PerformanceObserver) im Hauptthread dieses Fensters tatsächlich meldet –
   // nur Initiator, Endungsklasse und Zeit, nie die Adresse. Unabhängig vom begrenzten Zeitleisten-Puffer (getEntriesByType).
   const obsRes = { n: 0, total: {}, log: [], dropped: 0 };
@@ -372,7 +375,7 @@
         [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
         // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
-        if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t));
+        if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t, x.s));   // (mit Anfragebeginn – S4b-4)
         info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
         const m = /mediaPresentationDuration\s*=\s*["']([^"']+)["']/.exec(text);
         if (m && !info.live) info.dur = isoDur(m[1]);
@@ -435,13 +438,15 @@
   }
   // Initiator → feste Klasse (Browserwerte; Unbekanntes als „sonst“), Endung → anonExt-Klasse (src/280)
   const obsKind = (it) => (it === 'xmlhttprequest' ? 'xhr' : /^(fetch|other|video|audio|img|script|link|css|iframe|beacon|track|navigation)$/.test(it) ? it : 'sonst');
-  function obsNote(u, it, t) {
+  function obsNote(u, it, t, s) {
     const a = obsKind(String(it || ''));
     let x = '?';
     try { x = anonExt(u); } catch (e) {}
     obsRes.n++;
     obsRes.total[a] = (obsRes.total[a] || 0) + 1;
-    obsRes.log.push({ a: a, x: x, t: t });
+    const e = { a: a, x: x, t: t };
+    if (s > 0 && s <= t) e.s = s;   // Anfragebeginn, soweit Resource Timing ihn liefert (sonst gilt t, siehe resAt)
+    obsRes.log.push(e);
     if (obsRes.log.length > 3000) { obsRes.log.shift(); obsRes.dropped++; }
   }
   function noteSegment(u) {
@@ -485,7 +490,7 @@
     if (!p || !p.dash || p.dash.error || !p.dashFp) return null;
     if (p.dashFp.error) return { error: p.dashFp.error };
     const n = new Map();
-    (p.dashHits || []).forEach((h) => { if ((h.s || h.t) >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
+    (p.dashHits || []).forEach((h) => { if (resAt(h) >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
     const played = Array.from(n.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map((x) => x[0]);
     return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
   }
@@ -517,8 +522,9 @@
     new PerformanceObserver((list) => {
       list.getEntries().forEach((e) => {
         const t = e.responseEnd > 0 && performance.timeOrigin ? performance.timeOrigin + e.responseEnd : 0;
-        try { obsNote(e.name, e.initiatorType, t || Date.now()); } catch (x) {}
-        seeUrl(e.name, t, e.initiatorType, performance.timeOrigin ? performance.timeOrigin + e.startTime : 0);
+        const s = performance.timeOrigin && e.startTime > 0 ? performance.timeOrigin + e.startTime : 0;
+        try { obsNote(e.name, e.initiatorType, t || Date.now(), s); } catch (x) {}
+        seeUrl(e.name, t, e.initiatorType, s);
       });
     }).observe({ type: 'resource', buffered: true });
   } catch (e) {}
