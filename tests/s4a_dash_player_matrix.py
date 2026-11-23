@@ -1,0 +1,317 @@
+# S4a – DASH-Player-Matrix (lokaler Prüfstand, nicht in CI). Misst für verschiedene Player-ARCHITEKTUREN und
+# Adressierungsformen, was Kadri (echte Erweiterung, Testbuild) heute auf jeder Ebene feststellt:
+#   Manifest gelesen? · an das laufende Video gebunden? (Ergebnis + Grund) · Kadri-Vorprüfung (Format/Codec) ·
+#   Angebot im Menü (bzw. welcher Text statt dessen) · Helfer-Planung (dashplan) · optional Helfer-Download (dashstart).
+# Keine Domain-Sonderregeln: alle Szenarien laufen auf zwei neutralen lokalen Hosts (Seite 127.0.0.1, „CDN“ cdn.example.org,
+# im Browser per --host-resolver-rules auf 127.0.0.1). Medien: S3d-Fixture (H.264 + AAC-LC) und tests/make_s4a_fixtures.sh.
+# Geprüft (hart) werden nur SICHERHEITS-Erwartungen: Szenarien, in denen eine Bindung falsch wäre, dürfen nie binden, und
+# eine Bindung muss immer das richtige Manifest treffen. Alles andere wird gemessen und als Tabelle/JSON ausgegeben.
+#   node tools/build.js --test
+#   tests/make_s4a_fixtures.sh /tmp/s4a-fx
+#   S4A_FIXTURES=/tmp/s4a-fx S4A_PLAYERS=<Ordner mit dashjs-4.7.4/ und shaka-player-4.11.7/ (npm pack, entpackt)> \
+#   HELPER_HOST_DIR=<Helper 3887569: tests/java/channel/build.sh OUT> xvfb-run -a python3 tests/s4a_dash_player_matrix.py [SZENARIO …]
+import os, re, sys, time, json, hashlib, threading, http.server, urllib.parse
+KADRI = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')); sys.path.insert(0, os.path.join(KADRI, 'tests'))
+from common import *   # noqa
+PORT = 8792
+PUB = os.path.join(KADRI, 'tests', 'web', 'public'); H264 = os.path.join(PUB, 's3d-dash'); LIB = os.path.join(KADRI, 'tests', 'web', 's4a')
+FX = os.environ.get('S4A_FIXTURES') or ''; PLAYERS = os.environ.get('S4A_PLAYERS') or ''
+OUTDIR = os.environ.get('S4A_OUT') or ''
+OTHER_NAME = 'cdn.example.org'
+FRONT, OTHER = '127.0.0.1:%d' % PORT, '%s:%d' % (OTHER_NAME, PORT)
+BASE_MPD = open(os.path.join(H264, 'manifest.mpd'), encoding='utf-8').read()
+AUDIO_T = [0, 188416, 380928, 572416, 764928, 957440]   # Startzeiten der Tonstücke (Zeitleiste der Fixture, Zeitskala 48000)
+
+# ---------- MPD-Varianten (alle aus derselben Fixture; nur die Adressierung ändert sich) ----------
+def mpd_dur(t):   # SegmentTemplate mit fester Dauer statt Zeitleiste ($Number$)
+    t = re.sub(r'\s*<SegmentTimeline>.*?</SegmentTimeline>\s*', '', t, flags=re.S)
+    t = re.sub(r'(<SegmentTemplate timescale="(\d+)")', lambda m: m.group(1) + ' duration="%d"' % (4 * int(m.group(2))), t)
+    return re.sub(r'<SegmentTemplate([^>]*)>\s*</SegmentTemplate>', r'<SegmentTemplate\1 />', t)
+def mpd_list(t, sign=True, timeline=True):   # SegmentList mit einzelnen (signierten) Stück-Adressen
+    # timeline=True: Zeiten aus der SegmentTimeline der Fixture (genau); False: feste Dauer 4 s – beim Ton (6 Stücke, das letzte
+    # nur 53 ms) beschreibt das MPD dann 24 s statt 20 s (bewusst fehlerhafte Abdeckung für die Vorprüfungs-Gegenprobe e3)
+    def rep(m):
+        rid, body = m.group(2), m.group(3)
+        ts, n = (12800, 5) if rid in ('0', '1') else (48000, 6)
+        q = lambda k: ('?sig=' + hashlib.sha256(('%s-%d' % (rid, k)).encode()).hexdigest()[:16]) if sign else ''
+        tl = re.search(r'<SegmentTimeline>.*?</SegmentTimeline>', body, re.S).group(0) if timeline else ''
+        sl = '<SegmentList timescale="%d"%s><Initialization sourceURL="init-%s.m4s%s"/>%s%s</SegmentList>' % (
+            ts, '' if timeline else ' duration="%d"' % (4 * ts), rid, q(0), tl, ''.join('<SegmentURL media="chunk-%s-%05d.m4s%s"/>' % (rid, k, q(k)) for k in range(1, n + 1)))
+        return m.group(1) + re.sub(r'<SegmentTemplate.*?</SegmentTemplate>', sl, body, flags=re.S) + '</Representation>'
+    return re.sub(r'(<Representation id="(\d)"[^>]*>)(.*?)</Representation>', rep, t, flags=re.S)
+def mpd_base(t, *urls): return t.replace('\t<Period ', ''.join('\t<BaseURL>%s</BaseURL>\n' % u for u in urls) + '\t<Period ', 1)
+def mpd_drop_rep(t, rid): return re.sub(r'\s*<Representation id="%s".*?</Representation>' % rid, '', t, flags=re.S)
+def fx(name):
+    p = os.path.join(FX, name, 'manifest.mpd')
+    return open(p, encoding='utf-8').read() if FX and os.path.isfile(p) else None
+
+# key → { dir, mpd(): Text, redir: 'mpd' (MPD+Stücke 301 zum CDN, wie githack) | 'seg-signed' (Stücke 302 auf signierte CDN-Adresse), time: bool }
+M = {}
+def mk(key, text, d=H264, **kw): M[key] = dict(dir=d, mpd=text, **kw)
+for k in ('a1', 'a2', 'a3', 'b1', 'b2', 'c1', 'c2', 'c3', 'f1', 'f2a', 'f2b', 'd4'): mk(k, BASE_MPD)
+mk('a4', mpd_dur(BASE_MPD)); mk('a5', BASE_MPD.replace('$Number%05d$', '$Time$'), time=True)
+mk('d1', BASE_MPD, redir='mpd'); mk('d2', BASE_MPD, redir='mpd'); mk('d3', BASE_MPD, redir='seg-signed')
+mk('d5', mpd_base(BASE_MPD, 'http://%s/m/d5/' % FRONT, 'http://%s/m/d5/' % OTHER)); mk('d6', mpd_base(BASE_MPD, 'http://%s/m/d6/' % OTHER))
+mk('e2', mpd_list(BASE_MPD)); mk('e3', mpd_list(BASE_MPD, timeline=False)); mk('f1ad', mpd_drop_rep(BASE_MPD, '1')); mk('f1bad', mpd_drop_rep(BASE_MPD, '1')); mk('f1b', BASE_MPD); mk('g1', BASE_MPD); mk('h3', BASE_MPD.replace('mp4a.40.2', 'mp4a.40.5'))
+if fx('sb'): mk('e1', fx('sb'), d=os.path.join(FX, 'sb'))
+if fx('wm'): mk('h1', fx('wm'), d=os.path.join(FX, 'wm'))
+if fx('vm'): mk('h2', fx('vm'), d=os.path.join(FX, 'vm'))
+
+# ---------- Seiten ----------
+VID = '<video id=v%d muted playsinline controls style="width:100%%;display:block;background:#000;aspect-ratio:16/9"></video>'
+def page(body, title='S4a'): return '<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>%s</title></head><body style="margin:0">%s</body></html>' % (title, body)
+def own(*cfgs, seq=False):
+    vids = sorted(set(c.get('v', 0) for c in cfgs))
+    js = ['const C = %s;' % json.dumps(list(cfgs)), 'C.forEach((c) => { c.video = document.getElementById("v" + (c.v || 0)); });']
+    # seq: nacheinander im selben Video; seq=='play': das erste (Vorspann) läuft ≥ 6 s, seq=='tight': das zweite startet 2,5 s nach dem Laden
+    js.append(('(async () => { for (const c of C) { await S4A.start(c); const v = c.video; if (%s) { const t0 = Date.now(); while (v.currentTime < 6 && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 200)); } else await new Promise((r) => setTimeout(r, 2500)); } })();' % ('true' if seq == 'play' else 'false')) if seq else 'C.forEach((c) => S4A.start(c));')
+    return page(''.join(VID % i for i in vids) + '<script src="/lib/own.js"></script><script>' + '\n'.join(js) + '</script>')
+def dashjs(mpd): return page(VID % 0 + '<script src="/lib/dash.all.min.js"></script><script>const p = dashjs.MediaPlayer().create(); p.updateSettings({ debug: { logLevel: 0 } }); p.initialize(document.getElementById("v0"), %s, true);</script>' % json.dumps(mpd))
+def shaka(mpd): return page(VID % 0 + '<script src="/lib/shaka.js"></script><script>shaka.polyfill.installAll(); (async () => { const p = new shaka.Player(); await p.attach(document.getElementById("v0")); await p.load(%s); document.getElementById("v0").play().catch(() => {}); })();</script>' % json.dumps(mpd))
+def iframe(src): return page('<div style="padding:6px">Seite mit eingebettetem Player</div><iframe src="%s" allow="autoplay; fullscreen" style="width:100%%;aspect-ratio:16/9;border:0"></iframe>' % src)
+def srcdoc(inner): return page('<div style="padding:6px">Seite mit srcdoc-Fenster</div><iframe srcdoc="%s" allow="autoplay; fullscreen" style="width:100%%;aspect-ratio:16/9;border:0"></iframe>' % inner.replace('&', '&amp;').replace('"', '&quot;'))
+mp = lambda k, host=FRONT: 'http://%s/m/%s/manifest.mpd' % (host, k)
+PAGES = {
+    'a1': own(dict(mpd=mp('a1'), mode='main')), 'a2': dashjs(mp('a2')), 'a3': shaka(mp('a3')), 'a4': dashjs(mp('a4')), 'a5': dashjs(mp('a5')),
+    'b1': own(dict(mpd=mp('b1'), mode='worker')), 'b2': own(dict(mpd=mp('b2'), mode='wmse')),
+    'c1': iframe('http://%s/p/c1-inner.html' % OTHER), 'c1-inner': dashjs(mp('c1', OTHER)),
+    'c2': srcdoc(own(dict(mpd=mp('c2'), mode='main')).replace('src="/lib/', 'src="http://%s/lib/' % FRONT)),
+    'c3': iframe('http://%s/p/c3-mid.html' % OTHER), 'c3-mid': iframe('http://%s/p/c3-inner.html' % FRONT), 'c3-inner': dashjs(mp('c3')),
+    'd1': dashjs(mp('d1')), 'd2': own(dict(mpd=mp('d2'), mode='main', resolve='initial')), 'd3': dashjs(mp('d3')),
+    'd4': own(dict(mpd=mp('d4') + '?tok=s4a-token', mode='main', addQuery='tok=s4a-token')),
+    'd5': own(dict(mpd=mp('d5'), mode='main', base=1)), 'd6': dashjs(mp('d6')),
+    'e1': dashjs(mp('e1')), 'e2': shaka(mp('e2')), 'e3': dashjs(mp('e3')),
+    'f1': own(dict(mpd=mp('f1ad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1'), mode='main'), seq='play'),
+    'f1b': own(dict(mpd=mp('f1bad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1b'), mode='main'), seq='tight'),
+    'f2': own(dict(mpd=mp('f2a'), mode='main', v=0), dict(mpd=mp('f2b'), mode='main', v=1)),
+    'g1': own(dict(inline='/api/g1.json', mode='main')),
+    'h1': dashjs(mp('h1')), 'h2': dashjs(mp('h2')), 'h3': own(dict(mpd=mp('h3'), mode='main')),
+}
+# Szenarien: (Kennung, Gruppe, Beschreibung, Sicherheits-Erwartung: 'nie' = darf nicht binden | 'richtig' = wenn gebunden, dann
+# mit den Optionen des laufenden Manifests | None, Planung versuchen, Download versuchen, erwartete Plan-Optionen)
+OPT2 = ['360p · Ton: Sprache nicht angegeben', '180p · Ton: Sprache nicht angegeben']
+SCN = [
+    ('a1', 'A Player', 'eigener Player, Hauptthread, fetch · Timeline + $Number$', 'richtig', True, False),
+    ('a2', 'A Player', 'dash.js 4.7.4, Hauptthread, XHR · Timeline + $Number$', 'richtig', True, False),
+    ('a3', 'A Player', 'Shaka 4.11.7, Hauptthread, fetch · Timeline + $Number$', 'richtig', True, False),
+    ('a4', 'A Adressierung', 'dash.js · SegmentTemplate $Number$ mit fester Dauer (ohne Timeline)', 'richtig', True, False),
+    ('a5', 'A Adressierung', 'dash.js · SegmentTemplate $Time$ + Timeline', 'richtig', True, True),
+    ('b1', 'B Worker', 'eigener Player · MPD und Stücke per fetch im Dedicated Worker, MSE im Hauptthread', 'richtig', True, False),
+    ('b2', 'B Worker', 'eigener Player · MediaSource im Dedicated Worker (MediaSourceHandle)', 'richtig', True, False),
+    ('c1', 'C Fenster', 'dash.js in fremd-originigem iframe (CDN-Host)', 'richtig', True, False),
+    ('c2', 'C Fenster', 'eigener Player in srcdoc-iframe', 'richtig', True, False),
+    ('c3', 'C Fenster', 'dash.js zweifach verschachtelt (Seite → fremd → Seite)', 'richtig', True, False),
+    ('d1', 'D Adressen', 'dash.js · MPD + Stücke 301 auf CDN-Host (wie githack), Auflösung gegen endgültige Adresse', 'richtig', True, False),
+    ('d2', 'D Adressen', 'eigener Player · wie d1, aber Auflösung gegen ANGEFRAGTE Adresse (Gegenprobe, Fehler S3h)', 'nie', False, False),
+    ('d3', 'D Adressen', 'dash.js · jedes Stück 302 auf signierte CDN-Adresse (?exp&sig)', 'richtig', True, True),
+    ('d4', 'D Adressen', 'eigener Player · MPD mit ?tok=…, Token an jedes Stück angehängt (MPD nennt es nicht)', 'nie', False, False),
+    ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN)', 'nie', False, False),
+    ('d6', 'D Adressen', 'dash.js · absolute BaseURL auf CDN-Host', 'richtig', True, False),
+    ('e1', 'E Form', 'dash.js · Einzeldatei je Darstellung, SegmentList mit mediaRange (Byte-Bereiche)', 'nie', False, False),
+    ('e2', 'E Form', 'Shaka · SegmentList + SegmentTimeline mit einzeln signierten SegmentURL', 'richtig', True, True),
+    ('e3', 'E Form', 'dash.js · SegmentList mit fester Dauer, Ton-Abdeckung im MPD falsch (24 s statt 20 s) – Vorprüfungs-Gegenprobe', 'richtig', True, False),
+    ('f1', 'F Mehrere', 'eigener Player · erst Vorspann-MPD (nur 180p, 3 Stücke), dann Haupt-MPD im selben Video', 'richtig', True, False),
+    ('f1b', 'F Mehrere', 'eigener Player · wie f1, aber Haupt-MPD startet 2,5 s nach dem Laden des Vorspanns (Vorspann vorgeladen)', 'richtig', True, False),
+    ('f2', 'F Mehrere', 'eigener Player · zwei Videos gleichzeitig, zwei MPDs', None, True, False),
+    ('g1', 'G Quelle', 'eigener Player · MPD-Text aus API-JSON (kein .mpd-Abruf)', 'nie', False, False),
+    ('h1', 'H Codec', 'dash.js · VP9 + Opus in WebM', 'richtig', True, False),
+    ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4', 'richtig', True, False),
+    ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
+]
+WANT_OPTS = {'f1': OPT2, 'f1b': OPT2, 'h1': None, 'h2': None}
+
+HITS = []
+def time_to_num(rid, t):
+    if rid in ('0', '1'): return t // 51200 + 1 if t % 51200 == 0 else None
+    return AUDIO_T.index(t) + 1 if t in AUDIO_T else None
+class H(http.server.BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'
+    def log_message(self, *a): pass
+    def out(self, code, body=b'', ct='application/octet-stream', extra=None):
+        self.send_response(code)
+        for k, v in (extra or {}).items(): self.send_header(k, v)
+        self.send_header('Content-Type', ct); self.send_header('Content-Length', str(len(body))); self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Expose-Headers', 'Content-Range, Content-Length'); self.send_header('Cache-Control', 'no-store'); self.end_headers()
+        if self.command != 'HEAD': self.wfile.write(body)
+    def do_OPTIONS(self):
+        self.send_response(204); self.send_header('Access-Control-Allow-Origin', '*'); self.send_header('Access-Control-Allow-Headers', 'Range'); self.send_header('Content-Length', '0'); self.end_headers()
+    def do_HEAD(self): self.do_GET()
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path); host = self.headers.get('Host') or ''; q = urllib.parse.parse_qs(u.query)
+        HITS.append({'t': time.time(), 'host': host, 'path': u.path, 'q': u.query, 'range': self.headers.get('Range') or '', 'cookie': self.headers.get('Cookie') or '', 'auth': self.headers.get('Authorization') or ''})
+        parts = u.path.strip('/').split('/')
+        if parts[0] == 'p' and len(parts) == 2 and parts[1].endswith('.html') and parts[1][:-5] in PAGES:
+            return self.out(200, PAGES[parts[1][:-5]].encode(), 'text/html; charset=utf-8')
+        if parts[0] == 'lib' and len(parts) == 2:
+            src = {'own.js': os.path.join(LIB, 'own.js'), 'own-worker.js': os.path.join(LIB, 'own-worker.js'),
+                   'dash.all.min.js': os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js'),
+                   'shaka.js': os.path.join(PLAYERS, 'shaka-player-4.11.7', 'package', 'dist', 'shaka-player.compiled.js')}.get(parts[1])
+            if src and os.path.isfile(src): return self.out(200, open(src, 'rb').read(), 'text/javascript; charset=utf-8')
+            return self.out(404)
+        if parts[0] == 'api' and len(parts) == 2 and parts[1] == 'g1.json':
+            return self.out(200, json.dumps({'mpd': M['g1']['mpd'], 'base': '/m/g1/'}).encode(), 'application/json')
+        if parts[0] != 'm' or len(parts) != 3 or parts[1] not in M: return self.out(404)
+        key, name = parts[1], parts[2]; m = M[key]
+        if m.get('redir') == 'mpd' and host == FRONT and re.search(r'\.(mpd|m4s)$', name):
+            return self.out(301, extra={'Location': 'http://%s%s' % (OTHER, self.path)})
+        if m.get('redir') == 'seg-signed' and name.endswith('.m4s'):
+            if host == FRONT:
+                exp = str(int(time.time()) + 300); sig = hashlib.sha256((u.path + exp).encode()).hexdigest()[:20]
+                return self.out(302, extra={'Location': 'http://%s%s?exp=%s&sig=%s' % (OTHER, u.path, exp, sig)})
+            if not (q.get('exp') and q.get('sig') and hashlib.sha256((u.path + q['exp'][0]).encode()).hexdigest()[:20] == q['sig'][0]): return self.out(403)
+        if name == 'manifest.mpd': return self.out(200, m['mpd'].encode(), 'application/dash+xml')
+        if m.get('time'):
+            mm = re.match(r'chunk-(\d)-(\d+)\.m4s$', name)
+            if mm:
+                n = time_to_num(mm.group(1), int(mm.group(2)))
+                if not n: return self.out(404)
+                name = 'chunk-%s-%05d.m4s' % (mm.group(1), n)
+        f = os.path.normpath(os.path.join(m['dir'], name))
+        if not f.startswith(m['dir']) or not os.path.isfile(f): return self.out(404)
+        body = open(f, 'rb').read(); ct = 'video/webm' if f.endswith('.webm') else 'video/mp4'
+        rg = re.match(r'bytes=(\d+)-(\d*)$', self.headers.get('Range') or '')
+        if rg:
+            a = int(rg.group(1)); b = int(rg.group(2)) if rg.group(2) else len(body) - 1
+            return self.out(206, body[a:b + 1], ct, {'Content-Range': 'bytes %d-%d/%d' % (a, b, len(body)), 'Accept-Ranges': 'bytes'})
+        return self.out(200, body, ct, {'Accept-Ranges': 'bytes', 'ETag': '"%s"' % hashlib.sha256(body).hexdigest()[:16]})
+srv = http.server.ThreadingHTTPServer(('127.0.0.1', PORT), H); srv.daemon_threads = True; threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+def wait(pred, secs=10):
+    end = time.time() + secs
+    while time.time() < end:
+        try:
+            if pred(): return True
+        except Exception: pass
+        time.sleep(0.25)
+    return False
+UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot; })()'
+def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
+ITEMS = 'return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => [b.firstChild.textContent, b.querySelector("small") ? b.querySelector("small").textContent : ""]);'
+OFFER = 'DASH-Stream mit Helper herunterladen …'
+KEEP = ('Quellen am Video', 'Auswahl', 'DASH', 'Helfer-Fähigkeiten', 'Rahmen', 'Fenster-Ebene', 'Beobachter', 'Download')
+want = [a for a in sys.argv[1:] if not a.startswith('-')]
+RUN = [s for s in SCN if (not want or s[0] in want) and s[0] in PAGES and (s[0] in M or s[0] in ('c1', 'c3', 'f1', 'f1b', 'f2'))]
+skipped = [s[0] for s in SCN if s not in RUN and (not want or s[0] in want)]
+check('Fixtures/Player vorhanden (sonst übersprungen: %s)' % (', '.join(skipped) or '–'), bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js')), PLAYERS)
+helper = ChannelHelper()
+_r = [helper.ready, helper.cmd('downloads %d' % PORT), helper.cmd('hls on'), helper.cmd('dash on')]
+check('Kanal-Helfer mit DASH-Engine', _r[0].startswith('READY') and _r[1] == 'DOWNLOADS on' and _r[3] == 'DASH on', _r)
+RES = []
+with sync_playwright() as p:
+    ctx, sw, udir = launch(p, extra_args=['--host-resolver-rules=MAP %s 127.0.0.1' % OTHER_NAME, '--no-proxy-server']); ext_id = sw.url.split('/')[2]
+    ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
+    check('Kopplung', pair_helper(ctx, ext_id, helper) == 'Verbunden')
+    for sid, grp, title, safety, do_plan, do_start in RUN:
+        pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)[:160]))
+        r = {'id': sid, 'group': grp, 'title': title, 'safety': safety}
+        n0 = len(HITS)
+        pg.goto('http://%s/p/%s.html' % (FRONT, sid)); pg.bring_to_front()
+        vids = lambda: [x for f in pg.frames for x in (f.evaluate('() => Array.from(document.querySelectorAll("video")).map((v) => [v.currentTime, v.paused, v.readyState])') or [])]
+        def playing():
+            if sid in ('f1', 'f1b'): return pg.evaluate('() => window.S4A && S4A.players.length === 2 && S4A.players[1].segs >= 3 && document.getElementById("v0").currentTime > 2')
+            return any(v[0] > 6 for v in vids())
+        r['plays'] = wait(playing, 45)
+        for f in pg.frames:
+            try: f.evaluate('() => document.querySelectorAll("video").forEach((v) => { v.muted = false; })')
+            except Exception: pass
+        time.sleep(1.5)
+        r['video'] = vids()
+        # Stückabrufe des Browsers bis hierher (nur Datei + Zeit relativ, für die Auswertung des Prüfstands)
+        r['seg_hits'] = [[round(x['t'] - HITS[n0]['t'], 1), x['host'].split(':')[0], x['path'].rsplit('/', 1)[-1]] for x in HITS[n0:] if re.search(r'\.(m4s|webm|mp4)$', x['path'])]
+        r['own'] = None
+        try: r['own'] = pg.evaluate('() => window.S4A ? S4A.players.map((p) => ({ segs: p.segs, err: p.err })) : null')
+        except Exception: pass
+        # Diagnose (anonym) – zuerst Hauptfenster, sonst das Fenster mit dem Video
+        def diag(frame_all=False):
+            tab = sw.evaluate('async () => (await chrome.tabs.query({})).filter((t) => /\\/p\\//.test(t.url)).pop().id')
+            pg.evaluate('() => navigator.clipboard.writeText("-")')
+            if frame_all: sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" })', tab)
+            else: sw.evaluate('(t) => chrome.tabs.sendMessage(t, { t: "kadri-menu" }, { frameId: 0 })', tab)
+            fr = [None]
+            order = [f for f in pg.frames if f != pg.main_frame] + [pg.main_frame] if frame_all else [pg.main_frame]
+            wait(lambda: fr.__setitem__(0, next((f for f in order if f.evaluate(js('return !!r.querySelector(".diag .danon");'))), None)) or fr[0], 8)
+            if not fr[0]: return ''
+            fr[0].evaluate(js('r.querySelector(".diag .danon").click(); return true;'))
+            got = ['']
+            wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+            for f in pg.frames:
+                try: f.evaluate(js('const b = Array.from(r.querySelectorAll(".diag button")).find((x) => x.textContent === "Schließen"); if (b) b.click(); return true;'))
+                except Exception: pass
+            return got[0]
+        # Diagnose des Fensters, in dem das Video läuft: lange auf ▶ der Pille drücken (wie auf dem Gerät, src/035)
+        cdp = ctx.new_cdp_session(pg)
+        def diag_press():
+            if not wait(lambda: pg.evaluate(js('return !!r.querySelector(".pill.on button[aria-label=\\"Im Videoplayer öffnen\\"]");')), 12): return ''
+            rc = pg.evaluate(js('const b = r.querySelector(".pill.on button[aria-label=\\"Im Videoplayer öffnen\\"]").getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2];'))
+            pg.evaluate('() => navigator.clipboard.writeText("-")')
+            cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': [{'x': rc[0], 'y': rc[1]}]}); time.sleep(1.0)
+            cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
+            got = ['']
+            wait(lambda: got.__setitem__(0, pg.evaluate('() => navigator.clipboard.readText()')) or got[0].startswith('Kadri – anonymisierte Diagnose'), 8)
+            # nur die anonyme Fassung übernehmen (bei einem Video im Hauptfenster bzw. im srcdoc-Fenster kopiert der Langdruck die
+            # vollständige lokale Diagnose mit Adressen – die gehört nicht ins Protokoll)
+            return got[0] if got[0].startswith('Kadri – anonymisierte Diagnose') else ''
+        dg = diag()
+        if sid.startswith('c'):
+            dg2 = diag_press()
+            if dg2: r['diag_frame'] = dg2
+        r['diag'] = dg
+        allg = dg + '\n' + r.get('diag_frame', '')
+        r['lines'] = [l for l in allg.split('\n') if l.strip().startswith(KEEP) or 'Bindung' in l]
+        b = re.findall(r'Bindung (\w+)\(([^)]*)\)', allg); r['bindung'] = b
+        r['bound'] = any(x[0] == 'bound' for x in b)
+        r['pruef'] = re.findall(r'Ergebnis (\w+) \(([^)]*)\)(?: · ([^\n·]+))?', allg)
+        # Menü
+        it = []
+        if wait(lambda: pg.evaluate(js('return !!r.querySelector(".pill.on");')), 12):
+            time.sleep(0.3)
+            pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
+            wait(lambda: any(x[0] != 'Schließen' for x in (pg.evaluate(js(ITEMS)) or [])), 15)
+            it = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
+        else: r['pill'] = False
+        r['menu'] = it
+        r['offer'] = OFFER in [x[0] for x in it]
+        if r['offer'] and do_plan:
+            n1 = len(HITS)
+            pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(OFFER)))
+            wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); const t = r.querySelector(".toast"); return (h && h.textContent === "DASH-Stream speichern") || (t && t.textContent && !/prüft/.test(t.textContent));')), 45)
+            o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
+            r['plan'] = o if pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!h && h.textContent === "DASH-Stream speichern";')) else []
+            r['toast'] = pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
+            # (Fenster-Szenarien: wo steht das Ergebnis – im Hauptfenster oder im eingebetteten Fenster?)
+            r['plan_frames'] = []
+            for f in pg.frames:
+                try: r['plan_frames'].append([f == pg.main_frame, f.evaluate(js('const h = r.querySelector(".dlm .dlh"); const t = r.querySelector(".toast"); return [h ? h.textContent : "", t ? t.textContent : "", Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent)];'))])
+                except Exception as e: r['plan_frames'].append([f == pg.main_frame, 'err'])
+            hh = [x for x in HITS[n1:] if not x['path'].startswith(('/p/', '/lib/'))]
+            r['mpd_after_tap'] = len([x for x in hh if x['path'].endswith('.mpd')])   # (statisches MPD: danach lädt es nur noch der Helfer)
+            r['helper_clean'] = not any(x['cookie'] or x['auth'] for x in hh)
+            if not r['plan']:
+                d3 = diag_press() if sid.startswith('c') else diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
+            elif do_start:
+                f0 = helper.cmd('dl-files')
+                pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(r['plan'][0][0])))
+                got = ['']
+                wait(lambda: got.__setitem__(0, helper.cmd('dl-files')) or (got[0] != f0 and re.search(r':\d{5,}', got[0])), 45)
+                r['file'] = got[0] if got[0] != f0 else ''
+                d3 = diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
+        try: pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
+        except Exception: pass
+        r['errs'] = errs
+        r['anon'] = not re.search(r'://|127\.0\.0|example\.org|manifest\.mpd|chunk-|init-\d|/m/|s4a-token|sig=', allg)
+        RES.append(r)
+        print('[%s] spielt=%s bound=%s Prüfung=%s Angebot=%s Plan=%s Menü=%s' % (sid, r['plays'], r['bound'], r['pruef'][:2], r['offer'],
+              [x[0] for x in r.get('plan', [])] or r.get('toast', ''), [x[0] + (' | ' + x[1] if x[1] else '') for x in it][:3]))
+        for l in r['lines']: print('     ' + l.strip()[:260])
+        # ---- Sicherheits-Erwartungen ----
+        if safety == 'nie': check('[%s] Sicherheit: bindet nicht (%s)' % (sid, title), not r['bound'] and not r['offer'], r['bindung'])
+        if safety == 'richtig' and r.get('plan') and sid in WANT_OPTS and WANT_OPTS[sid]:
+            check('[%s] Sicherheit: Bindung trifft das laufende Manifest (Optionen %s)' % (sid, WANT_OPTS[sid]), [x[0] for x in r['plan']] == WANT_OPTS[sid], r['plan'])
+        check('[%s] Diagnose anonym' % sid, r['anon'])
+        pg.close()
+    ctx.close()
+helper.stop() if hasattr(helper, 'stop') else None
+if OUTDIR:
+    os.makedirs(OUTDIR, exist_ok=True)
+    json.dump(RES, open(os.path.join(OUTDIR, 's4a-matrix.json'), 'w'), ensure_ascii=False, indent=1)
+done()
