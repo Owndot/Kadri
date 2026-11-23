@@ -360,6 +360,7 @@
         info.kind = 'dash';
         try { info.dash = dashSummaryFromParsed(parsed); } catch (e) { info.dash = null; }
         try { info.dashIdx = dashSegmentIndex(parsed, base); } catch (e) { info.dashIdx = null; }
+        try { info.dashFmt = dashRawFormats(parsed); } catch (e) { info.dashFmt = null; }   // S4b: Formatnamen für die Meldungen (src/046)
         // S3c: Strukturfingerabdruck (kadri-dash-fp/1) und S3-Vorprüfung gegen die finale Adresse des MPD (src/039) – für
         // den Plan beim Helfer; nie in Registry, Diagnose oder Speicher (nur Hex und feste Gründe, privat in diesem Fenster)
         try {

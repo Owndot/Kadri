@@ -336,11 +336,11 @@ const fuiRid = (m) => (typeof m.rid === 'string' && /^[0-9a-f]{8}$/.test(m.rid) 
 function fuiUp(m) {
   if (!FUI_N.test(typeof m.n === 'string' ? m.n : '')) return null;
   if (m.op === 'show') return { op: 'show', n: m.n, on: m.on === true };
-  if (m.op === 'toast') return Object.assign({ op: 'toast', n: m.n, text: fuiStr(m.text, 300) }, fuiRid(m));
+  if (m.op === 'toast') return Object.assign({ op: 'toast', n: m.n, text: fuiStr(m.text, 300), prog: m.prog === true }, fuiRid(m));
   if (m.op === 'menu') {
     if (!Number.isInteger(m.seq) || m.seq < 0 || !Array.isArray(m.items) || m.items.length > 24) return null;
     return Object.assign({ op: 'menu', n: m.n, seq: m.seq, title: fuiStr(m.title, 120),
-      items: m.items.map((it) => ({ label: fuiStr(it && it.label, 200), sub: fuiStr(it && it.sub, 300), info: !!(it && it.info === true) })) }, fuiRid(m));
+      items: m.items.map((it) => ({ label: fuiStr(it && it.label, 200), sub: fuiStr(it && it.sub, 300), info: !!(it && it.info === true), wait: !!(it && it.wait === true) })) }, fuiRid(m));
   }
   return null;
 }

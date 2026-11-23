@@ -21,7 +21,18 @@ function body(f, name) {
 const DIAG = /dashDiagClassify|DASH_DIAG_RANK|\.dOrigin|\.dPath|\.dQuery|\.dList|\.dListPath|\.dInitOP|\.dInitPath|obsRes|obsNote/;
 const users = (re) => files.filter((f) => re.test(text[f]));
 
-check('dashDiagClassify nur in src/038 (Definition) und src/280 (Diagnose)', JSON.stringify(users(/dashDiagClassify/)) === JSON.stringify(['038-dash-manifest.js', '280-diagnose.js']), users(/dashDiagClassify/));
+// S4b: src/046 (Ebenen-Meldungen) nutzt die Diagnose-Stufe NUR, um den Text der Zuordnungs-Ebene zu wählen („anderer Server“,
+// „Zusatzparameter“) – nie für Bindung oder Angebot (unten hart geprüft)
+check('dashDiagClassify nur in src/038 (Definition), src/046 (Meldungstext) und src/280 (Diagnose)', JSON.stringify(users(/dashDiagClassify/)) === JSON.stringify(['038-dash-manifest.js', '046-dash-ebenen.js', '280-diagnose.js']), users(/dashDiagClassify/));
+{
+  const e = text['046-dash-ebenen.js'] || '';
+  check('src/046 entscheidet nichts: keine Bindung, keine Registry-Änderung, kein Angebot, kein Abruf',
+    !/dashBindDecision|mediaRegistry\.(put|set|bind|update|add|record)|mediaPut|dashOfferFor\(|selectDashStreams|helperDl\(|KADRI_DOWNLOAD|fetch\(|XMLHttpRequest|dashHits\s*=|\.association\s*=/.test(e));
+  check('src/046: dashDiagClassify nur in dashLevelsFor (Meldungsauswahl), nicht in der reinen Entscheidung dashLevels',
+    !/dashDiagClassify/.test(body('046-dash-ebenen.js', 'dashLevels')) && /dashDiagClassify/.test(body('046-dash-ebenen.js', 'dashLevelsFor')));
+  check('Angebotsweg liest die Ebenen nicht (dashOfferFor/selectDashStreams/mediaDashStreamState ohne dashLevels)',
+    !/dashLevels/.test(body('105-download-knopf.js', 'dashOfferFor')) && !/dashLevels/.test(body('045-media-source.js', 'selectDashStreams')) && !/dashLevels/.test(body('045-media-source.js', 'mediaDashStreamState')));
+}
 check('Diagnose-Felder des Index (dOrigin/dPath/dQuery/dList/dInit*) nur in src/038', JSON.stringify(users(/\.d(Origin|Path|Query|List|ListPath|InitOP|InitPath)\b/)) === JSON.stringify(['038-dash-manifest.js']));
 check('Beobachter-Zählung obsRes nur in src/040 (Zählung) und src/280 (Diagnose)', JSON.stringify(users(/obsRes/)) === JSON.stringify(['040-quellen-netzwerk.js', '280-diagnose.js']), users(/obsRes/));
 for (const [f, fn] of [['038-dash-manifest.js', 'dashMatchSegment'], ['038-dash-manifest.js', 'dashBindDecision'], ['040-quellen-netzwerk.js', 'dashHit'],

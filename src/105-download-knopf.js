@@ -129,23 +129,30 @@
     let dashOffer = null;
     try { dashOffer = dashOfferFor(allD, dashFromOf(v)); } catch (e) { dashOffer = null; }
     if (dashOffer && dashOffer.offer) dashOffer.v = v;   // (für die Nachprüfung vor Auswahl und Start)
+    // S4b: dieselbe Ebenen-Entscheidung wie Player-Menü und Diagnose (src/046)
+    let dashLv = null;
+    try { dashLv = dashLevelsFor(v, [snap2], dashCapsOf(caps && 'reachable' in caps ? caps : null), dashOffer); } catch (e) { dashLv = null; }
     return { mp4: all.filter((o) => o.state === 'attemptable'), hls: allS.filter((o) => o.state === 'attemptable'), all: all, allS: allS,
-      dash: mediaDashState([snap2]), dashOffer: dashOffer };
+      dash: mediaDashState([snap2]), dashOffer: dashOffer, dashLv: dashLv };
   }
   // Warum nichts angeboten wird (feste Texte, ohne Adresse)
   function pageDlReason(o, caps) {
     const rs = o.all.map((x) => x.reason).concat(o.allS.map((x) => x.reason));
-    if (o.dash === 'bound') return 'DASH-Stream erkannt – derzeit nicht unterstützt';   // (Grund in der Unterzeile, pageDlReasonSub)
+    // S4b: DASH nach Ebenen (src/046) – gebunden oder mit gelesenem MPD vor den allgemeinen Gründen (deren „nicht sicher
+    // zugeordnet“ gehört dann oft nur zu Teilen desselben Streams); nur vermutet erst nach allen sicheren Gründen
+    const lv = o.dashLv && o.dashLv.first ? o.dashLv : null;
+    o.dashWhy = false;
+    if (lv && (o.dash === 'bound' || lv.e1.ok)) { o.dashWhy = true; return lv.main; }   // (Grund in der Unterzeile, pageDlReasonSub)
     if (o.allS.some((x) => x.reason === 'helper-unavailable') || (!(caps && caps.hls) && o.allS.length)) return 'Stream erkannt – diese Helfer-App-Version speichert keine Streams';
     if (rs.indexOf('protected') >= 0) return 'Video geschützt (DRM/verschlüsselt) – nicht speicherbar';
     if (rs.indexOf('ambiguous') >= 0 || rs.indexOf('not-bound') >= 0) return 'Quelle nicht sicher diesem Video zugeordnet – Video kurz abspielen und erneut tippen';
     if (rs.indexOf('not-standalone') >= 0 || rs.indexOf('stream-not-supported') >= 0) return 'Nur Teilstücke eines Streams erkannt – Video abspielen und erneut tippen';
     // nur zeitlich vermutet: ehrlich so benennen (nach allen sicheren Gründen, nie als Angebot)
-    if (o.dash === 'suspected') return 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt';
+    if (lv) { o.dashWhy = true; return lv.main; }
     return 'Keine speicherbare Videodatei erkannt – Video abspielen und erneut tippen';
   }
   // S3c: Unterzeile zum Hinweis „DASH-Stream erkannt …“: warum nicht angeboten (fester Text, ohne Adresse)
-  const pageDlReasonSub = (o) => (o.dash === 'bound' && o.dashOffer && o.dashOffer.reason ? tr(o.dashOffer.reason) : '');
+  const pageDlReasonSub = (o) => (o.dashWhy && o.dashLv ? o.dashLv.sub : '');
   const pageDlHelperText = (kind) => kind === 'unpaired'
     ? 'Helfer-App nicht gekoppelt – in den Kadri-Einstellungen „Helfer koppeln“'
     : kind === 'rejected' ? 'Die Helfer-App erkennt diese Kopplung nicht mehr – neu koppeln'
@@ -187,15 +194,39 @@
     if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
   }
 
-  // Kennung des Tipps, der den laufenden Ablauf ausgelöst hat (eingebettetes Fenster; sonst ''): beim Start festhalten
-  const pageDlRid = () => (IN_FRAME && fui.n ? fui.rid : '');
+  // ---------- S4b: Ablauf-Kennung je Tipp (Warteblatt, veraltete Antworten und Hinweise) ----------
+  // Jeder Tipp, der einen Ablauf startet (⬇, ein Eintrag des Blatts), bekommt eine Kennung. Folge-Auswahl und Hinweise
+  // des Ablaufs gelten nur, solange er der aktuelle ist und nicht bewusst abgebrochen wurde (Warteblatt geschlossen,
+  // Zeit abgelaufen). Eingebettetes Fenster mit Auswahl im Hauptfenster: die Kennung kommt von dort (fui.rid), und das
+  // Hauptfenster entscheidet (src/035).
+  const pageDlFlow = { id: '', cancelled: [] };
+  const pageDlNewId = () => { try { const a = new Uint8Array(4); crypto.getRandomValues(a); return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return ''; } };
+  const pageDlRelayed = () => IN_FRAME && !!fui.n && !fui.local;
+  const pageDlRid = () => (pageDlRelayed() ? fui.rid : pageDlFlow.id);
+  function pageDlFlowStart() { if (!pageDlRelayed()) pageDlFlow.id = pageDlNewId(); return pageDlRid(); }
+  const pageDlFlowOk = (id) => pageDlRelayed() || !id || (id === pageDlFlow.id && pageDlFlow.cancelled.indexOf(id) < 0);
+  function pageDlFlowCancel(id, why) {
+    if (!id) return;
+    pageDlFlow.cancelled.push(id); if (pageDlFlow.cancelled.length > 16) pageDlFlow.cancelled.shift();
+    fuiLog(id, 'ablauf:abgebrochen', why || '');
+    if (!IN_FRAME) fuiTopCancel(id);
+  }
+  // Folge-Auswahl bzw. Hinweis eines Ablaufs: nur, solange er gilt; ein Ergebnis-Hinweis schließt sein Warteblatt
+  const PAGE_DL_PROGRESS = ['Helfer-App prüft den Stream …', 'Helfer-App startet den Download …', 'Helfer-App setzt den Download fort …'];
+  function pageDlToastR(msg, rid) {
+    const prog = PAGE_DL_PROGRESS.indexOf(msg) >= 0;
+    if (pageDlRelayed() && fuiRelay()) { toast(msg, { rid: rid, prog: prog }); return; }   // das Hauptfenster entscheidet
+    if (!pageDlFlowOk(rid)) { fuiLog(rid, 'hinweis:veraltet', ''); return; }
+    if (!prog) pageDlWaitDone(rid);
+    toast(msg);
+  }
   async function onPageDownload() {
     const v = active;
     if (!v) return;
     // (Auswahl mit der Kennung des LETZTEN ⬇-Tipps: ein zweiter Tipp, während dieser Ablauf noch läuft, übernimmt ihn –
     // dieselbe Aktion; sonst wäre die Antwort für das Hauptfenster veraltet und der zweite Tipp bliebe ohne Antwort)
-    pageDl.rid = pageDlRid();
-    const pageDlMenu = (t, it) => pageDlMenuR(t, it, pageDl.rid);
+    pageDl.rid = pageDlFlowStart();
+    const pageDlMenu = (t, it) => pageDlMenuR(t, it, pageDl.rid), toast = (m) => pageDlToastR(m, pageDl.rid);
     if (!pageDlHelper()) {   // ohne Helfer-Kanal (Firefox, Userscript): dieselbe Auswahl, nur die Alternativen
       const ext = pageDlExternal(v, []);
       if (ext.length) pageDlMenu('Speichern', ext); else toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen');
@@ -236,10 +267,10 @@
       const items = o.mp4.slice(0, 4).map((x) => ({ loaded: x.loaded, item: { label: 'Mit Helper herunterladen', sub: 'MP4' + (x.height ? ' · ' + x.height + 'p' : '') + ' · ' +
         tr('direkt in die Helfer-App · kein neuer Tab') + ' · ' + tr(hdlEvidenceText(x)), fn: () => pageDlStartMp4(x) } }))
         .concat(o.hls.slice(0, 2).map((x) => ({ loaded: x.loaded, item: { label: 'Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
-          tr(hdlEvidenceText(x)), fn: () => pageDlPlan(x) } })))
+          tr(hdlEvidenceText(x)), fn: () => pageDlPlan(x), wait: true } })))
         // S3c: DASH – erst Plan beim Helfer (er lädt und prüft das MPD selbst, Fingerabdruck), dann Qualität und Ton wählen
         .concat(dashOk ? [{ loaded: true, item: { label: 'DASH-Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
-          tr('Stücke dieses Streams gerade geladen'), fn: () => pageDlDashPlan(dashOk) } }] : [])
+          tr('Stücke dieses Streams gerade geladen'), fn: () => pageDlDashPlan(dashOk), wait: true } }] : [])
         .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).map((e) => e.item);
       pageDlMenu('Speichern', pageDlExternal(v, items));
     } finally {
@@ -254,7 +285,8 @@
     return { rs: v.readyState, w: v.videoWidth || 0, h: v.videoHeight || 0, buf: seconds(v.buffered),
       played: seconds(v.played), err: v.error ? v.error.code : 0, paused: !!v.paused };
   }
-  function pageDlStarted(r, u, info, local) {
+  function pageDlStarted(r, u, info, local, rid) {
+    const toast = (m) => pageDlToastR(m, rid);
     if (r && r.ok && r.value && r.value.job) hdlDiagNew(Object.assign(info, { existing: !!r.value.existing }), u, r.value.job, local);
     else hdlDiagFailure(info, r);
     if (!r) { toast('Helfer-App nicht erreichbar'); return; }
@@ -264,16 +296,17 @@
       ? 'Verbindung unterbrochen – Stand wird geprüft' : 'Helfer-App lädt – du kannst die Seite verlassen; Fortschritt in der Benachrichtigung');
   }
   async function pageDlStartMp4(x) {
+    const rid = pageDlRid(), toast = (m) => pageDlToastR(m, rid);
     const sel = mediaRegistry.resolveSelection(x.ctx, x.sourceId, x.revision);
     if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
     const v = active;
     const info = Object.assign(hdlSourceInfo(x, pageDlPlaySample(v, sel.url)), { stage: 'start' });
     toast('Helfer-App startet den Download …');
     pageDlStarted(await helperDl('start', { url: sel.url, name: pageDlName() }), sel.url, info,
-      info.play ? () => pageDlPlaySample(v, sel.url) : null);
+      info.play ? () => pageDlPlaySample(v, sel.url) : null, rid);
   }
   async function pageDlPlan(x) {
-    const rid = pageDlRid(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid);
+    const rid = pageDlRid(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid), toast = (m) => pageDlToastR(m, rid);
     const sel = mediaRegistry.resolveStream(x.ctx, x.sourceId, x.revision);
     if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
     const info = Object.assign(hdlSourceInfo(x), { stream: true, stage: 'hlsplan' });
@@ -298,7 +331,7 @@
   // S3c: DASH – Plan holen (der Helfer lädt das MPD, vergleicht den Fingerabdruck, prüft das Profil), dann die eindeutig
   // zugeordneten Optionen zeigen; gestartet wird nur per Tipp auf eine Option (dashstart)
   async function pageDlDashPlan(d) {
-    const rid = pageDlRid(), t0 = Date.now(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid);
+    const rid = pageDlRid(), t0 = Date.now(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid), toast = (m) => pageDlToastR(m, rid);
     fuiLog(rid, 'plan:start', '');
     const sel = mediaRegistry.resolveDash(d.x.ctx, d.x.sourceId, d.x.revision);
     if (!sel.ok) { fuiLog(rid, 'plan:ende', 'quelle-geaendert'); toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
@@ -322,21 +355,24 @@
       fn: () => pageDlDashGo(d.offer.url, p.planId, it.o, d.x, d, sel.bind) })));
   }
   async function pageDlDashGo(u, planId, o, x, d, bind) {
+    const rid = pageDlRid(), toast = (m) => pageDlToastR(m, rid);
     if (!dashOfferStill(d, bind)) { toast(DASH_CHANGED); return; }   // unmittelbar vor dashstart erneut: sonst nichts senden
     const info = Object.assign(hdlSourceInfo(x), { stream: true, dash: true, planned: true, stage: 'dashstart' });
     toast('Helfer-App startet den Download …');
-    pageDlStarted(await helperDl('dashstart', { planId: planId, option: o.id, name: pageDlName() }), u, info);
+    pageDlStarted(await helperDl('dashstart', { planId: planId, option: o.id, name: pageDlName() }), u, info, null, rid);
   }
   async function pageDlGo(u, planId, o, resume, x) {
+    const rid = pageDlRid(), toast = (m) => pageDlToastR(m, rid);
     const info = Object.assign(hdlSourceInfo(x), { stream: true, planned: true, stage: resume ? 'hlsresume' : 'hlsstart' });
     toast(resume ? 'Helfer-App setzt den Download fort …' : 'Helfer-App startet den Download …');
     const r = await helperDl(resume ? 'hlsresume' : 'hlsstart', resume ? { id: resume.id, planId: planId, option: o.id } : { planId: planId, option: o.id, name: pageDlName() });
-    pageDlStarted(r, u, info);
+    pageDlStarted(r, u, info, null, rid);
   }
   function pageDlStatusMenu(v, rid) {
     const j = pageDl.job;
     const items = [{ label: 'Helfer-App: ' + tr(j.label), sub: j.progress || 'Stand wird abgefragt', info: true }];
     if (j.state !== 'cancelling') items.push({ label: 'Download abbrechen', sub: 'Helfer-App hört sofort auf und löscht die Teil-Datei', fn: async () => {
+      const crid = pageDlRid(), toast = (m) => pageDlToastR(m, crid);
       const r = await helperDl('cancel', { id: j.id });
       if (!r || !r.ok) { toast((r && r.error && r.error.message) || 'Helfer-App nicht erreichbar'); return; }
       pageDl.job = r.value.job;
@@ -344,7 +380,10 @@
     } });
     pageDlMenuR('Speichern', pageDlExternal(v, items), rid);
   }
-  const pageDlMenuR = (title, items, rid) => pageDlMenu(title, items, false, rid);
+  function pageDlMenuR(title, items, rid) {
+    if (!pageDlFlowOk(rid)) { fuiLog(rid, 'blatt:veraltet', ''); return; }   // abgelöster oder abgebrochener Ablauf
+    pageDlMenu(title, items, false, rid);
+  }
 
   // Auswahl als Bottom-Sheet über der Seite (nicht im Player): Einträge mit Unterzeile, mindestens 48 px hoch; das Video
   // läuft weiter. Alles liegt im geschlossenen Shadow DOM – darum keine Listener auf document: ein Außentipp ist ein Tipp
@@ -410,9 +449,32 @@
     if (pageDlHistTok() !== pageDlBack) { pageDlBackSettled(); return; }
     if (++pageDlBackTries < 120) pageDlBackTimer = setTimeout(pageDlBackCheck, 500);
   }
+  // S4b: Warteblatt – nach einem Eintrag mit Folge-Auswahl (Plan) bleibt das Blatt offen („Helfer-App prüft …“), bis die
+  // Auswahl oder ein Ergebnis kommt. Bewusst geschlossen (Schließen, Hintergrund, Escape, Zurück) oder nach Ablauf der Frist
+  // ist der Ablauf abgebrochen: spätere Auswahl und Hinweise dazu werden verworfen (oben und über das Fenster-Relay).
+  const PAGE_DL_WAIT = 45000;   // = FUI_MENU_WAIT (src/035): Planung beim Helfer 25 s + Warteschlange
+  const PAGE_DL_BEWUSST = ['schliessen', 'hintergrund', 'escape', 'popstate'];
+  function pageDlWaitOn(ov, box, id) {
+    ov.waitId = id;
+    box.classList.add('wait');
+    box.querySelectorAll('.dli:not(.dlx)').forEach((b) => { b.disabled = true; });
+    const w = h('div', { class: 'dlw', role: 'status' }, tr('Helfer-App prüft … – Auswahl erscheint gleich hier'));
+    const list = box.querySelector('.dll');
+    if (list) box.insertBefore(w, list); else box.appendChild(w);
+    fuiLog(id, 'blatt:wartet', '');
+    ov.waitT = setTimeout(() => {
+      if (pageDlEl !== ov || ov.waitId !== id) return;
+      pageDlFlowCancel(id, 'zeit');
+      pageDlClose(false, 'zeit');
+      toast('Keine Antwort der Helfer-App – nichts gestartet. Bitte erneut tippen');
+    }, PAGE_DL_WAIT);
+  }
+  function pageDlWaitDone(id) { if (id && pageDlEl && pageDlEl.waitId === id) pageDlClose(false, 'ergebnis'); }
   function pageDlClose(fromBack, why) {
     if (!pageDlEl) return;
-    fuiLog('', 'blatt:zu', (fromBack ? 'zurueck' : 'selbst') + (why ? ' ' + why : '') + ' hist=' + (pageDlHist ? 'eigen' : '-'));
+    fuiLog(pageDlEl.waitId || '', 'blatt:zu', (fromBack ? 'zurueck' : 'selbst') + (why ? ' ' + why : '') + ' hist=' + (pageDlHist ? 'eigen' : '-'));
+    if (pageDlEl.waitT) clearTimeout(pageDlEl.waitT);
+    if (pageDlEl.waitId && PAGE_DL_BEWUSST.indexOf(why) >= 0) pageDlFlowCancel(pageDlEl.waitId, why);
     pageDlEl.remove(); pageDlEl = null;
     pageDlUnfit();
     removeEventListener('keydown', pageDlKey);
@@ -426,7 +488,7 @@
       pageDlBackTimer = setTimeout(pageDlBackCheck, 500);
     }
   }
-  function pageDlKey(e) { if (e.key === 'Escape' && pageDlEl) { e.preventDefault(); pageDlClose(); } }
+  function pageDlKey(e) { if (e.key === 'Escape' && pageDlEl) { e.preventDefault(); pageDlClose(false, 'escape'); } }
   addEventListener('popstate', () => {
     const tok = pageDlHistTok();
     if (pageDlEl || pageDlBack) fuiLog('', 'blatt:popstate', (pageDlBack ? 'eigenes-zurueck ' : '') + 'eintrag=' + (tok ? (tok === pageDlHist ? 'eigen' : tok === pageDlBack ? 'alt' : 'fremd-kadri') : 'seite'));
@@ -446,7 +508,7 @@
     ui();
     // ein neues Blatt ersetzt das offene (z. B. Qualität/Ton nach „Stream …“) – der Verlaufseintrag bleibt, die
     // visualViewport-Listener des alten Blatts werden entfernt
-    if (pageDlEl) { pageDlEl.remove(); pageDlEl = null; }
+    if (pageDlEl) { if (pageDlEl.waitT) clearTimeout(pageDlEl.waitT); pageDlEl.remove(); pageDlEl = null; }   // (Warteblatt: ersetzt, kein Abbruch)
     pageDlUnfit();
     const ov = h('div', { class: 'dlo' });
     const box = h('div', { class: 'dlm', role: 'menu', 'aria-label': tr(title) });
@@ -464,18 +526,24 @@
         if (used || pageDlEl !== ov) return;
         used = true;
         box.classList.add('used');
-        try { it.fn(); } catch (err) {}
-        if (pageDlEl === ov) pageDlClose(false, 'nach-aktion');   // hat die Aktion kein neues Blatt geöffnet: jetzt schließen
+        // eigener Eintrag: neuer Ablauf mit eigener Kennung; Eintrag aus dem Fenster-Relay: dessen Kennung (fuiTopPick)
+        const fid = it.relay ? '' : pageDlFlowStart();
+        let ret;
+        try { ret = it.fn(); } catch (err) {}
+        if (pageDlEl !== ov) return;   // die Aktion hat schon ein neues Blatt geöffnet
+        const wid = it.relay ? (typeof ret === 'string' ? ret : '') : fid;
+        if (it.wait && wid) pageDlWaitOn(ov, box, wid);
+        else pageDlClose(false, 'nach-aktion');   // keine Folge-Auswahl: jetzt schließen
       });
       else b.disabled = true;
       list.appendChild(b);
     });
     const close = h('button', { class: 'dli dlx', 'aria-label': 'Schließen' }, tr('Schließen'));
-    close.addEventListener('click', (e) => { e.stopPropagation(); if (pageDlEl === ov) pageDlClose(); });
+    close.addEventListener('click', (e) => { e.stopPropagation(); if (pageDlEl === ov) pageDlClose(false, 'schliessen'); });
     box.appendChild(close);
     ov.appendChild(box);
     // Tipp auf den Hintergrund (nicht ins Blatt) schließt; click statt pointerdown – ein Wisch zum Scrollen ist kein Tipp
-    ov.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === ov && pageDlEl === ov) pageDlClose(); });
+    ov.addEventListener('click', (e) => { e.stopPropagation(); if (e.target === ov && pageDlEl === ov) pageDlClose(false, 'hintergrund'); });
     root.appendChild(ov);
     pageDlEl = ov;
     // an den sichtbaren Bereich anpassen (Android-Systemleisten, Adressleiste, Zoom, kleine Displays)

@@ -47,6 +47,9 @@
 .dlm .dli:active,.dlm .dli:focus-visible{background:rgba(255,255,255,.12)}
 .dlm .dli small{font:400 12.5px/1.3 var(--font);color:rgba(255,255,255,.66)}
 .dlm .dli.info{cursor:default;color:rgba(255,255,255,.86);font-size:14px}
+.dlm .dlw{flex:none;padding:2px 14px 8px;font:500 13.5px/1.3 var(--font);color:rgba(255,255,255,.86)}
+.dlm.wait .dli:not(.dlx){opacity:.45;pointer-events:none}
+.dlm.wait .dlx{pointer-events:auto}
 .dlm .dlx{flex:none;align-items:center;margin-top:4px;color:rgba(255,255,255,.74);font-size:14px}
 .diag{position:fixed;left:10px;right:10px;top:10%;bottom:10%;display:flex;flex-direction:column;gap:8px;background:#161616;color:#eee;border-radius:18px;padding:12px;font:13px/1.35 var(--font);box-shadow:0 10px 40px rgba(0,0,0,.5);z-index:2147483647;pointer-events:auto}
 .diag .dh{font-weight:700;font-size:15px}
@@ -368,7 +371,12 @@
     });
     btn.addEventListener('pointerup', () => {
       clearTimeout(pressTimer);
-      if (longPressed) { if (fuiTop.cur) fuiTopAct('diag'); else copyText(diag(active, resolve(active)), 'Diagnose kopiert'); }
+      // S4b: lange drücken kopiert immer die ANONYMISIERTE Diagnose (ohne Adressen, Titel, Kennungen); die vollständige gibt es
+      // nur ausdrücklich im Diagnose-Fenster („Vollständige Diagnose kopieren (mit Adressen)“)
+      if (longPressed) {
+        if (fuiTop.cur) fuiTopAct('diag');
+        else { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } copyText(t, 'Anonymisierte Diagnose kopiert'); }
+      }
     });
     btn.addEventListener('pointercancel', () => { clearTimeout(pressTimer); longPressed = false; });
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -409,9 +417,10 @@
   document.addEventListener('fullscreenchange', attachHost, true);
   document.addEventListener('webkitfullscreenchange', attachHost, true);
 
-  function toast(msg) {
+  function toast(msg, o) {
     // Knopf dieses eingebetteten Fensters steht im Hauptfenster: Hinweis dort zeigen (hier wäre er abgeschnitten)
-    if (IN_FRAME && fuiRelay()) { const rid = fui.rid; fuiLog(rid, 'frame:toast-send', ''); fuiSend('toast', { n: fui.n, rid: rid, text: tr(msg) }).then((r) => fuiLog(rid, 'frame:toast-reply', r ? (r.ok === true ? 'ok' : 'abgelehnt') : 'keine-antwort')); return; }
+    // (o: { rid, prog } – Kennung des Ablaufs, zu dem der Hinweis gehört, und ob es nur ein Fortschritt ist; src/105)
+    if (IN_FRAME && fuiRelay()) { const rid = o && o.rid !== undefined ? o.rid : fui.rid, prog = !!(o && o.prog); fuiLog(rid, 'frame:toast-send', prog ? 'fortschritt' : ''); fuiSend('toast', { n: fui.n, rid: rid, prog: prog, text: tr(msg) }).then((r) => fuiLog(rid, 'frame:toast-reply', r ? (r.ok === true ? 'ok' : 'abgelehnt') : 'keine-antwort')); return; }
     ui();
     // im Player: eine feste Stelle für alle Hinweise (unter dem Bild) – die Gesten-Anzeige macht so lange Platz
     const pw = toastEl.parentElement;

@@ -75,8 +75,9 @@ UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h &
 def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
 def sheet_items(fr): return fr.evaluate(js('return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent);')) or []
 def player_items(fr): return fr.evaluate(js('return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((b) => b.firstChild.textContent);')) or []
-DB = 'DASH-Stream erkannt – derzeit nicht unterstützt'
-DS = 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt'
+# S4b: Ebenen (src/046) – Fixture VP9: gebunden → Format-Ebene; nur vermutet mit gelesenem MPD → Zuordnungs-Ebene
+DB = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
+DS = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …')
 helper_hits = lambda: [x for x in HITS if not x['browser']]
 
@@ -159,7 +160,7 @@ with sync_playwright() as p:
         lines = [l for l in dg.split('\n') if 'dash:' in l or 'DASH-Manifest' in l or 'Listen gelesen' in l]
         check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('vermutet' if m == 'a' else 'gebunden', bind), re.search(r'dash:manifest · Bindung ' + bind, dg), lines)
         check('… Manifest eingeordnet (VOD, 1 Periode, vp9/mp4 bis 360p, Template mit Dauer, Schutz nicht angegeben ≠ unverschlüsselt)', MAN in dg, lines)
-        check('… Netzwerk: 1 gelesenes DASH-Manifest; Download unavailable(stream-not-supported)', 'davon DASH-Manifeste 1' in dg and 'Download unavailable(stream-not-supported)' in dg, lines)
+        check('… Netzwerk: 1 gelesenes DASH-Manifest; Registry verweist auf die DASH-Ebenen (kein „stream-not-supported“), Ebenen-Zeile vorhanden', 'davon DASH-Manifeste 1' in dg and 'Download siehe DASH-Ebenen' in dg and 'stream-not-supported' not in dg and 'DASH-Ebenen: E1 read' in dg and 'derzeit nicht unterstützt' not in dg, lines)
         check('… anonym: keine Adresse, kein Host, kein Pfad', not re.search(r'://|127\.0\.0|localhost|/x/|manifest\.mpd|seg0', dg), dg[:300])
     check('keine Seitenfehler', not errs, errs)
     ctx.close()

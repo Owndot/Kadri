@@ -345,16 +345,18 @@ with sync_playwright() as p:
     # ---------- kein Angebot ----------
     n1 = len(helper_hits())
     open_case('heaac'); it = sheet()
-    check('MPD nur mit HE-AAC (mp4a.40.5): kein Angebot, Hinweis „%s“ mit Grund „Tonformat nicht unterstützt (nur AAC-LC)“' % DB,
-          OFFER not in labels(it) and [DB, 'Tonformat nicht unterstützt (nur AAC-LC)'] in it, it)
+    HE = ['DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', 'Ton HE-AAC – gespeichert wird bisher nur AAC-LC']
+    check('S4b: MPD nur mit HE-AAC (mp4a.40.5): kein Angebot, HE-AAC ausdrücklich benannt (nicht „derzeit nicht unterstützt“)',
+          OFFER not in labels(it) and HE in it and not any('derzeit nicht unterstützt' in x[0] for x in it), it)
     dg = diag()
     check('S3g G1: HE-AAC – Diagnose nennt den Ablehnungsgrund der Vorprüfung (dash-audio-codec) und denselben Hinweis wie das Menü',
           dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung abgelehnt (dash-audio-codec) · Angebot nein'
-          and ('Hinweis im Menü: %s – Tonformat nicht unterstützt (nur AAC-LC)' % DB) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec') and danon(dg),
+          and ('Hinweis im Menü: %s – %s' % (HE[0], HE[1])) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec') and danon(dg)
+          and 'erste blockierende Ebene E3 (E3/audio-he-aac)' in dline(dg, 'DASH-Ebenen'),
           [dline(dg, 'Auswahl'), dline(dg, 'Auswahl DASH'), dline(dg, 'DASH-Stückprüfung')])
     open_case('drm'); it = sheet()
-    check('MPD mit ContentProtection: kein Angebot, Grund „geschützt (DRM) – nicht speicherbar“', OFFER not in labels(it)
-          and any(x[1] == 'geschützt (DRM) – nicht speicherbar' for x in it), it)
+    check('S4b: MPD mit ContentProtection: kein Angebot, DRM ausdrücklich benannt', OFFER not in labels(it)
+          and ['DASH-Stream – nicht speicherbar', 'Geschützt (DRM)'] in it, it)
     open_case('unbound'); it = sheet()
     check('MPD geladen, aber keine seiner Stücke (nur zeitliche Nähe): kein Angebot, kein „erkannt“', OFFER not in labels(it) and DB not in labels(it), it)
     open_case('two'); it = sheet()

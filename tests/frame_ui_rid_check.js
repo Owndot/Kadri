@@ -37,7 +37,7 @@ const N = 'b'.repeat(32), RID = /^[0-9a-f]{8}$/;
 
 // ---------- 2./3. Hauptfenster und Fenster (src/035) ----------
 function world(inFrame, answer, now) {
-  const sent = [], toasts = [], shown = [], local = [];
+  const sent = [], toasts = [], shown = [], local = [], waitDone = [];
   const clock = { t: now || 1e12 };
   const D = function () { return new Date(clock.t); }; D.now = () => clock.t;
   const ctx = {
@@ -46,12 +46,12 @@ function world(inFrame, answer, now) {
     KADRI_FRAMEUI: { send: (m) => { sent.push(m); return Promise.resolve(answer ? answer(m) : { ok: true }); } },
     toast: (t) => toasts.push(String(t)), hidePill() {}, tick() {}, watchSize() {}, frameOf: () => null, fsElem: () => null,
     pageDlMenu: (title, items, here) => (inFrame ? local : shown).push({ title, n: items.length, here, items }),
-    toYtdlnis() {}, pageDlOpenTab() {}, shareUrl() {}, copyText() {},
+    toYtdlnis() {}, pageDlOpenTab() {}, shareUrl() {}, copyText() {}, pageDlWaitDone: (id) => waitDone.push(id),
   };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(root, 'src/035-fenster-oberflaeche.js'), 'utf8') +
-    '\nglobalThis.T = { fui, fuiTop, fuiFrameMenu, fuiTopAct, fuiTopPick, fuiTopMsg, fuiFrameMsg, FUI_MENU_WAIT, fuiTrace };', ctx);
-  return { T: ctx.T, sent, toasts, shown, local, clock };
+    '\nglobalThis.T = { fui, fuiTop, fuiFrameMenu, fuiTopAct, fuiTopPick, fuiTopMsg, fuiFrameMsg, fuiTopCancel, FUI_MENU_WAIT, fuiTrace };', ctx);
+  return { T: ctx.T, sent, toasts, shown, local, clock, waitDone };
 }
 const SRC = { f: 3, d: 'DOC3' }, SRC2 = { f: 4, d: 'DOC4' };
 const up = (w, m, src) => w.T.fuiTopMsg(Object.assign({ n: N, src: src || SRC }, m));
@@ -101,7 +101,7 @@ const menuUp = (w, rid, seq, src) => up(w, { op: 'menu', seq: seq || 2, rid, tit
     check('… aus einem unbekannten Dokument: nicht gezeigt', r.ok === false && w.shown.length === 0, r);
     w.clock.t += w.T.FUI_MENU_WAIT + 1;
     r = menuUp(w, p.rid);
-    check('Auswahl nach Ablauf der Planungsfrist (' + w.T.FUI_MENU_WAIT / 1000 + ' s): nicht gezeigt, nicht „veraltet“ (Fenster zeigt sie selbst)', r.ok === false && !r.stale && w.shown.length === 0, r);
+    check('S4b: Auswahl nach Ablauf der Planungsfrist (' + w.T.FUI_MENU_WAIT / 1000 + ' s): nicht gezeigt UND veraltet (kein unbeabsichtigtes Blatt im Fenster)', r.ok === false && r.stale === true && w.shown.length === 0, r);
   }
   {
     const w = world(false);
@@ -113,6 +113,29 @@ const menuUp = (w, rid, seq, src) => up(w, { op: 'menu', seq: seq || 2, rid, tit
     w.clock.t += 40000;   // langsame Planung (Kanal 25 s + Warteschlange) – innerhalb der Frist
     const r = menuUp(w, p.rid);
     check('langsame Planung (40 s) innerhalb der Frist: gezeigt', r.ok === true && w.shown.length === 1, r);
+  }
+  // ---------- S4b: Warteblatt bewusst geschlossen, Hinweise je Kennung ----------
+  {
+    const w = world(false);
+    up(w, { op: 'show', on: true });
+    const g = w.T.fuiTop.regs.get('3:DOC3');
+    w.T.fuiTop.cur = g;
+    const rid = w.T.fuiTopPick(g, 1, 0);
+    check('fuiTopPick gibt die Kennung des Tipps zurück (für das Warteblatt)', RID.test(rid || ''), rid);
+    let r = up(w, { op: 'toast', rid, prog: true, text: 'Helfer-App prüft den Stream …' });
+    check('Fortschritts-Hinweis des aktuellen Tipps: gezeigt, Warteblatt bleibt offen', r.ok === true && w.toasts.length === 1 && w.waitDone.length === 0, [r, w.waitDone]);
+    w.T.fuiTopCancel(rid);   // Warteblatt bewusst geschlossen (src/105)
+    r = menuUp(w, rid);
+    check('Planauswahl nach bewusstem Schließen: nicht gezeigt, {stale:true} (Fenster verwirft, kein Blatt)', r.ok === false && r.stale === true && w.shown.length === 0, r);
+    r = up(w, { op: 'toast', rid, text: 'Stream lässt sich nicht speichern' });
+    check('später Hinweis des abgebrochenen Tipps: abgelehnt', r.ok === false && w.toasts.length === 1, r);
+    check('Relay-Spur nennt den Abbruch', w.T.fuiTrace.some((e) => e[2] === 'top:menu-abgelehnt' && e[3] === 'abgebrochen') && w.T.fuiTrace.some((e) => e[2] === 'top:abgebrochen'));
+    // neuer Tipp; ein später Hinweis des älteren Tipps überdeckt den neueren nicht
+    const rid2 = w.T.fuiTopPick(g, 2, 0);
+    r = up(w, { op: 'toast', rid: rid, text: 'Helfer-App nicht erreichbar' });
+    check('Hinweis eines älteren Tipps nach einem neueren: abgelehnt (veraltet)', r.ok === false && w.toasts.length === 1, r);
+    r = up(w, { op: 'toast', rid: rid2, text: 'Helfer-App lädt' });
+    check('Ergebnis-Hinweis des aktuellen Tipps: gezeigt und schließt dessen Warteblatt', r.ok === true && w.toasts.length === 2 && w.waitDone.indexOf(rid2) >= 0, [r, w.waitDone]);
   }
   // ---------- Fenster ----------
   {

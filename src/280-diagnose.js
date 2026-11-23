@@ -91,7 +91,7 @@
       const q = s.quality && s.quality.status !== 'unknown' && s.quality.value && s.quality.value.height ? s.quality.value.height + 'p (' + s.quality.status + ')' : 'Höhe ?';
       L.push(' ' + (i + 1) + '. ' + s.kind + ':' + s.role + ' · Bindung ' + (s.association ? s.association.state + '(' + s.association.evidence.join(',') + ')' : '?') +
         ' · ' + q + ' · Browser ' + (s.browser || '?') + ' · Herkunft ' + (s.provenance || []).map((x) => x.kind + ':' + x.origin).join(' + ') +
-        ' · Download ' + (s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
+        ' · Download ' + (s.kind === 'dash' ? 'siehe DASH-Ebenen' : s.download ? s.download.state + (s.download.reason ? '(' + s.download.reason + ')' : '') : '?'));
       if (s.manifest) L.push(anonDashLine(s.manifest));
     });
   }
@@ -118,7 +118,7 @@
       // Helfer-App (hdlCapsSeen, src/080); noch nie abgefragt: MP4/HLS wie bisher angenommen, DASH ausdrücklich „unbekannt“
       const hc = typeof hdlCapsSeen !== 'undefined' ? hdlCapsSeen : null;
       const known = !!(hc && hc.reachable && hc.supported);
-      const caps = known ? { supported: true, hls: hc.hls, dash: hc.dash } : { supported: true, hls: true };
+      const caps = known ? { reachable: true, supported: true, hls: hc.hls, dash: hc.dash } : { supported: true, hls: true };
       const yn = (b) => (b ? 'ja' : 'nein');
       L.push('Helfer-Fähigkeiten: ' + (!hc ? 'noch nicht abgefragt (⬇ antippen fragt ab)'
         : (!hc.reachable ? 'nicht erreichbar' + (hc.error ? ' (' + hc.error + ')' : '') : !hc.supported ? 'keine direkten Downloads'
@@ -141,6 +141,8 @@
         L.push('Auswahl DASH: Manifest ' + (o.dash === 'bound' ? 'gebunden' : o.dash === 'suspected' ? 'nur vermutet (nicht gebunden)' : 'keines gebunden') +
           (o.dash === 'bound' ? ' · Kadri-Vorprüfung ' + (preOk ? 'bestanden' : 'abgelehnt (' + ((pre && pre.code) || 'unbekannt') + ')') +
             ' · Angebot ' + (dashOk ? 'ja' : !preOk ? 'nein' : known ? 'nein (helper-no-dash)' : 'abhängig von der Helfer-Fähigkeit') : ''));
+        // S4b: dieselben Ebenen wie Menü und Player (src/046), mit der zuletzt gemeldeten Helfer-Fähigkeit
+        try { const lv = dashLevelsFor(v, [snap], dashCapsOf(hc), o.dashOffer); if (lv) L.push(dashLevelsLine(lv)); } catch (e) {}
       }
       // DASH (S2): Stückprüfung je gelesenem MPD – nur Zählungen und Grund
       try {
@@ -248,14 +250,15 @@
     const box = h('div', { class: 'diag' });
     const ta = h('textarea', { readonly: 'readonly' });
     ta.value = text;
-    const copy = h('button', null, 'Kopieren');
+    // S4b: vollständig (mit Adressen) nur ausdrücklich so benannt; anonymisiert steht zuerst
+    const copy = h('button', { class: 'dfull' }, tr('Vollständige Diagnose kopieren (mit Adressen)'));
     const close = h('button', null, 'Schließen');
-    copy.addEventListener('click', () => { ta.select(); copyText(ta.value, 'Diagnose kopiert'); });
+    copy.addEventListener('click', () => { ta.value = text; ta.select(); copyText(text, 'Vollständige Diagnose kopiert – enthält Adressen, nur bewusst weitergeben'); });
     // Anonymisiert: zeigt genau den Text, der kopiert wird (zum Weitergeben ohne Seitenbezug)
     const anon = h('button', { class: 'danon' }, 'Anonymisiert kopieren');
     anon.addEventListener('click', () => { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } ta.value = t; ta.select(); copyText(t, 'Anonymisierte Diagnose kopiert'); });
     close.addEventListener('click', () => box.remove());
-    box.append(h('div', { class: 'dh' }, 'Video-Assistent · Diagnose'), ta, h('div', { class: 'db' }, copy, anon, close));
+    box.append(h('div', { class: 'dh' }, 'Video-Assistent · Diagnose'), ta, h('div', { class: 'db' }, anon, copy, close));
     root.append(box);
     attachHost();
     // Prüfen, ob das Fenster wirklich sichtbar ist – sonst Notlösung im Aufrufer

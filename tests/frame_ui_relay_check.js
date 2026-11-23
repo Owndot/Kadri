@@ -31,7 +31,7 @@ const call = (m, s) => new Promise((res) => { sent.length = 0; ctx.relay(Object.
     JSON.stringify(sent[0].msg) === JSON.stringify({ t: 'kadri-fui-in', op: 'show', n: N, on: true, src: { f: 3, d: DOC } }), sent[0].msg);
   check('… Antwort nur mit ok/mode', JSON.stringify(r) === '{"ok":true,"mode":"remote"}', r);
   r = await call({ op: 'menu', n: N, seq: 1, title: 'Speichern', items: [{ label: 'A', sub: 'b', fn: 'x', url: 'https://cdn.example/v.mp4', ext: { k: 'open', u: 'https://cdn.example/v.mp4' } }] }, frame());
-  check('menu: nur Texte und info (Aktionen/Links der Einträge bleiben im Fenster)', JSON.stringify(sent[0].msg.items) === '[{"label":"A","sub":"b","info":false}]', sent[0].msg.items);
+  check('menu: nur Texte und info (Aktionen/Links der Einträge bleiben im Fenster)', JSON.stringify(sent[0].msg.items) === '[{"label":"A","sub":"b","info":false,"wait":false}]', sent[0].msg.items);
   r = await call({ op: 'menu', n: N, seq: 1, title: 'x', items: new Array(25).fill({ label: 'A' }) }, frame());
   check('menu mit mehr als 24 Einträgen: verworfen', sent.length === 0 && r === null, r);
   r = await call({ op: 'toast', n: N, text: 'x'.repeat(1000) }, frame());

@@ -114,8 +114,9 @@ def wait(pred, secs=10):
     return False
 UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot; })()'
 def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
-DB = 'DASH-Stream erkannt – derzeit nicht unterstützt'
-DS = 'Vermutlich DASH-Stream – nicht sicher zugeordnet und derzeit nicht unterstützt'
+# S4b: Ebenen (src/046) – Fixtures VP9/Opus: gebunden → Format-Ebene; nicht gebunden → Zuordnungs-Ebene
+DB = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
+DS = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …')
 
 helper = ChannelHelper()

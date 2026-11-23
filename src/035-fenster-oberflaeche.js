@@ -98,7 +98,7 @@
     fui.menu = { seq: seq, items: items.slice(0, 24) };
     if (rid === undefined) rid = fui.rid;
     fuiLog(rid, 'frame:menu-send', 'seq=' + seq + ' n=' + fui.menu.items.length);
-    fuiSend('menu', { n: fui.n, seq: seq, rid: rid, title: String(title), items: fui.menu.items.map((it) => ({ label: String(it.label || ''), sub: it.sub ? String(it.sub) : '', info: !!it.info })) })
+    fuiSend('menu', { n: fui.n, seq: seq, rid: rid, title: String(title), items: fui.menu.items.map((it) => ({ label: String(it.label || ''), sub: it.sub ? String(it.sub) : '', info: !!it.info, wait: !!it.wait })) })
       .then((r) => {
         fuiLog(rid, 'frame:menu-reply', r ? (r.ok === true ? 'ok' : r.stale === true ? 'veraltet' : 'abgelehnt') : 'keine-antwort');
         // S4b-3: Antwort auf einen älteren oder schon beantworteten Tipp ({stale:true}): verwerfen – weder oben noch hier
@@ -158,7 +158,15 @@
   // ---------- im Hauptfenster: Knopf und Auswahl für das Video eines eingebetteten Fensters ----------
   // regs: Fenster mit laufendem Video (Schlüssel = frameId:documentId, vom Browser); geo: Lage je Kennung; cur: das
   // Fenster, dessen Knopf gerade hier steht; credit: ein Tipp hier erlaubt genau eine Auswahl dieses Fensters
-  const fuiTop = { regs: new Map(), geo: new Map(), cur: null, credit: null, recent: null, used: [], lastRid: '' };
+  const fuiTop = { regs: new Map(), geo: new Map(), cur: null, credit: null, recent: null, used: [], lastRid: '', cancelled: [] };
+  // S4b: Ablauf bewusst abgebrochen (Warteblatt geschlossen, Frist abgelaufen; src/105): spätere Auswahl und Hinweise
+  // mit dieser Kennung verwerfen
+  function fuiTopCancel(rid) {
+    if (!FUI_RID.test(rid || '')) return;
+    if (fuiTop.cancelled.indexOf(rid) < 0) { fuiTop.cancelled.push(rid); if (fuiTop.cancelled.length > 16) fuiTop.cancelled.shift(); }
+    if (fuiTop.credit && fuiTop.credit.rid === rid) fuiTop.credit = null;
+    fuiLog(rid, 'top:abgebrochen', '');
+  }
   // S4b-3: Eine Auswahl aus einem Fenster gilt nur als Antwort auf GENAU den Tipp, dessen Kennung sie trägt (credit.rid),
   // einmal, und höchstens so lange, wie die Planung beim Helfer dauern darf (Kanal: 25 s je Planaufruf, dazu Warteschlange).
   const FUI_MENU_WAIT = 45000;
@@ -268,6 +276,7 @@
     fuiTop.lastRid = rid;
     fuiLog(rid, 'top:pick', 'seq=' + seq + ' i=' + i);
     fuiTopSend('pick', g, { seq: seq, i: i, rid: rid }).then((r) => { fuiLog(rid, 'top:pick-reply', fuiTraceRes(r)); fuiTopResult(g, r, 'pick'); });
+    return rid;   // (Kennung des Warteblatts, src/105)
   }
   const fuiTraceRes = (r) => (!r ? 'keine-antwort' : (r.ok === true ? 'ok' : 'nicht-ok') + (r.gone ? '+weg' : '') + (r.toast ? '+hinweis' : '') + (r.ext ? '+' + r.ext.k : ''));
   // what: 'pick' (Eintrag der Auswahl) oder die Aktion des Knopfs ('dl', 'player', 'diag', 'share')
@@ -326,23 +335,30 @@
       const c = fuiTop.credit;
       // veraltet: Antwort auf einen schon beantworteten Tipp oder auf einen, dem inzwischen ein neuerer Tipp (⬇, ▶ oder ein
       // Eintrag) gefolgt ist – auch wenn dessen Auswahl schon gezeigt wurde
-      const stale = !!rid && (fuiTop.used.indexOf(rid) >= 0 || rid !== fuiTop.lastRid);
-      const why = !rid ? 'ohne-kennung' : stale ? 'veraltet' : !c ? 'kein-tipp' : !fuiSame(c.g, g) ? 'tipp-anderes-fenster'
-        : Date.now() - c.t > FUI_MENU_WAIT ? 'tipp-zu-alt/' + Math.round((Date.now() - c.t) / 1000) + 's' : !Array.isArray(m.items) ? 'eintraege' : '';
+      // S4b: auch abgebrochen (Warteblatt bewusst geschlossen) und nach Ablauf der Frist veraltet – kein Rückfall ins Fenster
+      const late = !!c && c.rid === rid && Date.now() - c.t > FUI_MENU_WAIT;
+      const stale = !!rid && (fuiTop.used.indexOf(rid) >= 0 || fuiTop.cancelled.indexOf(rid) >= 0 || rid !== fuiTop.lastRid || late);
+      const why = !rid ? 'ohne-kennung' : late ? 'zu-spaet' : stale ? (fuiTop.cancelled.indexOf(rid) >= 0 ? 'abgebrochen' : 'veraltet') : !c ? 'kein-tipp'
+        : !fuiSame(c.g, g) ? 'tipp-anderes-fenster' : !Array.isArray(m.items) ? 'eintraege' : '';
       fuiLog(rid, why ? 'top:menu-abgelehnt' : 'top:menu-gezeigt', why || 'seq=' + m.seq + ' n=' + (m.items || []).length);
       if (why) return stale ? { ok: false, stale: true } : { ok: false };
       fuiTop.credit = null;
       fuiTop.used.push(rid); if (fuiTop.used.length > 16) fuiTop.used.shift();
       pageDlMenu(String(m.title || ''), m.items.slice(0, 24).map((it, i) => (it.info
         ? { label: String(it.label || ''), sub: String(it.sub || ''), info: true }
-        : { label: String(it.label || ''), sub: String(it.sub || ''), fn: () => fuiTopPick(g, m.seq, i) })));
+        : { label: String(it.label || ''), sub: String(it.sub || ''), wait: it.wait === true, relay: true, fn: () => fuiTopPick(g, m.seq, i) })));
       return { ok: true };
     }
     if (m.op === 'toast') {
-      const ok = fuiSame(fuiTop.cur, g) || (rc && fuiSame(rc.g, g) && Date.now() - rc.t < 60000);
-      fuiLog(rid, ok ? 'top:toast-gezeigt' : 'top:toast-abgelehnt', ok ? '' : 'nicht-aktuell');
-      if (ok && typeof m.text === 'string' && m.text) toast(m.text);
-      return { ok: !!ok };
+      const near = fuiSame(fuiTop.cur, g) || (rc && fuiSame(rc.g, g) && Date.now() - rc.t < 60000);
+      // S4b: Hinweis mit Kennung nur zum LETZTEN, nicht abgebrochenen Tipp – ein später Hinweis eines älteren Ablaufs
+      // überdeckt keine neuere Aktion
+      const why = !near ? 'nicht-aktuell' : !rid ? '' : fuiTop.cancelled.indexOf(rid) >= 0 ? 'abgebrochen' : rid !== fuiTop.lastRid ? 'veraltet' : '';
+      fuiLog(rid, why ? 'top:toast-abgelehnt' : 'top:toast-gezeigt', why || (m.prog ? 'fortschritt' : ''));
+      if (why) return { ok: false };
+      if (rid && m.prog !== true) pageDlWaitDone(rid);   // Ergebnis: Warteblatt dieses Tipps schließen
+      if (typeof m.text === 'string' && m.text) toast(m.text);
+      return { ok: true };
     }
     return { ok: false };
   }
