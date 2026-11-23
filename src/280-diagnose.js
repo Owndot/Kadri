@@ -155,7 +155,11 @@
             ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
             ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')' +
             // S3g: S3-Vorprüfung dieses MPD (am gelesenen Text, src/039) – fester Code, auch wenn es (noch) nicht gebunden ist
-            ' · Vorprüfung ' + (!e.p.dashFp || e.p.dashFp.error ? 'nicht prüfbar' : e.p.dashFp.gate && e.p.dashFp.gate.ok ? 'bestanden' : dashGateCode(e.p.dashFp.gate && e.p.dashFp.gate.reason)));
+            ' · Vorprüfung ' + (!e.p.dashFp || e.p.dashFp.error ? 'nicht prüfbar' + (e.p.dashFp && /^[a-z0-9-]{1,40}$/.test(e.p.dashFp.error || '') ? ' (' + e.p.dashFp.error + ')' : '')
+              : e.p.dashFp.gate && e.p.dashFp.gate.ok ? 'bestanden' : dashGateCode(e.p.dashFp.gate && e.p.dashFp.gate.reason)
+                // S4b-5: derselbe Grund, den dashplan des Helfers melden würde (fester Code), und die blockierende Spur
+                + (e.p.dashFp.gate && /^[a-z0-9-]{1,40}$/.test(e.p.dashFp.gate.code || '') ? ' (Helfer ' + e.p.dashFp.gate.code.replace(/-/g, '_')
+                  + (e.p.dashFp.gate.track ? ' · ' + e.p.dashFp.gate.track + ': ' + (e.p.dashFp.gate.detail || []).filter((x) => /^[a-z-]{1,30}$/.test(x)).join(',') : '') + ')' : '')));
         });
         // Stufe-1-Diagnose: jeder vom Beobachter seit dem Videostart gemeldete Abruf stufenweise gegen dieses MPD
         // (src/038 dashDiagClassify). Nur Zählungen; nur „exakt“ ist Bindungsevidenz, die übrigen Stufen sind rein diagnostisch.

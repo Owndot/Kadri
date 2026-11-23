@@ -49,12 +49,15 @@
     konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable' };
   const DASH_LV_E3 = { 'dash-live': 'live', 'dash-type': 'live', 'dash-protected': 'protected', 'dash-multiperiod': 'multiperiod',
     'dash-duration-unknown': 'duration-unknown', 'dash-duration-limit': 'duration-limit', 'dash-no-audio': 'no-audio', 'dash-no-video': 'no-video',
-    'dash-addressing': 'addressing', 'dash-codec': 'format', 'dash-audio-codec': 'audio-codec', 'dash-unsupported': 'unsupported' };
+    'dash-addressing': 'addressing', 'dash-codec': 'format', 'dash-audio-codec': 'audio-codec', 'dash-unsupported': 'unsupported',
+    // S4b-5: Gründe aus der Vorprüfung im Gleichlauf mit dem Helfer (src/039 dfpGate)
+    'dash-coverage': 'coverage', 'dash-timeline': 'timeline', 'dash-limit': 'limit' };
   // Reine Entscheidung. inp: {
   //   read: gültiges MPD gelesen · invalid: nur verworfene MPD-Texte · invisible: MSE läuft, aber kein Medienabruf sichtbar ·
   //   gone/changed: Angebot zwischen Prüfung und Tipp verschwunden bzw. Quelle gewechselt ·
   //   bound · bindReason (Grund der Stückprüfung, src/038) · cls { host, query, number } (Abgleich des Kandidaten) ·
-  //   protectedSource (Registry) · gate { ok, reason } | null · fpError · fmt { video, audio, container } ·
+  //   protectedSource (Registry) · gate { ok, reason, coverage } | null · fpError · fpCode (Grund ohne Abdruck, z. B. baseurl-multiple) ·
+  //   fmt { video, audio, container } ·
   //   caps { known, reachable, supported, dash, error } · job { state, reason, stage } | null }
   // Ergebnis: { e1..e5: { ok, code }, first: 'E1'…'E4' | '', code: 'E2/host' …, main, sub } – Texte deutsch, t übersetzt Teile.
   function dashLevels(inp, t) {
@@ -71,13 +74,16 @@
       if (c === 'none') { const k = inp.cls || {}; c = k.host > 0 ? 'host' : k.query > 0 ? 'query' : k.number > 0 ? 'number' : inp.invisible ? 'invisible' : 'none'; }
       // S4b-4: Beginn des Mediums nicht gesehen (nur ab Beobachtung gezählt) und zu wenig gesehen: das konkret sagen
       if (inp.epochLate && (c === 'none' || c === 'few' || c === 'stale' || c === 'invisible')) c = 'epoch-late';
+      // S4b-5: Manifest mit mehreren Server-Alternativen (BaseURL) – vor S4b-6 weder zuordenbar noch speicherbar (Helfer:
+      // mpd_baseurl_multiple); den Grund nennen statt „anderer Server“ oder „weiter abspielen“
+      if (inp.fpCode === 'baseurl-multiple') c = 'baseurl-multiple';
       L.e2 = { ok: false, code: c };
     }
     // E3 (unabhängig von E2, sobald ein MPD gelesen ist; Schutz laut Registry gilt immer)
     const fmt = inp.fmt || { video: [], audio: [], container: [] };
     if (inp.protectedSource) L.e3 = { ok: false, code: 'protected' };
     else if (!L.e1.ok) L.e3 = { ok: false, code: 'n/a' };
-    else if (inp.fpError || !inp.gate) L.e3 = { ok: false, code: 'unchecked' };
+    else if (inp.fpError || !inp.gate) L.e3 = { ok: false, code: inp.fpCode === 'baseurl-multiple' ? 'baseurl-multiple' : 'unchecked' };
     else if (!inp.gate.ok) {
       let c = DASH_LV_E3[inp.gate.reason] || 'unsupported';
       if (c === 'audio-codec' && fmt.audio.some((n) => /^HE-AAC/.test(n))) c = 'audio-he-aac';
@@ -126,6 +132,7 @@
       'E2/uncheckable': ['DASH-Stream erkannt – Zuordnung hier nicht möglich', 'Stream-Form (Byte-Bereiche einer Datei) erlaubt keinen sicheren Nachweis'],
       'E2/changed': ['DASH-Stream erkannt – Quelle hat sich geändert', 'Erneut tippen'],
       'E2/epoch-late': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Kadri sieht dieses Video erst seit kurzem – einige Sekunden weiterlaufen lassen und erneut tippen'],
+      'E2/baseurl-multiple': ['DASH-Stream erkannt – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/format': ['DASH-Stream zugeordnet – Format wird noch nicht gespeichert', null],
       'E3/audio-codec': ['DASH-Stream zugeordnet – Tonformat wird noch nicht gespeichert', null],
       'E3/audio-he-aac': ['DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', 'Ton HE-AAC – gespeichert wird bisher nur AAC-LC'],
@@ -138,6 +145,10 @@
       'E3/no-video': ['DASH-Stream zugeordnet – nicht speicherbar', 'Kein Video'],
       'E3/addressing': ['DASH-Stream zugeordnet – Stream-Form wird noch nicht gespeichert', 'Adressierung der Stücke nicht unterstützt'],
       'E3/unsupported': ['DASH-Stream zugeordnet – Stream-Form wird noch nicht gespeichert', 'Aufbau des Manifests nicht unterstützt'],
+      'E3/coverage': ['DASH-Stream zugeordnet – nicht speicherbar', null],
+      'E3/timeline': ['DASH-Stream zugeordnet – nicht speicherbar', 'Manifest widersprüchlich: Zeitleiste der Stücke mit Lücken oder Überschneidungen'],
+      'E3/limit': ['DASH-Stream zugeordnet – nicht speicherbar', 'Zu viele Stücke oder zu groß für einen Download'],
+      'E3/baseurl-multiple': ['DASH-Stream zugeordnet – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/unchecked': ['DASH-Stream zugeordnet – Manifest nicht prüfbar', 'Aufbau nicht eindeutig (z. B. mehrere Server-Alternativen)'],
       'E3/n/a': ['DASH-Stream – nicht speicherbar', 'Geschützt (DRM)'],
       'E4/unpaired': ['DASH-Stream zugeordnet – Helfer-App nicht gekoppelt', 'In den Kadri-Einstellungen „Helfer koppeln“'],
@@ -148,7 +159,12 @@
     };
     const e = T[out.code] || T[first + '/' + 'unsupported'] || ['DASH-Stream – nicht speicherbar', ''];
     out.main = t(e[0]);
-    out.sub = e[1] === null ? fmtSub() : t(e[1] || '');
+    // E3/coverage: konkret, welche Spur welche Länge beschreibt (aus dem MPD, src/039) – z. B. „Tonspur 24 s statt 20 s“
+    const cov = inp.gate && inp.gate.coverage;
+    out.sub = out.code === 'E3/coverage'
+      ? t('Manifest widersprüchlich') + ': ' + (cov ? t(cov.track === 'audio' ? 'Tonspur' : 'Videospur') + ' ' + cov.described + ' s ' + t('statt') + ' ' + cov.period + ' s'
+        : t('Länge der Spuren passt nicht zur Dauer'))
+      : e[1] === null ? fmtSub() : t(e[1] || '');
     if (out.code === 'E3/audio-codec' && fmt.audio.length) out.sub = t('Ton') + ' ' + fmt.audio.join('/') + ' – ' + t('gespeichert wird bisher nur AAC-LC');
     return out;
   }
@@ -190,7 +206,7 @@
       bound: mediaDashState(snaps) === 'bound', bindReason: r.reason || '', cls: cls,
       epochLate: (() => { try { const ep = v ? dashEpochOf(v) : null; return !!ep && (ep.by === 'beobachtet' || ep.by === 'quellwechsel') && Date.now() - ep.at < 30000; } catch (e) { return false; } })(),
       protectedSource: oc === 'protected' || ents.some((s) => s.protection === 'encrypted' || s.protection === 'drm'),
-      gate: fp && !fp.error ? fp.gate : null, fpError: !fp || !!fp.error,
+      gate: fp && !fp.error ? fp.gate : null, fpError: !fp || !!fp.error, fpCode: fp && fp.error ? String(fp.error) : '',
       fmt: (cand && cand.p.dashFmt) || { video: [], audio: [], container: [] },
       caps: caps || { known: false }, job: job }, typeof tr === 'function' ? tr : null);
     lv.offer = !!(offer && offer.offer);

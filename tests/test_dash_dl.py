@@ -351,7 +351,7 @@ with sync_playwright() as p:
     dg = diag()
     check('S3g G1: HE-AAC – Diagnose nennt den Ablehnungsgrund der Vorprüfung (dash-audio-codec) und denselben Hinweis wie das Menü',
           dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung abgelehnt (dash-audio-codec) · Angebot nein'
-          and ('Hinweis im Menü: %s – %s' % (HE[0], HE[1])) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec') and danon(dg)
+          and ('Hinweis im Menü: %s – %s' % (HE[0], HE[1])) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec (Helfer audio_codec)') and danon(dg)
           and 'erste blockierende Ebene E3 (E3/audio-he-aac)' in dline(dg, 'DASH-Ebenen'),
           [dline(dg, 'Auswahl'), dline(dg, 'Auswahl DASH'), dline(dg, 'DASH-Stückprüfung')])
     open_case('drm'); it = sheet()

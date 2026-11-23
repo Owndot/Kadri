@@ -195,7 +195,7 @@
     const at = n9 - 1;
     if (at < resolved.indexOf('://') + 3 || at < dfpOrigin(resolved).length) dfpFail('template');
     const pre = resolved.slice(0, at), suf = resolved.slice(at + mark.length);
-    return { kind: e.kind, width: e.width, canon: pre + '{' + (e.kind === 'number' ? 'Number' : 'Time') + (e.width > 0 ? ':' + String(e.width).padStart(2, '0') : '') + '}' + suf };
+    return { kind: e.kind, width: e.width, pre: pre, suf: suf, canon: pre + '{' + (e.kind === 'number' ? 'Number' : 'Time') + (e.width > 0 ? ':' + String(e.width).padStart(2, '0') : '') + '}' + suf };
   }
   function dfpInit(tpl, id, bw, base) {
     const e = dashTplExpand(tpl, id, String(bw), false, '');
@@ -348,9 +348,10 @@
       if (tl.entryExtra) dfpFail('addressing-attr');
       r.tl = tl.s || []; r.tlCount = tl.sCount;
     }
-    if (!kinds.size) { r.excluded = 'addressing-single'; return; }
+    // (S4b-5: r.addressing wie DashManifest.Addressing – Teil des Schlüssels geteilter Stückfolgen, siehe dfpExpand)
+    if (!kinds.size) { r.addressing = 'SINGLE'; r.excluded = 'addressing-single'; return; }
     const kind = kinds.values().next().value;
-    if (kind === 'SegmentBase') { r.excluded = 'byte-range'; return; }
+    if (kind === 'SegmentBase') { r.addressing = 'SEGMENT_BASE'; r.excluded = 'byte-range'; return; }
     if (kind === 'SegmentTemplate') {
       const media = dfpInherit(segs, 'media');
       if (initTpl !== null) r.initUrl = dfpInit(initTpl, r.id, r.bandwidth, r.base);
@@ -358,14 +359,15 @@
       if (media === null) { r.excluded = 'addressing-media'; return; }
       const m = dfpMedia(media, r.id, r.bandwidth, r.base);
       r.mediaCanon = m.canon;
-      if (m.kind === 'time') { if (!tl) { r.excluded = 'time-without-timeline'; return; } }
-      else if (!tl && r.duration === null) { r.excluded = 'addressing-duration'; return; }
+      r.media = { kind: m.kind, width: m.width, pre: m.pre, suf: m.suf };
+      if (m.kind === 'time') { r.addressing = 'TIME_TIMELINE'; if (!tl) { r.excluded = 'time-without-timeline'; return; } }
+      else { r.addressing = tl ? 'NUMBER_TIMELINE' : 'NUMBER_DURATION'; if (!tl && r.duration === null) { r.excluded = 'addressing-duration'; return; } }
     } else {
       let holder = null;
       for (const s of segs) if (s && s.listMedia) { if (holder) dfpFail('addressing-ambiguous'); holder = s; }
       if (initSrc !== null) r.initUrl = dfpResolve(r.base, initSrc);
       else if (initTpl !== null) dfpFail('addressing-attr');
-      if (!holder) { r.excluded = 'addressing-single'; return; }
+      if (!holder) { r.addressing = 'SINGLE'; r.excluded = 'addressing-single'; return; }
       const lk = ctx.id(holder) + '|' + r.base;
       let c = ctx.lists.get(lk);
       if (!c) {
@@ -385,6 +387,7 @@
       }
       r.list = c.list; r.listRange = c.range; r.listRanges = c.ranges;
       const single = !tl && r.duration === null;
+      r.addressing = tl ? 'LIST_TIMELINE' : r.duration !== null ? 'LIST_DURATION' : 'LIST_SINGLE';
       if (c.ranges) { r.excluded = 'byte-range'; return; }
       if (c.dup) { r.excluded = 'list-duplicate'; return; }
       if (single && r.list.length !== 1) { r.excluded = 'addressing-duration'; return; }
@@ -398,7 +401,7 @@
     const h = documentUrl.indexOf('#');
     const doc = dfpCanonical(h >= 0 ? documentUrl.slice(0, h) : documentUrl);
     const ids = new Map();
-    const ctx = { lists: new Map(), listResolved: 0, id: (o) => { if (!ids.has(o)) ids.set(o, ids.size); return String(ids.get(o)); } };
+    const ctx = { lists: new Map(), listResolved: 0, exps: new Map(), expanded: 0, id: (o) => { if (o === null || o === undefined) return '-'; if (!ids.has(o)) ids.set(o, ids.size); return String(ids.get(o)); } };
     const m = { typeRaw: root.attr('type'), mpd: dfpOptDuration(root, 'mediaPresentationDuration'), base: dfpBaseOf(root, doc), periods: [], sets: [], reps: [] };
     const pEls = root.all('Period');
     if (pEls.length > DFP.MAX_PERIODS) dfpFail('limits');
@@ -428,7 +431,8 @@
             base: dfpBaseOf(re, a.base), cp: rcp, ess: dfpProps(re, 'EssentialProperty'), sup: dfpProps(re, 'SupplementalProperty'),
             ach: dfpProps(re, 'AudioChannelConfiguration'), subReps: re.all('SubRepresentation').length,
             segLevels: '', timescale: null, pto: null, startNumber: null, duration: null, mediaCanon: null, initUrl: null, initRange: null,
-            templateExtra: [], tl: null, tlCount: 0, list: null, listRange: null, listRanges: false, excluded: null };
+            templateExtra: [], tl: null, tlCount: 0, list: null, listRange: null, listRanges: false, excluded: null,
+            addressing: 'NONE', media: null, first: 0, count: 0, covered: null, maxD: 0n, coverInfo: null };
           m.reps.push(r);
           dfpSegKinds(re);
           dfpAddressing(r, [re, ae, pe], ctx);
@@ -442,6 +446,7 @@
       ae.all('Representation').forEach((re) => { direct += re.all('ContentProtection').length; });
     }));
     m.cpTop = root.all('ContentProtection').length; m.cpAll = all; m.cpNested = all - direct;
+    m.ctx = ctx;
     return m;
   }
 
@@ -546,8 +551,132 @@
     };
   }
 
-  // ---------- S3-Vorprüfung (DashProfile, ohne Stückfolge) ----------
+  // ---------- S4b-5: Vorprüfung im Gleichlauf mit dem Helfer (dashplan) ----------
+  // Dieselbe Entscheidung wie der Helfer für ein gelesenes MPD – ohne Netz, deterministisch, ohne Website-Regeln:
+  //  1. Stückfolge, Fenster und Abdeckung jeder Darstellung (DashManifest.periodTiming/expand/compute),
+  //  2. S3-Profil (DashProfile.check), 3. Plan (DashPlan.build), 4. Optionen (DashEngine.options: nur AAC-LC,
+  //     Ressourcengrenze des Journals). Exakt gerechnet (BigInt, Dauern × 10^15) wie BigDecimal/long beim Helfer.
+  // Ergebnis code = der Grund, den dashplan des Helfers für dieses MPD meldet ("ok" oder z. B. dash_addressing,
+  // mpd_limits). Geprüft an den gemeinsamen Golden-Vektoren dash-gate/1 (tests/web/dash/gate, im Helfer identisch).
   const DFP_AVC = /^(avc1|avc3)\.[0-9A-Fa-f]{6}$/;
+  const DFP_AAC = /^mp4a\.40\.(2|5|29)$/;   // DashProfile: AAC-LC/HE-AAC/HE-AACv2 sind Profil; gespeichert wird nur AAC-LC
+  const DFP_LIM = Object.freeze({ SEG_TRACK: 20000, EXPANDED: 1000000, SEG_SECONDS: 3600n, OPTIONS: 256, MEDIA_BYTES: 16n << 30n,
+    PLAN_SEGMENTS: 20000, URI: 4096, TOLERANCE: DFP_SCALE /* 1,0 s */ });
+  const DFP_ADDRESSING = new Set(['addressing-single', 'byte-range', 'time-without-timeline', 'addressing-media', 'addressing-duration', 'addressing-attr',
+    'list-duplicate', 'list-timeline', 'timeline-gap', 'timeline-overlap', 'timeline-repeat', 'timeline-empty', 'zero-duration',
+    'coverage-mismatch', 'segments', 'segment-duration', 'duration-unknown', 'number-range', 'uri-length', 'init-missing']);
+  const dfpCeilDiv = (a, b) => (a + b - 1n) / b;   // a ≥ 0, b > 0
+  function dfpRoundHalfEven(n, d) { const q = n / d, r = n % d; return 2n * r > d || (2n * r === d && q % 2n === 1n) ? q + 1n : q; }
+  // Dauer in 10^-9 s → kanonische Dezimalzahl ohne Nachkommanullen (wie BigDecimal.stripTrailingZeros().toPlainString())
+  function dfpSec9(q) { const s = q.toString().padStart(10, '0'), i = s.slice(0, -9).replace(/^0+(?=\d)/, ''), f = s.slice(-9).replace(/0+$/, ''); return f ? i + '.' + f : i; }
+  // Wirksamer Beginn und Dauer jeder Periode (DashManifest.periodTiming)
+  function dfpPeriodTiming(m) {
+    let prevEnd = 0n;
+    m.periods.forEach((p, i) => {
+      const start = p.start !== null ? p.start : prevEnd;
+      let dur = p.duration;
+      if (dur === null && start !== null && i + 1 < m.periods.length && m.periods[i + 1].start !== null) dur = m.periods[i + 1].start - start;
+      if (dur === null && i + 1 === m.periods.length && m.mpd !== null && start !== null) dur = m.mpd - start;
+      p.effDur = dur !== null && dur > 0n ? dur : null;
+      prevEnd = start !== null && p.effDur !== null ? start + p.effDur : null;
+    });
+  }
+  // Stückfolge einer Darstellung (DashManifest.compute) – { excluded } oder { first, count, covered (10^-9 s), maxD, info }
+  function dfpCompute(m, r, ctx) {
+    const p = m.periods[r.period], S = DFP_SCALE, SAFE = BigInt(DFP.SAFE);
+    const ex = (why, info) => ({ excluded: why, info: info || null });
+    if (p.effDur === null) return ex('duration-unknown');
+    const ts = BigInt(r.timescale === null ? 1 : r.timescale), pto = r.pto === null ? 0 : r.pto, ptoB = BigInt(pto);
+    const pdS = p.effDur * ts;   // Periodendauer in Ticks × 10^15
+    const runs = [];   // [t, d, cnt] als Number (alle Werte ≤ 2^53−1, unten geprüft)
+    let total = 0;
+    if (r.tl !== null) {
+      let end = -1;
+      for (let k = 0; k < r.tlCount; k++) {
+        let t = r.tl[k * 3];
+        const d = r.tl[k * 3 + 1], rr = r.tl[k * 3 + 2];
+        if (d <= 0) return ex('zero-duration');
+        if (t === null) t = k === 0 ? 0 : end;
+        else if (k > 0 && t !== end) return ex(t > end ? 'timeline-gap' : 'timeline-overlap');
+        let cnt;
+        if (rr >= 0) cnt = rr + 1;
+        else if (k + 1 < r.tlCount) {
+          const nt = r.tl[(k + 1) * 3];
+          if (nt === null || nt <= t || (BigInt(nt) - BigInt(t)) % BigInt(d) !== 0n) return ex('timeline-repeat');
+          cnt = Number((BigInt(nt) - BigInt(t)) / BigInt(d));
+        } else {
+          const left = pdS + ptoB * S - BigInt(t) * S;
+          if (left <= 0n) return ex('timeline-repeat');
+          const c = dfpCeilDiv(left, BigInt(d) * S);
+          if (c > BigInt(DFP_LIM.SEG_TRACK)) return ex('segments');
+          cnt = Number(c);
+        }
+        if (cnt > DFP_LIM.SEG_TRACK || total + cnt > DFP_LIM.SEG_TRACK) return ex('segments');
+        const span = BigInt(d) * BigInt(cnt);
+        if (span > SAFE || BigInt(t) + span > SAFE) return ex('number-range');
+        end = t + d * cnt;
+        runs.push([t, d, cnt]);
+        total += cnt;
+      }
+      if (total === 0) return ex('timeline-empty');
+      if (r.list !== null && r.list.length !== total) return ex('list-timeline');
+    } else if (r.list !== null && r.addressing === 'LIST_SINGLE') {
+      const d = dfpCeilDiv(pdS, S);
+      if (d > SAFE) return ex('number-range');
+      runs.push([pto, Math.max(1, Number(d)), 1]);
+      total = 1;
+    } else {
+      const d = r.duration === null ? 0 : r.duration;
+      if (d <= 0) return ex('zero-duration');
+      const c = dfpCeilDiv(pdS, BigInt(d) * S);
+      if (c <= 0n || c > BigInt(DFP_LIM.SEG_TRACK)) return ex('segments');
+      const cnt = Number(c);
+      // Liste mit fester Dauer: die Zahl der Einträge muss zur Periodendauer passen (beschrieben: Einträge × Dauer)
+      if (r.list !== null && r.list.length !== cnt) return ex('coverage-mismatch', { described: BigInt(r.list.length) * BigInt(d) * 1000000000n / ts, period: p.effDur / 1000000n });
+      if (BigInt(d) * c > SAFE || ptoB + BigInt(d) * c > SAFE) return ex('number-range');
+      runs.push([pto, d, cnt]);
+      total = cnt;
+    }
+    ctx.expanded += total;   // Gesamtgrenze über alle Darstellungen (geteilte Stückfolgen einmal) – darüber fatal wie beim Helfer
+    if (ctx.expanded > DFP_LIM.EXPANDED) dfpFail('limits');
+    if (BigInt(r.startNumber === null ? 1 : r.startNumber) + BigInt(total) > SAFE) return ex('number-range');
+    // Fenster der Periode: Stück mit [t−pto, t−pto+d) überlappt [0, Dauer)
+    const ceilT = dfpCeilDiv(pdS, S), floorT = pdS / S;
+    let first = -1, last = -1, ord = 0, full = 0n, partS = 0n, maxD = 0;
+    for (const [t, d, cnt] of runs) {
+      maxD = Math.max(maxD, d);
+      for (let j = 0; j < cnt; j++) {
+        const s0 = t + j * d - pto, e0 = s0 + d;   // exakt: t + d·cnt ≤ 2^53−1 geprüft
+        if (e0 <= 0 || s0 >= ceilT) continue;
+        if (first < 0) first = ord + j;
+        last = ord + j;
+        const from = Math.max(s0, 0);
+        if (e0 <= floorT) { full += BigInt(e0 - from); if (full > 9223372036854775807n) return ex('number-range'); }
+        else partS += pdS - BigInt(from) * S;
+      }
+      ord += cnt;
+    }
+    if (first < 0) return ex('timeline-empty');
+    const covered = dfpRoundHalfEven(full * S + partS, ts * 1000000n);   // 10^-9 s, HALF_EVEN wie BigDecimal.divide(…, 9, …)
+    const miss = p.effDur - covered * 1000000n;
+    if ((miss < 0n ? -miss : miss) > DFP_LIM.TOLERANCE) return ex('coverage-mismatch', { described: covered, period: p.effDur / 1000000n });
+    if (BigInt(maxD) > DFP_LIM.SEG_SECONDS * ts) return ex('segment-duration');
+    return { excluded: null, first: first, count: last - first + 1, covered: covered, maxD: maxD };
+  }
+  function dfpExpand(m, ctx) {
+    dfpPeriodTiming(m);
+    m.reps.forEach((r) => {
+      if (r.excluded) return;
+      const key = ctx.id(r.tl) + '|' + r.tlCount + '|' + ctx.id(r.list) + '|' + r.addressing + '|' + r.duration + '|' + r.timescale + '|' + r.pto + '|' + r.startNumber + '|' + r.period;
+      let e = ctx.exps.get(key);
+      if (!e) { e = dfpCompute(m, r, ctx); ctx.exps.set(key, e); }
+      r.excluded = e.excluded;
+      r.coverInfo = e.info || null;
+      if (e.excluded) return;
+      r.first = e.first; r.count = e.count; r.covered = e.covered; r.maxD = e.maxD;
+      if (r.media && r.media.pre.length + r.media.suf.length + Math.max(r.media.width, 16) > DFP_LIM.URI) r.excluded = 'uri-length';
+    });
+  }
   function dfpKind(a, repMime) {
     const ct = a.contentType === null ? null : a.contentType.trim().toLowerCase();
     const mime = repMime === null ? '' : repMime.trim().toLowerCase();
@@ -565,30 +694,61 @@
     const mime = r.mimeType === null ? '' : r.mimeType.trim().toLowerCase(), codecs = r.codecs === null ? '' : r.codecs.trim();
     if (codecs.indexOf(',') >= 0) return 'muxed';
     if (kind === 'video') { if (mime !== 'video/mp4') return 'container'; if (!DFP_AVC.test(codecs)) return 'codec'; }
-    else { if (mime !== 'audio/mp4') return 'container'; if (codecs !== 'mp4a.40.2') return 'codec'; }   // S3b speichert nur AAC-LC
+    else { if (mime !== 'audio/mp4') return 'container'; if (!DFP_AAC.test(codecs)) return 'codec'; }
     if (r.bandwidth <= 0) return 'bandwidth';
     if (r.initUrl === null) return 'init-missing';
     return null;
   }
-  function dfpPeriodDuration(m) {
-    const p = m.periods[0];
-    const start = p.start !== null ? p.start : 0n;
-    let dur = p.duration;
-    if (dur === null && m.mpd !== null) dur = m.mpd - start;
-    return dur !== null && dur > 0n ? dur : null;
+  // Können zwei angebotene Spuren dieselbe Adresse anfordern? (DashPlan.collides)
+  function dfpCollides(tracks) {
+    const fixed = new Set();
+    for (const r of tracks) { if (fixed.has(r.initUrl)) return true; fixed.add(r.initUrl); }
+    for (const r of tracks) {
+      if (!r.list) continue;
+      for (let i = 0; i < r.count; i++) { const u = r.list[r.first + i]; if (fixed.has(u)) return true; fixed.add(u); }
+    }
+    for (let a = 0; a < tracks.length; a++) {
+      const ma = tracks[a].media;
+      if (!ma) continue;
+      for (let b = a + 1; b < tracks.length; b++) {
+        const mb = tracks[b].media;
+        if (!mb) continue;
+        if ((ma.pre.startsWith(mb.pre) || mb.pre.startsWith(ma.pre)) && (ma.suf.endsWith(mb.suf) || mb.suf.endsWith(ma.suf))) return true;
+      }
+      for (const u of fixed) {
+        if (u.length > ma.pre.length + ma.suf.length && u.startsWith(ma.pre) && u.endsWith(ma.suf)
+          && /^[0-9]{1,20}$/.test(u.slice(ma.pre.length, u.length - ma.suf.length))) return true;
+      }
+    }
+    return false;
   }
-  // { ok, reason, video: [rep], audio: [rep] } – reason fest: dash-live, dash-type, dash-multiperiod, dash-protected,
-  // dash-duration-unknown, dash-duration-limit, dash-no-video, dash-codec, dash-addressing, dash-unsupported, dash-no-audio
-  function dfpGate(m) {
-    const no = (reason) => ({ ok: false, reason: reason, video: [], audio: [] });
-    if (m.typeRaw !== null && m.typeRaw.trim() === 'dynamic') return no('dash-live');
-    if (m.typeRaw !== null && m.typeRaw.trim() !== 'static') return no('dash-type');
-    if (m.periods.length !== 1) return no('dash-multiperiod');
-    if (m.cpAll > 0) return no('dash-protected');
-    const pd = dfpPeriodDuration(m);
-    if (pd === null) return no('dash-duration-unknown');
-    if (pd > BigInt(DFP.MAX_TOTAL_SECONDS) * DFP_SCALE) return no('dash-duration-limit');
-    const video = [], audio = [], vWhy = [], aWhy = [];
+  // { ok, code, reason, track, detail, coverage, reps, video, audio }
+  //  code: Grund wie dashplan des Helfers (Bindestrich statt Unterstrich): ok, dash-*, options-limit, track-collision,
+  //    size-limit, segments-limit, audio-codec, mpd-limits; reason: Kadris Anzeigegrund (src/046, src/105) –
+  //    dash-live, dash-type, dash-protected, dash-multiperiod, dash-duration-unknown, dash-duration-limit, dash-no-video,
+  //    dash-no-audio, dash-codec, dash-audio-codec, dash-coverage, dash-timeline, dash-addressing, dash-limit, dash-unsupported
+  //  track/detail: blockierende Spurart und die Gründe ihrer Darstellungen; coverage: { track, described, period } (Sekunden-Text)
+  //  reps: je Video-/Tondarstellung { index, kind, excluded | count + covered } (für die Golden-Vektoren)
+  function dfpGate(m, ctx) {
+    const res = (code, reason, extra) => Object.assign({ ok: code === 'ok', code: code, reason: code === 'ok' ? '' : reason, track: '', detail: [], coverage: null,
+      reps: [], video: [], audio: [] }, extra || {});
+    try { dfpExpand(m, ctx); } catch (e) { return res('mpd-' + (e && e.dfp ? e.dfp : 'internal'), 'dash-unsupported'); }
+    const reps = [];
+    m.reps.forEach((r) => {
+      const kind = dfpKind(m.sets[r.set], r.mimeType);
+      if (kind !== 'video' && kind !== 'audio') return;
+      const base = { index: r.index, id: r.id, kind: kind, addressing: r.addressing };
+      reps.push(Object.assign(base, r.excluded ? { excluded: r.excluded } : { count: r.count, covered: dfpSec9(r.covered) }));
+    });
+    const no = (code, reason, extra) => res(code, reason, Object.assign({ reps: reps }, extra || {}));
+    if (m.typeRaw !== null && m.typeRaw.trim() === 'dynamic') return no('dash-live', 'dash-live');
+    if (m.typeRaw !== null && m.typeRaw.trim() !== 'static') return no('dash-type', 'dash-type');
+    if (m.periods.length !== 1) return no('dash-multiperiod', 'dash-multiperiod');
+    if (m.cpAll > 0) return no('dash-protected', 'dash-protected');
+    const pd = m.periods[0].effDur;
+    if (pd === null) return no('dash-duration-unknown', 'dash-duration-unknown');
+    if (pd > BigInt(DFP.MAX_TOTAL_SECONDS) * DFP_SCALE) return no('dash-duration-limit', 'dash-duration-limit');
+    const video = [], audio = [], vWhy = [], aWhy = [], vEx = [], aEx = [];
     let anyVideo = false, anyAudio = false;
     m.reps.forEach((r) => {
       const a = m.sets[r.set], kind = dfpKind(a, r.mimeType);
@@ -596,20 +756,53 @@
       const why = dfpWhy(a, r, kind);
       if (kind === 'video') anyVideo = true;
       if (kind === 'audio') anyAudio = true;
-      if (why) { (kind === 'audio' ? aWhy : vWhy).push(why); return; }
-      // (für die Zuordnung der Helfer-Optionen: Höhe/Breite wie beim Helfer gelesen, Sprache des Sets, Bandbreite)
-      const dim = (x) => (x !== null && /^[0-9]{1,6}$/.test(x.trim()) && Number(x.trim()) <= 100000 ? Number(x.trim()) : 0);
-      (kind === 'video' ? video : audio).push({ index: r.index, height: dim(r.height), width: dim(r.width), bandwidth: r.bandwidth,
-        codecs: r.codecs.trim(), lang: a.lang !== null && /^[A-Za-z0-9-]{1,16}$/.test(a.lang) ? a.lang : '' });
+      if (why) { (kind === 'audio' ? aWhy : vWhy).push(why); (kind === 'audio' ? aEx : vEx).push(r); return; }
+      (kind === 'video' ? video : audio).push(r);
     });
     const cat = (whys) => (whys.some((w) => w === 'codec' || w === 'container' || w === 'muxed') ? 'dash-codec'
-      : whys.some((w) => /^(addressing|byte-range|time-without|list-|init-missing|uri-)/.test(w)) ? 'dash-addressing' : 'dash-unsupported');
-    if (!anyVideo) return no('dash-no-video');
-    if (!video.length) return no(cat(vWhy));
-    // der Helfer speichert nur mit Ton (genau eine Tonspur je Datei): ohne nutzbaren Ton kein Angebot
-    if (!anyAudio) return no('dash-no-audio');
-    if (!audio.length) return no(cat(aWhy) === 'dash-codec' ? 'dash-audio-codec' : cat(aWhy));
-    return { ok: true, reason: '', video: video, audio: audio };
+      : whys.some((w) => DFP_ADDRESSING.has(w)) ? 'dash-addressing' : 'dash-unsupported');
+    const uniq = (a) => a.filter((x, i) => a.indexOf(x) === i).sort();
+    // Anzeigegrund einer abgelehnten Spurart: Abdeckung/Zeitleiste konkret benennen, Ton-Codec eigens
+    const blocked = (track, whys, exReps) => {
+      const code = cat(whys), d = uniq(whys);
+      let reason = code;
+      let coverage = null;
+      if (code === 'dash-codec' && track === 'audio') reason = 'dash-audio-codec';
+      else if (code === 'dash-addressing' && d.every((w) => w === 'coverage-mismatch')) {
+        reason = 'dash-coverage';
+        const r = exReps.find((x) => x.coverInfo);
+        if (r) coverage = { track: track, described: dfpSec9(r.coverInfo.described), period: dfpSec9(r.coverInfo.period) };
+      } else if (code === 'dash-addressing' && d.every((w) => /^(timeline-(gap|overlap|repeat|empty)|zero-duration)$/.test(w))) reason = 'dash-timeline';
+      return no(code, reason, { track: track, detail: d, coverage: coverage });
+    };
+    if (!anyVideo) return no('dash-no-video', 'dash-no-video');
+    if (!video.length) return blocked('video', vWhy, vEx);
+    if (anyAudio && !audio.length) return blocked('audio', aWhy, aEx);
+    // Plan (DashPlan.build)
+    const pairs = video.length * Math.max(1, audio.length);
+    if (pairs > DFP_LIM.OPTIONS) return no('options-limit', 'dash-limit');
+    if (dfpCollides(video.concat(audio))) return no('track-collision', 'dash-unsupported');
+    const bytes = (v, a) => dfpCeilDiv(BigInt(v.bandwidth + (a ? a.bandwidth : 0)) * pd, 8n * DFP_SCALE);
+    const options = [];
+    video.forEach((v) => { if (!audio.length) { if (bytes(v, null) <= DFP_LIM.MEDIA_BYTES) options.push([v, null]); return; }
+      audio.forEach((a) => { if (bytes(v, a) <= DFP_LIM.MEDIA_BYTES) options.push([v, a]); }); });
+    if (!options.length) return no('size-limit', 'dash-limit');
+    // Optionen des Helfers (DashEngine.options): Ton Pflicht, nur AAC-LC, Journalgrenze Video + Ton
+    if (!audio.length) return no('dash-no-audio', 'dash-no-audio');
+    let onlyHe = true;
+    const usable = options.filter(([v, a]) => {
+      if (!a || a.codecs.trim() !== 'mp4a.40.2') return false;
+      onlyHe = false;
+      return (v.count + 1) + (a.count + 1) <= DFP_LIM.PLAN_SEGMENTS + 2 && bytes(v, a) <= DFP_LIM.MEDIA_BYTES;
+    });
+    // (wie beim Helfer ohne Gründe je Darstellung: das Profil hat HE-AAC angenommen, erst die Optionen fallen weg)
+    if (!usable.length) return onlyHe ? no('audio-codec', 'dash-audio-codec') : no('segments-limit', 'dash-limit');
+    // (für die Zuordnung der Helfer-Optionen: Höhe/Breite wie beim Helfer gelesen, Sprache des Sets, Bandbreite)
+    const dim = (x) => (x !== null && /^[0-9]{1,6}$/.test(x.trim()) && Number(x.trim()) <= 100000 ? Number(x.trim()) : 0);
+    const out = (r) => ({ index: r.index, height: dim(r.height), width: dim(r.width), bandwidth: r.bandwidth, codecs: r.codecs.trim(),
+      lang: m.sets[r.set].lang !== null && /^[A-Za-z0-9-]{1,16}$/.test(m.sets[r.set].lang) ? m.sets[r.set].lang : '' });
+    const uv = video.filter((v) => usable.some((o) => o[0] === v)), ua = audio.filter((a) => usable.some((o) => o[1] === a));
+    return res('ok', '', { reps: reps, video: uv.map(out), audio: ua.map(out) });
   }
 
   // Öffentlich: Abdruck und Vorprüfung aus dem gelesenen Text, dem DOMParser-Ergebnis (src/038 dashParse) und der finalen
@@ -628,7 +821,7 @@
       let lines = 0, txt = '';
       const sha = canonical ? null : dfpSha256();
       dfpWrite(m, (s) => { if (++lines > DFP.MAX_LINES) dfpFail('limits'); if (sha) sha.update(s); else txt += s; });
-      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m) };
+      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m, m.ctx) };
     } catch (e) {
       return { error: e && e.dfp ? e.dfp : 'internal' };
     }

@@ -108,7 +108,11 @@ with sync_playwright() as p:
     ]:
         g = gate(t)
         check('Vorprüfung lehnt ab: %s → %s' % (what, want), g.get('ok') is False and g.get('reason') == want, g)
-    g = gate(mpd(VID() + AUD('mp4a.40.5', 'en') + AUD('mp4a.40.2', 'de')))
+    # S4b-5: zwei Ton-Sets brauchen verschiedene Darstellungs-IDs – mit derselben ID (beide „a“) wären Init- und Stückadressen
+    # gleich; der Helfer lehnt das beim Plan mit track_collision ab (DashPlan.collides), Kadri jetzt ebenso schon vorher
+    g = gate(mpd(VID() + AUD('mp4a.40.5', 'en') + AUD('mp4a.40.2', 'de').replace('id="a"', 'id="b"')))
     check('Ton gemischt: nur die AAC-LC-Spur gilt (HE-AAC-Spur entfällt, nie stillschweigend ersetzt)', g.get('ok') and [x['lang'] for x in g['audio']] == ['de'], g)
+    g = gate(mpd(VID() + AUD('mp4a.40.5', 'en') + AUD('mp4a.40.2', 'de')))
+    check('… dieselbe Darstellungs-ID in beiden Ton-Sets (gleiche Adressen): abgelehnt wie beim Helfer (track-collision)', g.get('ok') is False and g.get('code') == 'track-collision', g)
     done()
     br.close()

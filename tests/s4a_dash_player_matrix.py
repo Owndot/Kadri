@@ -161,7 +161,9 @@ for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True
 for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd5', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
 # S4b-4: Medien-Epoche – der Vorspann gehört zur vorigen MediaSource: das Haupt-MPD (360p + 180p) wird gebunden
 for k in ('f1b', 'f1c', 'p1', 'r1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
-EXPECT['e3'] = dict(bound=True, offer=True, plan='rejected')
+# S4b-5: Vorprüfung im Gleichlauf mit dem Helfer – e3 (Ton-Abdeckung 24 s statt 20 s) wird schon von Kadri erkannt: kein Angebot,
+# kein dashplan (der Helfer lädt das MPD nicht), Bindung unverändert
+EXPECT['e3'] = dict(bound=True, offer=False, noplan=True)
 for k in ('h1', 'h2', 'h3'): EXPECT[k] = dict(bound=True, offer=False)
 for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer=True)
 # S4b: Ebenen (src/046) – erste blockierende Ebene (Diagnose „DASH-Ebenen“), Hauptzeile und Unterzeile im Menü.
@@ -169,10 +171,11 @@ for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer
 M_E1 = 'DASH vermutet – Manifest nicht lesbar'
 M_E2 = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 M_FMT = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
-LV = {k: ('-', None, None) for k in ('a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd6', 'e2', 'e3', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
+LV = {k: ('-', None, None) for k in ('a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
 LV.update({
     'b1': ('E1/unread-invisible', M_E1, r'verdeckt'), 'b2': ('E1/unread-invisible', M_E1, r'verdeckt'), 'c2': ('E1/unread-invisible', M_E1, r'verdeckt'),
-    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd5': ('E2/host', M_E2, r'anderen Server'),
+    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd5': ('E2/baseurl-multiple', 'DASH-Stream erkannt – nicht speicherbar', r'^Manifest nennt mehrere Server-Alternativen \(BaseURL\) – noch nicht unterstützt$'),
+    'e3': ('E3/coverage', 'DASH-Stream zugeordnet – nicht speicherbar', r'^Manifest widersprüchlich: Tonspur 24 s statt 20 s$'),
     'e1': ('E2/uncheckable', 'DASH-Stream erkannt – Zuordnung hier nicht möglich', r'^Stream-Form \(Byte-Bereiche einer Datei\) erlaubt keinen sicheren Nachweis$'),
     'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
     'f1b': ('-', None, None), 'f1c': ('-', None, None), 'p1': ('-', None, None), 'r1': ('-', None, None),
@@ -362,6 +365,7 @@ with sync_playwright() as p:
         r['pruef'] = re.findall(r'Ergebnis (\w+) \(([^)]*)\)(?: · ([^\n·]+))?', allg)
         # Menü
         it = []
+        n_menu = len(HITS)
         if wait(lambda: pg.evaluate(js('return !!r.querySelector(".pill.on");')), 12):
             time.sleep(0.3)
             pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
@@ -370,6 +374,9 @@ with sync_playwright() as p:
         else: r['pill'] = False
         r['menu'] = it
         r['offer'] = OFFER in [x[0] for x in it]
+        if not r['offer']:   # S4b-5: ohne Angebot fragt Kadri den Helfer nicht (dashplan lädt das MPD – hier darf keins kommen)
+            time.sleep(2.0)
+            r['mpd_after_menu'] = len([x for x in HITS[n_menu:] if x['path'].endswith('.mpd')])
         if r['offer'] and do_plan:
             n1 = len(HITS)
             # S4b-3: das Ergebnis des Tipps ist die Auswahl selbst oder ein NEUER Hinweis. Ein noch sichtbarer älterer Hinweis (z. B.
@@ -478,6 +485,7 @@ with sync_playwright() as p:
         if ex:
             check('[%s] Funktion: Bindung %s' % (sid, 'ja' if ex['bound'] else 'nein'), r['bound'] == ex['bound'], r['bindung'])
             check('[%s] Funktion: Angebot %s' % (sid, 'ja' if ex['offer'] else 'nein'), r['offer'] == ex['offer'], it[:2])
+            if ex.get('noplan'): check('[%s] Funktion: kein dashplan – der Helfer lädt das MPD nicht' % sid, r.get('mpd_after_menu') == 0, r.get('mpd_after_menu'))
             if ex.get('plan') == 'rejected': check('[%s] Funktion: Helfer lehnt beim Plan ab' % sid, not r.get('plan') and 'abgelehnt' in r.get('helper_line', ''), r.get('helper_line'))
             elif ex.get('plan'): check('[%s] Funktion: Planoptionen %s' % (sid, ' + '.join(x.split(' ')[0] for x in ex['plan'])), sorted(x[0] for x in r.get('plan', [])) == sorted(ex['plan']), r.get('plan') or r.get('toast'))
             if ex.get('file'):

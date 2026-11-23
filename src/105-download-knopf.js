@@ -45,19 +45,21 @@
     if (!sel.ok) return { reason: 'Quelle hat sich geändert – erneut tippen', code: 'source-changed' };
     const offer = dashOfferOf(sel.url, from);
     if (!offer) return { reason: 'Manifest nicht mehr verfügbar – Video kurz abspielen und erneut tippen', code: 'manifest-gone' };
+    if (offer.error === 'baseurl-multiple') return { reason: 'mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt', code: 'baseurl-multiple' };
     if (offer.error || !offer.fp) return { reason: 'Manifest nicht prüfbar', code: 'manifest-unchecked' };
     if (!offer.gate || !offer.gate.ok) return { reason: dashGateText(offer.gate && offer.gate.reason), code: dashGateCode(offer.gate && offer.gate.reason) };
     return { x: x, sel: sel, offer: offer };
   }
   const DASH_GATE_CODES = ['dash-live', 'dash-protected', 'dash-multiperiod', 'dash-codec', 'dash-audio-codec', 'dash-no-audio', 'dash-no-video',
-    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit'];
+    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit', 'dash-coverage', 'dash-timeline', 'dash-limit'];
   const dashGateCode = (r) => (DASH_GATE_CODES.indexOf(r) >= 0 ? r : 'dash-unsupported');
   function dashGateText(r) {
     return ({ 'dash-live': 'Live-Stream – nicht speicherbar', 'dash-protected': 'geschützt (DRM) – nicht speicherbar',
       'dash-multiperiod': 'mehrere Abschnitte (Perioden) – nicht unterstützt', 'dash-codec': 'Format nicht unterstützt (nur H.264 mit AAC)',
       'dash-audio-codec': 'Tonformat nicht unterstützt (nur AAC-LC)', 'dash-no-audio': 'ohne Ton – nicht speicherbar',
       'dash-no-video': 'kein Video', 'dash-addressing': 'Stream-Form nicht unterstützt', 'dash-duration-unknown': 'Länge unbekannt – nicht speicherbar',
-      'dash-duration-limit': 'zu lang (über 48 h)' })[r] || 'Stream-Form nicht unterstützt';
+      'dash-duration-limit': 'zu lang (über 48 h)', 'dash-coverage': 'Manifest widersprüchlich (Länge der Spuren)',
+      'dash-timeline': 'Manifest widersprüchlich (Zeitleiste)', 'dash-limit': 'zu viele Stücke oder zu groß' })[r] || 'Stream-Form nicht unterstützt';
   }
   // Optionen des Helfers den Darstellungen des eigenen Modells zuordnen: Höhe, Breite, Sprache und Summe der Bandbreiten
   // (Video + Ton) müssen GENAU ein Paar ergeben – sonst ist die Option nicht eindeutig zuordenbar und entfällt. Der Ton wird
