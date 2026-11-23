@@ -16,7 +16,7 @@ function setup(kind = 'mp4', env = {}) {
   const opt = { ctx: {}, sourceId: source.sourceId, revision: 7, identity: 'played' };
   const v = { isConnected: true, currentSrc: url, readyState: 4, videoWidth: 640, videoHeight: 360,
     buffered: { length: 1, start: () => 0, end: () => 8 }, played: { length: 1, start: () => 0, end: () => 2 }, paused: false };
-  const ctx = { URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v, addEventListener() {}, removeEventListener() {},
+  const ctx = { IN_FRAME: false, fui: { n: '', rid: '' }, fuiLog() {}, URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v, addEventListener() {}, removeEventListener() {},
     setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout() {}, toast() {}, tr: (x) => x,
     pageTitle: () => 'PRIVATE-TITLE', fmtTime: () => '1:00',
     mediaRegistry: { snapshot: () => [source], resolveSelection: () => ({ ok: true, url }), resolveStream: () => ({ ok: true, url, bind: {} }) },
@@ -349,5 +349,27 @@ const flush = async () => { for (let i = 0; i < 6; i++) await new Promise((r) =>
   nh.ctx.onDownload = () => { ytdl++; };
   await nh.api.onPageDownload();
   check('without helper channel: tap shows the selection (YTDLnis first), YTDLnis not opened', nhMenus.length === 1 && nhMenus[0][0].label === 'Mit YTDLnis' && ytdl === 0);
+  // S4b-3: eingebettetes Fenster – zweiter Tipp auf ⬇, während der erste Ablauf noch die Fähigkeit abfragt: der laufende
+  // Ablauf antwortet mit der Kennung des LETZTEN Tipps (sonst verwürfe das Hauptfenster die Auswahl als veraltet)
+  {
+    const f = btn([mp4p], []), rids = [];
+    f.ctx.IN_FRAME = true; f.ctx.fui = { n: 'f'.repeat(32), rid: 'aaaaaaaa' };
+    f.ctx.pageDlMenu = (title, items, here, rid) => { f.menus.push(items); rids.push(rid); };
+    let release; const gate = new Promise((r) => { release = r; });
+    const plain = f.ctx.reply;
+    f.ctx.KADRI_DOWNLOAD = async (op, args) => { f.requests.push({ op, args }); if (op === 'caps') await gate; return plain(op, args); };
+    const first = f.api.onPageDownload();          // Tipp 1 (aaaaaaaa): wartet auf caps
+    await flush();
+    f.ctx.fui.rid = 'bbbbbbbb';
+    await f.api.onPageDownload();                   // Tipp 2 (bbbbbbbb) während Tipp 1 läuft: kein zweiter Ablauf
+    release(); await first; await flush();
+    check('frame: second ⬇ during the first flow – one flow, one menu, sent with the LATEST tap id',
+      f.requests.filter((r) => r.op === 'caps').length === 1 && f.menus.length === 1 && rids[0] === 'bbbbbbbb');
+    const g = btn([mp4p], []), grids = [];
+    g.ctx.IN_FRAME = true; g.ctx.fui = { n: 'f'.repeat(32), rid: 'cccccccc' };
+    g.ctx.pageDlMenu = (title, items, here, rid) => { g.menus.push(items); grids.push(rid); };
+    await g.api.onPageDownload();
+    check('frame: single ⬇ – menu carries the id of that tap', g.menus.length === 1 && grids[0] === 'cccccccc');
+  }
   console.log('RESULT download_diag PASS ' + passed + '/' + passed);
 })().catch(e => { console.error(e); process.exitCode = 1; });

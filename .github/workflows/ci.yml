@@ -315,6 +315,7 @@ jobs:
           node tests/dl_sheet_unit_check.js
           node tests/frame_ui_relay_check.js
           node tests/frame_ui_result_check.js
+          node tests/frame_ui_rid_check.js
           node tests/dash_message_check.js
           node tests/dash_manifest_model_check.js
           node tests/dash_bind_check.js

@@ -411,7 +411,7 @@
 
   function toast(msg) {
     // Knopf dieses eingebetteten Fensters steht im Hauptfenster: Hinweis dort zeigen (hier wäre er abgeschnitten)
-    if (IN_FRAME && fuiRelay()) { fuiSend('toast', { n: fui.n, text: tr(msg) }); return; }
+    if (IN_FRAME && fuiRelay()) { const rid = fui.rid; fuiLog(rid, 'frame:toast-send', ''); fuiSend('toast', { n: fui.n, rid: rid, text: tr(msg) }).then((r) => fuiLog(rid, 'frame:toast-reply', r ? (r.ok === true ? 'ok' : 'abgelehnt') : 'keine-antwort')); return; }
     ui();
     // im Player: eine feste Stelle für alle Hinweise (unter dem Bild) – die Gesten-Anzeige macht so lange Platz
     const pw = toastEl.parentElement;

@@ -234,6 +234,11 @@
     L.push('Netzwerk (zuletzt beobachtet, Art:Rolle): ' + (Object.keys(roles).sort().map((k) => k + ' ×' + roles[k]).join(', ') || '-') +
       ' · Listen gelesen ' + plInfo.size + ' (davon DASH-Manifeste ' + new Set(dashInfo.values()).size + ')' +
       ' · Rollen aus Listen ' + plParts.size + (Object.keys(dashRejected).length ? ' · MPD-Texte verworfen: ' + anonCount(dashRejected) : ''));
+    // S4b-3: Relay-Spur (Hauptfenster ↔ eingebettetes Fenster): Zeit relativ zum ersten Eintrag, Kennung, Schritt, Code
+    try {
+      const tr0 = fuiTrace.length ? fuiTrace[0][0] : 0;
+      L.push('Relay-Spur (' + fuiTrace.length + '): ' + (fuiTrace.length ? fuiTrace.slice(-30).map((e) => '+' + (e[0] - tr0) + 'ms ' + e[1] + ' ' + e[2] + (e[3] ? '(' + e[3] + ')' : '')).join(' | ') : '-'));
+    } catch (e) {}
     L.push('Helfer-Downloads (jüngste zuerst): ' + (hdlDiags.length ? '' : '-'));
     hdlDiags.forEach((d, i) => L.push(' ' + (i + 1) + '. ' + hdlDiagText(d)));
     return anonScrub(L.join('\n'));

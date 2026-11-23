@@ -331,22 +331,24 @@ function inject(sender, files) {
 //    (Herkunft für die Helfer-App wie bisher aus dessen sender.url).
 const FUI_N = /^[0-9a-f]{32}$/;
 const fuiStr = (s, n) => (typeof s === 'string' ? s.slice(0, n) : '');
+// S4b-3: Kennung der Relay-Spur (nur Diagnose): genau 8 Hex-Zeichen, sonst weggelassen
+const fuiRid = (m) => (typeof m.rid === 'string' && /^[0-9a-f]{8}$/.test(m.rid) ? { rid: m.rid } : {});
 function fuiUp(m) {
   if (!FUI_N.test(typeof m.n === 'string' ? m.n : '')) return null;
   if (m.op === 'show') return { op: 'show', n: m.n, on: m.on === true };
-  if (m.op === 'toast') return { op: 'toast', n: m.n, text: fuiStr(m.text, 300) };
+  if (m.op === 'toast') return Object.assign({ op: 'toast', n: m.n, text: fuiStr(m.text, 300) }, fuiRid(m));
   if (m.op === 'menu') {
     if (!Number.isInteger(m.seq) || m.seq < 0 || !Array.isArray(m.items) || m.items.length > 24) return null;
-    return { op: 'menu', n: m.n, seq: m.seq, title: fuiStr(m.title, 120),
-      items: m.items.map((it) => ({ label: fuiStr(it && it.label, 200), sub: fuiStr(it && it.sub, 300), info: !!(it && it.info === true) })) };
+    return Object.assign({ op: 'menu', n: m.n, seq: m.seq, title: fuiStr(m.title, 120),
+      items: m.items.map((it) => ({ label: fuiStr(it && it.label, 200), sub: fuiStr(it && it.sub, 300), info: !!(it && it.info === true) })) }, fuiRid(m));
   }
   return null;
 }
 function fuiDown(m) {
   if (!FUI_N.test(typeof m.n === 'string' ? m.n : '')) return null;
   if (m.op === 'ack' && ['remote', 'busy', 'local'].includes(m.mode)) return { op: 'ack', n: m.n, mode: m.mode };
-  if (m.op === 'act' && ['dl', 'player', 'diag', 'share'].includes(m.a)) return { op: 'act', n: m.n, a: m.a };
-  if (m.op === 'pick' && Number.isInteger(m.seq) && m.seq >= 0 && Number.isInteger(m.i) && m.i >= 0 && m.i < 24) return { op: 'pick', n: m.n, seq: m.seq, i: m.i };
+  if (m.op === 'act' && ['dl', 'player', 'diag', 'share'].includes(m.a)) return Object.assign({ op: 'act', n: m.n, a: m.a }, fuiRid(m));
+  if (m.op === 'pick' && Number.isInteger(m.seq) && m.seq >= 0 && Number.isInteger(m.i) && m.i >= 0 && m.i < 24) return Object.assign({ op: 'pick', n: m.n, seq: m.seq, i: m.i }, fuiRid(m));
   return null;
 }
 function fuiBack(r) {
@@ -365,6 +367,7 @@ function fuiUpBack(r) {
   if (!r || typeof r !== 'object') return null;
   const out = { ok: r.ok === true };
   if (['remote', 'busy', 'local', 'wait'].includes(r.mode)) out.mode = r.mode;
+  if (r.stale === true) out.stale = true;   // S4b-3: Auswahl gehört zu einem veralteten Tipp – das Fenster verwirft sie
   return out;
 }
 function fuiRelay(m, sender, reply) {

@@ -48,7 +48,8 @@ def fx(name):
 # key → { dir, mpd(): Text, redir: 'mpd' (MPD+Stücke 301 zum CDN, wie githack) | 'seg-signed' (Stücke 302 auf signierte CDN-Adresse), time: bool }
 M = {}
 def mk(key, text, d=H264, **kw): M[key] = dict(dir=d, mpd=text, **kw)
-for k in ('a1', 'a2', 'a3', 'b1', 'b2', 'c1', 'c2', 'c3', 'f1', 'f2a', 'f2b', 'd4'): mk(k, BASE_MPD)
+for k in ('a1', 'a2', 'a3', 'b1', 'b2', 'c1', 'c1n', 'c2', 'c3', 'f1', 'f2a', 'f2b', 'd4'): mk(k, BASE_MPD)
+DELAY = {}   # S4b-3: Verzögerung (s) für MPD-Abrufe je Szenario – ab dem Tipp lädt nur noch der Helfer (langsame Planung)
 mk('a4', mpd_dur(BASE_MPD)); mk('a5', BASE_MPD.replace('$Number%05d$', '$Time$'), time=True)
 mk('d1', BASE_MPD, redir='mpd'); mk('d2', BASE_MPD, redir='mpd'); mk('d3', BASE_MPD, redir='seg-signed')
 mk('d5', mpd_base(BASE_MPD, 'http://%s/m/d5/' % FRONT, 'http://%s/m/d5/' % OTHER)); mk('d6', mpd_base(BASE_MPD, 'http://%s/m/d6/' % OTHER))
@@ -75,6 +76,7 @@ PAGES = {
     'a1': own(dict(mpd=mp('a1'), mode='main')), 'a2': dashjs(mp('a2')), 'a3': shaka(mp('a3')), 'a4': dashjs(mp('a4')), 'a5': dashjs(mp('a5')),
     'b1': own(dict(mpd=mp('b1'), mode='worker')), 'b2': own(dict(mpd=mp('b2'), mode='wmse')),
     'c1': iframe('http://%s/p/c1-inner.html' % OTHER), 'c1-inner': dashjs(mp('c1', OTHER)),
+    'c1n': iframe('http://%s/p/c1n-inner.html' % OTHER), 'c1n-inner': dashjs(mp('c1n', OTHER)),
     'c2': srcdoc(own(dict(mpd=mp('c2'), mode='main')).replace('src="/lib/', 'src="http://%s/lib/' % FRONT)),
     'c3': iframe('http://%s/p/c3-mid.html' % OTHER), 'c3-mid': iframe('http://%s/p/c3-inner.html' % FRONT), 'c3-inner': dashjs(mp('c3')),
     'd1': dashjs(mp('d1')), 'd2': own(dict(mpd=mp('d2'), mode='main', resolve='initial')), 'd3': dashjs(mp('d3')),
@@ -98,9 +100,10 @@ SCN = [
     ('a5', 'A Adressierung', 'dash.js · SegmentTemplate $Time$ + Timeline', 'richtig', True, True),
     ('b1', 'B Worker', 'eigener Player · MPD und Stücke per fetch im Dedicated Worker, MSE im Hauptthread', 'richtig', True, False),
     ('b2', 'B Worker', 'eigener Player · MediaSource im Dedicated Worker (MediaSourceHandle)', 'richtig', True, False),
-    ('c1', 'C Fenster', 'dash.js in fremd-originigem iframe (CDN-Host)', 'richtig', True, False),
+    ('c1', 'C Fenster', 'dash.js in fremd-originigem iframe (CDN-Host)', 'richtig', True, True),
+    ('c1n', 'C Fenster', 'wie c1, Planung langsam (6 s); währenddessen neuer Tipp auf ⬇ – die späte Planantwort ist veraltet', 'richtig', True, False),
     ('c2', 'C Fenster', 'eigener Player in srcdoc-iframe', 'richtig', True, False),
-    ('c3', 'C Fenster', 'dash.js zweifach verschachtelt (Seite → fremd → Seite)', 'richtig', True, False),
+    ('c3', 'C Fenster', 'dash.js zweifach verschachtelt (Seite → fremd → Seite)', 'richtig', True, True),
     ('d1', 'D Adressen', 'dash.js · MPD + Stücke 301 auf CDN-Host (wie githack), Auflösung gegen endgültige Adresse', 'richtig', True, False),
     ('d2', 'D Adressen', 'eigener Player · wie d1, aber Auflösung gegen ANGEFRAGTE Adresse (Gegenprobe, Fehler S3h)', 'nie', False, False),
     ('d3', 'D Adressen', 'dash.js · jedes Stück 302 auf signierte CDN-Adresse (?exp&sig)', 'richtig', True, True),
@@ -119,6 +122,17 @@ SCN = [
     ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
 ]
 WANT_OPTS = {'f1': OPT2, 'f1b': OPT2, 'h1': None, 'h2': None}
+# S4b: harte FUNKTIONS-Erwartungen je Szenario (heutiger Soll-Stand; jede S4b-Stufe ändert hier nur, was sie ausdrücklich
+# liefert). bound/offer: Bindung und Angebot; plan: erwartete Optionen ('rejected' = Helfer lehnt beim Plan ab);
+# file: vollständige Datei beim Helfer (Größe = Init + alle Stücke der gewählten Darstellung + Ton).
+FX_SIZE = lambda v: sum(os.path.getsize(os.path.join(H264, f)) for f in os.listdir(H264) if re.match(r'(init|chunk)-(%s|2)(-\d+)?\.m4s$' % v, f))
+FILE_OK = {FX_SIZE('1'), FX_SIZE('0')}   # 360p bzw. 180p (je nach dem, was der Player gerade spielte)
+EXPECT = {}
+for k in ('a1', 'a2', 'a3', 'a4', 'd1', 'd6', 'f1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
+for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
+for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd5', 'e1', 'f1b', 'f2'): EXPECT[k] = dict(bound=False, offer=False)
+EXPECT['e3'] = dict(bound=True, offer=True, plan='rejected')
+for k in ('h1', 'h2', 'h3'): EXPECT[k] = dict(bound=True, offer=False)
 
 HITS = []
 def time_to_num(rid, t):
@@ -159,7 +173,9 @@ class H(http.server.BaseHTTPRequestHandler):
                 exp = str(int(time.time()) + 300); sig = hashlib.sha256((u.path + exp).encode()).hexdigest()[:20]
                 return self.out(302, extra={'Location': 'http://%s%s?exp=%s&sig=%s' % (OTHER, u.path, exp, sig)})
             if not (q.get('exp') and q.get('sig') and hashlib.sha256((u.path + q['exp'][0]).encode()).hexdigest()[:20] == q['sig'][0]): return self.out(403)
-        if name == 'manifest.mpd': return self.out(200, m['mpd'].encode(), 'application/dash+xml')
+        if name == 'manifest.mpd':
+            if DELAY.get(key): time.sleep(DELAY[key])
+            return self.out(200, m['mpd'].encode(), 'application/dash+xml')
         if m.get('time'):
             mm = re.match(r'chunk-(\d)-(\d+)\.m4s$', name)
             if mm:
@@ -273,28 +289,56 @@ with sync_playwright() as p:
         r['offer'] = OFFER in [x[0] for x in it]
         if r['offer'] and do_plan:
             n1 = len(HITS)
+            # S4b-3: das Ergebnis des Tipps ist die Auswahl selbst oder ein NEUER Hinweis. Ein noch sichtbarer älterer Hinweis (z. B.
+            # „Diagnose kopiert“) ist kein Ergebnis – in S4a hat genau das die Fenster-Szenarien als „hängt“ fehlgedeutet.
+            toast0 = pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
+            pg.evaluate(js('const t = r.querySelector(".toast"); if (t) t.textContent = ""; return true;'))
+            if sid == 'c1n': DELAY['c1n'] = 6
             pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(OFFER)))
+            if sid == 'c1n':
+                # während die (langsame) Planung läuft: neuer Tipp auf ⬇ → neue Auswahl „Speichern“; die späte Planantwort
+                # gehört zum älteren Tipp und darf weder oben noch im Fenster als Auswahl erscheinen
+                time.sleep(1.5)
+                pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
+                wait(lambda: OFFER in [x[0] for x in (pg.evaluate(js(ITEMS)) or [])], 10)
+                r['menu_b'] = [x[0] for x in (pg.evaluate(js(ITEMS)) or [])]
+                time.sleep(9)
+                DELAY['c1n'] = 0
+                r['head_after'] = pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h ? h.textContent : "";'))
+                r['frame_sheets'] = [f.evaluate(js('return r.querySelectorAll(".dlm").length;')) for f in pg.frames if f != pg.main_frame]
             wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); const t = r.querySelector(".toast"); return (h && h.textContent === "DASH-Stream speichern") || (t && t.textContent && !/prüft/.test(t.textContent));')), 45)
             o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
             r['plan'] = o if pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!h && h.textContent === "DASH-Stream speichern";')) else []
             r['toast'] = pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
-            # (Fenster-Szenarien: wo steht das Ergebnis – im Hauptfenster oder im eingebetteten Fenster?)
-            r['plan_frames'] = []
-            for f in pg.frames:
-                try: r['plan_frames'].append([f == pg.main_frame, f.evaluate(js('const h = r.querySelector(".dlm .dlh"); const t = r.querySelector(".toast"); return [h ? h.textContent : "", t ? t.textContent : "", Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent)];'))])
-                except Exception as e: r['plan_frames'].append([f == pg.main_frame, 'err'])
+            r['toast_vorher'] = toast0
             hh = [x for x in HITS[n1:] if not x['path'].startswith(('/p/', '/lib/'))]
             r['mpd_after_tap'] = len([x for x in hh if x['path'].endswith('.mpd')])   # (statisches MPD: danach lädt es nur noch der Helfer)
             r['helper_clean'] = not any(x['cookie'] or x['auth'] for x in hh)
             if not r['plan']:
                 d3 = diag_press() if sid.startswith('c') else diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
             elif do_start:
-                f0 = helper.cmd('dl-files')
-                pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(r['plan'][0][0])))
+                f0 = helper.cmd('dl-files'); n2 = len(HITS)
+                # doppelter Tipp auf dieselbe Option (gleicher Takt): genau EIN Auftrag
+                pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); b.click(); return true;' % json.dumps(r['plan'][0][0])))
                 got = ['']
                 wait(lambda: got.__setitem__(0, helper.cmd('dl-files')) or (got[0] != f0 and re.search(r':\d{5,}', got[0])), 45)
+                time.sleep(3)
+                got[0] = helper.cmd('dl-files')
                 r['file'] = got[0] if got[0] != f0 else ''
+                r['new_files'] = [x for x in got[0].split()[1:] if x not in f0.split()[1:]]
+                r['helper_clean'] = r['helper_clean'] and not any(x['cookie'] or x['auth'] for x in HITS[n2:])
                 d3 = diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
+            if sid.startswith('c'):   # S4b-3: Relay-Spur beider Seiten (anonym)
+                spur = lambda t: next((l for l in t.split('\n') if l.startswith('Relay-Spur')), '')
+                r['trace_top'] = spur(diag())
+                try: pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
+                except Exception: pass
+                for f in pg.frames:   # (kurzes Testvideo evtl. schon zu Ende: wieder abspielen, damit der Knopf oben steht)
+                    try: f.evaluate('() => document.querySelectorAll("video").forEach((v) => { if (v.ended || v.paused) { v.currentTime = 0; v.play().catch(() => {}); } })')
+                    except Exception: pass
+                time.sleep(1.5)
+                r['trace_frame'] = spur(diag_press())
+                print('     SPUR oben:    ' + r['trace_top'][:1800]); print('     SPUR Fenster: ' + r['trace_frame'][:1800])
         try: pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
         except Exception: pass
         r['errs'] = errs
@@ -308,6 +352,30 @@ with sync_playwright() as p:
         if safety == 'richtig' and r.get('plan') and sid in WANT_OPTS and WANT_OPTS[sid]:
             check('[%s] Sicherheit: Bindung trifft das laufende Manifest (Optionen %s)' % (sid, WANT_OPTS[sid]), [x[0] for x in r['plan']] == WANT_OPTS[sid], r['plan'])
         check('[%s] Diagnose anonym' % sid, r['anon'])
+        # ---- Funktions-Erwartungen (hart) ----
+        ex = EXPECT.get(sid)
+        if ex:
+            check('[%s] Funktion: Bindung %s' % (sid, 'ja' if ex['bound'] else 'nein'), r['bound'] == ex['bound'], r['bindung'])
+            check('[%s] Funktion: Angebot %s' % (sid, 'ja' if ex['offer'] else 'nein'), r['offer'] == ex['offer'], it[:2])
+            if ex.get('plan') == 'rejected': check('[%s] Funktion: Helfer lehnt beim Plan ab' % sid, not r.get('plan') and 'abgelehnt' in r.get('helper_line', ''), r.get('helper_line'))
+            elif ex.get('plan'): check('[%s] Funktion: Planoptionen %s' % (sid, ' + '.join(x.split(' ')[0] for x in ex['plan'])), sorted(x[0] for x in r.get('plan', [])) == sorted(ex['plan']), r.get('plan') or r.get('toast'))
+            if ex.get('file'):
+                sizes = [int(x.rsplit(':', 1)[1]) for x in r.get('new_files', []) if ':' in x]
+                check('[%s] Funktion: genau EIN Download trotz Doppeltipp, Datei vollständig (%s Byte)' % (sid, '/'.join(map(str, sorted(FILE_OK)))), len(sizes) == 1 and sizes[0] in FILE_OK, r.get('new_files'))
+            if r.get('mpd_after_tap') is not None and r.get('plan'): check('[%s] Funktion: Helfer lud das MPD genau einmal (ohne Cookie/Authorization)' % sid, r['mpd_after_tap'] == 1 and r['helper_clean'], (r['mpd_after_tap'], r['helper_clean']))
+        if sid == 'c1n':
+            m = re.search(r'([0-9a-f]{8}) top:pick\(seq=1 i=0\)', r.get('trace_top', ''))
+            a = m.group(1) if m else '?'
+            check('[c1n] neuer Tipp während langsamer Planung: Auswahl „Speichern“ mit Angebot erscheint', OFFER in r.get('menu_b', []), r.get('menu_b'))
+            check('[c1n] späte Planantwort des älteren Tipps oben als veraltet abgelehnt', (a + ' top:menu-abgelehnt(veraltet)') in r.get('trace_top', ''), r.get('trace_top', '')[-700:])
+            check('[c1n] … und im Fenster verworfen (keine lokale Auswahl im iframe)', (a + ' frame:menu-reply(veraltet)') in r.get('trace_frame', '') and not any(r.get('frame_sheets', [1])), (r.get('frame_sheets'), r.get('trace_frame', '')[-500:]))
+            check('[c1n] oben bleibt die neuere Auswahl „Speichern“ (keine Qualitätsauswahl aus der veralteten Antwort)', r.get('head_after') == 'Speichern', r.get('head_after'))
+        if sid in ('c1', 'c3') and r.get('trace_top'):
+            # Relay-Spur: die Auswahl des Plans kam oben mit der Kennung des Tipps auf das Angebot an (Zuordnung über rid)
+            m = re.search(r'([0-9a-f]{8}) top:pick\(seq=1 i=0\)', r['trace_top'])
+            check('[%s] Relay: Planauswahl oben mit der Kennung genau dieses Tipps gezeigt, keine Ablehnung' % sid,
+                  bool(m) and (m.group(1) + ' top:menu-gezeigt(seq=2') in r['trace_top'] and 'menu-abgelehnt' not in r['trace_top']
+                  and bool(m) and (m.group(1) + ' plan:helfer-antwort(ok') in r['trace_frame'], (r['trace_top'][-600:], r['trace_frame'][-600:]))
         pg.close()
     ctx.close()
 helper.stop() if hasattr(helper, 'stop') else None

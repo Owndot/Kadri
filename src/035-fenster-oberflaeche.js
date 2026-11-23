@@ -32,9 +32,19 @@
     return { l: l, t: t, w: Math.max(0, r - l), h: Math.max(0, u - t) };
   };
   const fuiNum = (a) => Array.isArray(a) && a.length === 4 && a.every((x) => typeof x === 'number' && isFinite(x) && Math.abs(x) < 1e6);
+  // S4b-3: Relay-Spur (nur Diagnose, anonym). Jeder Tipp im Hauptfenster (act/pick) bekommt eine Zufallskennung (8 Hex);
+  // sie geht mit nach unten, das Fenster gibt sie bei Auswahl (menu) und Hinweis (toast) mit nach oben zurück. Beide Seiten
+  // halten die letzten Schritte (Zeit, Kennung, fester Schritt-Name, kurzer fester Code) – nie Adressen oder Texte der Seite.
+  const FUI_RID = /^[0-9a-f]{8}$/;
+  const fuiTrace = [];
+  function fuiLog(rid, step, info) {
+    fuiTrace.push([Date.now(), FUI_RID.test(rid || '') ? rid : '-', String(step).slice(0, 40), String(info == null ? '' : info).replace(/[^\w.:=+\-/ ]/g, '').slice(0, 60)]);
+    if (fuiTrace.length > 80) fuiTrace.shift();
+  }
+  const fuiNewRid = () => { try { const a = new Uint8Array(4); crypto.getRandomValues(a); return Array.from(a, (b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) { return ''; } };
 
   // ---------- im eingebetteten Fenster (Video und Quellen bleiben hier) ----------
-  const fui = { n: '', shown: false, mode: '', t0: 0, menu: null, seq: 0, local: false, relayUntil: 0, tries: 0, retryAt: 0 };
+  const fui = { n: '', shown: false, mode: '', t0: 0, menu: null, seq: 0, local: false, relayUntil: 0, tries: 0, retryAt: 0, rid: '' };
   if (IN_FRAME && FUI_ON) { try { const a = new Uint8Array(16); crypto.getRandomValues(a); fui.n = Array.from(a, (b) => b.toString(16).padStart(2, '0')).join(''); } catch (e) {} }
   // Zeigt das Hauptfenster Knopf und Auswahl für dieses Video? (dann hier keinen eigenen Knopf)
   function fuiFrameHold(v) {
@@ -81,11 +91,19 @@
     if (window.parent !== window.top) { const d = { n: fui.n, top: 1 }; d[FUI_GEO] = 1; try { window.top.postMessage(d, '*'); } catch (e) {} }
   }
   // Auswahl dieses Fensters im Hauptfenster zeigen: nur Texte; die Aktionen bleiben hier (fui.menu)
-  function fuiFrameMenu(title, items) {
+  // rid: Kennung des Tipps, zu dem diese Auswahl gehört (vom Aufrufer beim Start seines Ablaufs festgehalten – eine
+  // inzwischen neuere Kennung gilt nicht für eine ältere, noch laufende Planung)
+  function fuiFrameMenu(title, items, rid) {
     const seq = ++fui.seq;
     fui.menu = { seq: seq, items: items.slice(0, 24) };
-    fuiSend('menu', { n: fui.n, seq: seq, title: String(title), items: fui.menu.items.map((it) => ({ label: String(it.label || ''), sub: it.sub ? String(it.sub) : '', info: !!it.info })) })
+    if (rid === undefined) rid = fui.rid;
+    fuiLog(rid, 'frame:menu-send', 'seq=' + seq + ' n=' + fui.menu.items.length);
+    fuiSend('menu', { n: fui.n, seq: seq, rid: rid, title: String(title), items: fui.menu.items.map((it) => ({ label: String(it.label || ''), sub: it.sub ? String(it.sub) : '', info: !!it.info })) })
       .then((r) => {
+        fuiLog(rid, 'frame:menu-reply', r ? (r.ok === true ? 'ok' : r.stale === true ? 'veraltet' : 'abgelehnt') : 'keine-antwort');
+        // S4b-3: Antwort auf einen älteren oder schon beantworteten Tipp ({stale:true}): verwerfen – weder oben noch hier
+        // zeigen (sonst erschiene eine veraltete Auswahl im Fenster)
+        if (r && r.stale === true) { if (fui.menu && fui.menu.seq === seq) fui.menu = null; return; }
         // nur eine ausdrücklich angezeigte Auswahl ({ok:true}) gilt; sonst – Hauptfenster nicht erreichbar, Fehler oder
         // abgelehnt ({ok:false}) – kontrolliert zurück auf die Oberfläche hier (statt einer Auswahl, die nie erscheint),
         // sofern diese Auswahl noch die aktuelle ist
@@ -129,6 +147,8 @@
   }
   function fuiFrameMsg(m) {
     if (!m || m.n !== fui.n || !fui.n) return { ok: false };
+    if ((m.op === 'act' || m.op === 'pick') && FUI_RID.test(m.rid || '')) fui.rid = m.rid;
+    if (m.op === 'act' || m.op === 'pick') fuiLog(m.rid, 'frame:' + m.op, m.op === 'act' ? m.a : 'seq=' + m.seq + ' i=' + m.i + (fui.menu ? ' akt=' + fui.menu.seq : ' akt=-'));
     if (m.op === 'ack') { if (fui.shown) fuiMode(m.mode); return { ok: true }; }
     if (m.op === 'pick') return fuiFramePick(m.seq, m.i);
     if (m.op === 'act') return fuiRemote() ? fuiFrameAct(m.a) : { ok: false, gone: true };
@@ -138,7 +158,10 @@
   // ---------- im Hauptfenster: Knopf und Auswahl für das Video eines eingebetteten Fensters ----------
   // regs: Fenster mit laufendem Video (Schlüssel = frameId:documentId, vom Browser); geo: Lage je Kennung; cur: das
   // Fenster, dessen Knopf gerade hier steht; credit: ein Tipp hier erlaubt genau eine Auswahl dieses Fensters
-  const fuiTop = { regs: new Map(), geo: new Map(), cur: null, credit: null, recent: null };
+  const fuiTop = { regs: new Map(), geo: new Map(), cur: null, credit: null, recent: null, used: [], lastRid: '' };
+  // S4b-3: Eine Auswahl aus einem Fenster gilt nur als Antwort auf GENAU den Tipp, dessen Kennung sie trägt (credit.rid),
+  // einmal, und höchstens so lange, wie die Planung beim Helfer dauern darf (Kanal: 25 s je Planaufruf, dazu Warteschlange).
+  const FUI_MENU_WAIT = 45000;
   const fuiSame = (a, b) => !!a && !!b && a.key === b.key && a.n === b.n;   // dasselbe Dokument mit derselben Kennung
   function fuiOuter(w) {   // äußerstes <iframe> dieses Dokuments, in dem das Fenster w steckt
     let x = w;
@@ -231,16 +254,22 @@
     if (!g) return;
     const now = Date.now();
     fuiTop.recent = { g: g, t: now };
-    if (a === 'dl' || a === 'player') fuiTop.credit = { g: g, t: now };
+    const rid = fuiNewRid();
+    if (a === 'dl' || a === 'player') { fuiTop.credit = { g: g, t: now, rid: rid }; fuiTop.lastRid = rid; }
     if (a === 'player') { g.hold = now + 4000; fuiTopDrop(); }
-    fuiTopSend('act', g, { a: a }).then((r) => fuiTopResult(g, r, a));
+    fuiLog(rid, 'top:act', a);
+    fuiTopSend('act', g, { a: a, rid: rid }).then((r) => { fuiLog(rid, 'top:act-reply', fuiTraceRes(r)); fuiTopResult(g, r, a); });
   }
   function fuiTopPick(g, seq, i) {
     const now = Date.now();
     fuiTop.recent = { g: g, t: now };
-    fuiTop.credit = { g: g, t: now };   // ein Eintrag darf genau eine Folge-Auswahl öffnen (z. B. Qualität des Streams)
-    fuiTopSend('pick', g, { seq: seq, i: i }).then((r) => fuiTopResult(g, r, 'pick'));
+    const rid = fuiNewRid();
+    fuiTop.credit = { g: g, t: now, rid: rid };   // ein Eintrag darf genau eine Folge-Auswahl öffnen (z. B. Qualität des Streams)
+    fuiTop.lastRid = rid;
+    fuiLog(rid, 'top:pick', 'seq=' + seq + ' i=' + i);
+    fuiTopSend('pick', g, { seq: seq, i: i, rid: rid }).then((r) => { fuiLog(rid, 'top:pick-reply', fuiTraceRes(r)); fuiTopResult(g, r, 'pick'); });
   }
+  const fuiTraceRes = (r) => (!r ? 'keine-antwort' : (r.ok === true ? 'ok' : 'nicht-ok') + (r.gone ? '+weg' : '') + (r.toast ? '+hinweis' : '') + (r.ext ? '+' + r.ext.k : ''));
   // what: 'pick' (Eintrag der Auswahl) oder die Aktion des Knopfs ('dl', 'player', 'diag', 'share')
   function fuiTopResult(g, r, what) {
     if (!r) {
@@ -290,12 +319,20 @@
       return { ok: true, mode: g.mode || 'wait' };
     }
     const rc = fuiTop.recent;
+    const rid = FUI_RID.test(m.rid || '') ? m.rid : '';
     if (!g && rc && rc.g.key === key) g = rc.g;   // Fenster hat den Knopf inzwischen abgegeben (Video pausiert)
-    if (!g || g.n !== m.n) return { ok: false };
+    if (!g || g.n !== m.n) { fuiLog(rid, 'top:' + m.op + '-abgelehnt', !g ? 'fenster-unbekannt' : 'kennung-anders'); return { ok: false }; }
     if (m.op === 'menu') {
       const c = fuiTop.credit;
-      if (!c || !fuiSame(c.g, g) || Date.now() - c.t > 30000 || !Array.isArray(m.items)) return { ok: false };
+      // veraltet: Antwort auf einen schon beantworteten Tipp oder auf einen, dem inzwischen ein neuerer Tipp (⬇, ▶ oder ein
+      // Eintrag) gefolgt ist – auch wenn dessen Auswahl schon gezeigt wurde
+      const stale = !!rid && (fuiTop.used.indexOf(rid) >= 0 || rid !== fuiTop.lastRid);
+      const why = !rid ? 'ohne-kennung' : stale ? 'veraltet' : !c ? 'kein-tipp' : !fuiSame(c.g, g) ? 'tipp-anderes-fenster'
+        : Date.now() - c.t > FUI_MENU_WAIT ? 'tipp-zu-alt/' + Math.round((Date.now() - c.t) / 1000) + 's' : !Array.isArray(m.items) ? 'eintraege' : '';
+      fuiLog(rid, why ? 'top:menu-abgelehnt' : 'top:menu-gezeigt', why || 'seq=' + m.seq + ' n=' + (m.items || []).length);
+      if (why) return stale ? { ok: false, stale: true } : { ok: false };
       fuiTop.credit = null;
+      fuiTop.used.push(rid); if (fuiTop.used.length > 16) fuiTop.used.shift();
       pageDlMenu(String(m.title || ''), m.items.slice(0, 24).map((it, i) => (it.info
         ? { label: String(it.label || ''), sub: String(it.sub || ''), info: true }
         : { label: String(it.label || ''), sub: String(it.sub || ''), fn: () => fuiTopPick(g, m.seq, i) })));
@@ -303,6 +340,7 @@
     }
     if (m.op === 'toast') {
       const ok = fuiSame(fuiTop.cur, g) || (rc && fuiSame(rc.g, g) && Date.now() - rc.t < 60000);
+      fuiLog(rid, ok ? 'top:toast-gezeigt' : 'top:toast-abgelehnt', ok ? '' : 'nicht-aktuell');
       if (ok && typeof m.text === 'string' && m.text) toast(m.text);
       return { ok: !!ok };
     }

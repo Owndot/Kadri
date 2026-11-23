@@ -12,7 +12,7 @@
   //    dort werden auch doppelte Starts zwischen Knopf und Player erkannt.
   // HLS-Stücke werden nie als MP4 gespeichert (mediaDownloadState: Segmente/Listen sind keine MP4-Datei).
   // Lange drücken: Teilen wie bisher; YTDLnis, Browser und Teilen bleiben im Menü erreichbar.
-  const pageDl = { busy: false, job: null, url: '' };
+  const pageDl = { busy: false, job: null, url: '', rid: '' };
   // (Funktionsdeklarationen: ui() in 100 fragt pageDlShown() schon beim Start ab)
   function pageDlHelper() { return typeof KADRI_DOWNLOAD === 'function' && CONFIG.systemHelper !== false; }
   function pageDlShown() { return pageDlHelper() || SHOW_DOWNLOAD; }
@@ -187,22 +187,28 @@
     if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
   }
 
+  // Kennung des Tipps, der den laufenden Ablauf ausgelöst hat (eingebettetes Fenster; sonst ''): beim Start festhalten
+  const pageDlRid = () => (IN_FRAME && fui.n ? fui.rid : '');
   async function onPageDownload() {
     const v = active;
     if (!v) return;
+    // (Auswahl mit der Kennung des LETZTEN ⬇-Tipps: ein zweiter Tipp, während dieser Ablauf noch läuft, übernimmt ihn –
+    // dieselbe Aktion; sonst wäre die Antwort für das Hauptfenster veraltet und der zweite Tipp bliebe ohne Antwort)
+    pageDl.rid = pageDlRid();
+    const pageDlMenu = (t, it) => pageDlMenuR(t, it, pageDl.rid);
     if (!pageDlHelper()) {   // ohne Helfer-Kanal (Firefox, Userscript): dieselbe Auswahl, nur die Alternativen
       const ext = pageDlExternal(v, []);
       if (ext.length) pageDlMenu('Speichern', ext); else toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen');
       return;
     }
-    if (pageDl.busy) return;
+    if (pageDl.busy) { fuiLog(pageDl.rid, 'dl:laeuft-schon', 'kennung-uebernommen'); return; }
     pageDl.busy = true;
     try {
       // laufender Auftrag dieses Videos: Stand und Abbrechen statt eines zweiten Starts
       if (pageDl.job && pageDlActive(pageDl.job)) {
         const s = await helperDl('status', { id: pageDl.job.id });
         if (s && s.ok && s.value && s.value.job) { pageDl.job = s.value.job; hdlDiagUpdate(pageDl.job); }
-        if (pageDlActive(pageDl.job)) { pageDlStatusMenu(v); return; }
+        if (pageDlActive(pageDl.job)) { pageDlStatusMenu(v, pageDl.rid); return; }
       }
       const c = await helperDl('caps');
       const caps = c && c.ok && c.value;
@@ -218,7 +224,7 @@
         if (f && f.ok && f.value && pageDlActive(f.value)) {
           if (!hdlDiagFor(f.value.id)) hdlDiagNew({ origin: '?', binding: '?', ageSec: -1, existing: true },
             f.value.kind === 'hls' ? null : sel.url, f.value);
-          pageDl.job = f.value; pageDl.url = sel.url; pageDlStatusMenu(v); return;
+          pageDl.job = f.value; pageDl.url = sel.url; pageDlStatusMenu(v, pageDl.rid); return;
         }
       }
       const dashOk = o.dashOffer && o.dashOffer.offer ? o.dashOffer : null;
@@ -267,6 +273,7 @@
       info.play ? () => pageDlPlaySample(v, sel.url) : null);
   }
   async function pageDlPlan(x) {
+    const rid = pageDlRid(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid);
     const sel = mediaRegistry.resolveStream(x.ctx, x.sourceId, x.revision);
     if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
     const info = Object.assign(hdlSourceInfo(x), { stream: true, stage: 'hlsplan' });
@@ -291,17 +298,22 @@
   // S3c: DASH – Plan holen (der Helfer lädt das MPD, vergleicht den Fingerabdruck, prüft das Profil), dann die eindeutig
   // zugeordneten Optionen zeigen; gestartet wird nur per Tipp auf eine Option (dashstart)
   async function pageDlDashPlan(d) {
+    const rid = pageDlRid(), t0 = Date.now(), pageDlMenu = (t, it) => pageDlMenuR(t, it, rid);
+    fuiLog(rid, 'plan:start', '');
     const sel = mediaRegistry.resolveDash(d.x.ctx, d.x.sourceId, d.x.revision);
-    if (!sel.ok) { toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
+    if (!sel.ok) { fuiLog(rid, 'plan:ende', 'quelle-geaendert'); toast('Die Quelle hat sich geändert – bitte erneut tippen'); return; }
     const info = Object.assign(hdlSourceInfo(d.x), { stream: true, dash: true, stage: 'dashplan' });
     toast('Helfer-App prüft den Stream …');
+    fuiLog(rid, 'plan:helfer-send', '');
     const r = await helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {}));
+    fuiLog(rid, 'plan:helfer-antwort', (!r ? 'keine' : r.ok && r.value && Array.isArray(r.value.options) ? 'ok:' + r.value.options.length : 'fehler:' + hdlDiagCode(r.error && (r.error.reason || r.error.kind))) + ' ms=' + (Date.now() - t0));
     if (!r) { hdlDiagFailure(info, r); toast('Helfer-App nicht erreichbar'); return; }
     if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }
     const p = r.value;
-    if (p.job && pageDlActive(p.job)) { hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = d.offer.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
-    if (!dashOfferStill(d, sel.bind)) { toast(DASH_CHANGED); return; }   // Quelle während des Plans gewechselt: keine Auswahl
+    if (p.job && pageDlActive(p.job)) { fuiLog(rid, 'plan:ende', 'laeuft-schon'); hdlDiagNew(Object.assign(info, { existing: true }), null, p.job); pageDl.job = p.job; pageDl.url = d.offer.url; toast(tr('Läuft schon') + ': ' + pageDlText(p.job)); return; }
+    if (!dashOfferStill(d, sel.bind)) { fuiLog(rid, 'plan:ende', 'nicht-mehr-aktuell'); toast(DASH_CHANGED); return; }   // Quelle während des Plans gewechselt: keine Auswahl
     const items = dashOptionItems(p, d.offer.gate);
+    fuiLog(rid, 'plan:optionen', 'n=' + items.length);
     if (!items.length) { hdlDiagFailure(info, { ok: false, error: { kind: 'plan', reason: 'ambiguous' } }); toast('Auswahl nicht eindeutig zuordenbar – nicht angeboten'); return; }
     const dur = p.duration > 0 ? fmtTime(p.duration) : '';
     pageDlMenu('DASH-Stream speichern', items.slice(0, 12).map((it) => ({
@@ -321,7 +333,7 @@
     const r = await helperDl(resume ? 'hlsresume' : 'hlsstart', resume ? { id: resume.id, planId: planId, option: o.id } : { planId: planId, option: o.id, name: pageDlName() });
     pageDlStarted(r, u, info);
   }
-  function pageDlStatusMenu(v) {
+  function pageDlStatusMenu(v, rid) {
     const j = pageDl.job;
     const items = [{ label: 'Helfer-App: ' + tr(j.label), sub: j.progress || 'Stand wird abgefragt', info: true }];
     if (j.state !== 'cancelling') items.push({ label: 'Download abbrechen', sub: 'Helfer-App hört sofort auf und löscht die Teil-Datei', fn: async () => {
@@ -330,8 +342,9 @@
       pageDl.job = r.value.job;
       toast(r.value.reachable ? pageDlText(r.value.job) : 'Helfer-App nicht erreichbar – Abbruch wird nachgeholt');
     } });
-    pageDlMenu('Speichern', pageDlExternal(v, items));
+    pageDlMenuR('Speichern', pageDlExternal(v, items), rid);
   }
+  const pageDlMenuR = (title, items, rid) => pageDlMenu(title, items, false, rid);
 
   // Auswahl als Bottom-Sheet über der Seite (nicht im Player): Einträge mit Unterzeile, mindestens 48 px hoch; das Video
   // läuft weiter. Alles liegt im geschlossenen Shadow DOM – darum keine Listener auf document: ein Außentipp ist ein Tipp
@@ -397,8 +410,9 @@
     if (pageDlHistTok() !== pageDlBack) { pageDlBackSettled(); return; }
     if (++pageDlBackTries < 120) pageDlBackTimer = setTimeout(pageDlBackCheck, 500);
   }
-  function pageDlClose(fromBack) {
+  function pageDlClose(fromBack, why) {
     if (!pageDlEl) return;
+    fuiLog('', 'blatt:zu', (fromBack ? 'zurueck' : 'selbst') + (why ? ' ' + why : '') + ' hist=' + (pageDlHist ? 'eigen' : '-'));
     pageDlEl.remove(); pageDlEl = null;
     pageDlUnfit();
     removeEventListener('keydown', pageDlKey);
@@ -415,17 +429,20 @@
   function pageDlKey(e) { if (e.key === 'Escape' && pageDlEl) { e.preventDefault(); pageDlClose(); } }
   addEventListener('popstate', () => {
     const tok = pageDlHistTok();
+    if (pageDlEl || pageDlBack) fuiLog('', 'blatt:popstate', (pageDlBack ? 'eigenes-zurueck ' : '') + 'eintrag=' + (tok ? (tok === pageDlHist ? 'eigen' : tok === pageDlBack ? 'alt' : 'fremd-kadri') : 'seite'));
     if (pageDlBack) {                       // das eigene Zurück – nie ein Grund, ein (neues) Blatt zu schließen
       if (tok !== pageDlBack) pageDlBackSettled();
       return;
     }
     // Zurück-Taste: der eigene Eintrag des offenen Blatts ist nicht mehr der aktuelle
-    if (pageDlEl && pageDlHist && tok !== pageDlHist) { pageDlHist = ''; pageDlClose(true); }
+    if (pageDlEl && pageDlHist && tok !== pageDlHist) { pageDlHist = ''; pageDlClose(true, 'popstate'); }
     pageDlSRRestore();
   });
-  function pageDlMenu(title, items, here) {
+  // rid (nur eingebettetes Fenster): Kennung des Tipps, zu dem der aufrufende Ablauf gehört (src/035 fuiFrameMenu)
+  function pageDlMenu(title, items, here, rid) {
     // eingebettetes Fenster, Knopf im Hauptfenster: die Auswahl erscheint dort (Aktionen bleiben hier, src/035)
-    if (!here && IN_FRAME && fuiRelay()) { fuiFrameMenu(title, items); return; }
+    if (!here && IN_FRAME && fuiRelay()) { fuiFrameMenu(title, items, rid); return; }
+    if (IN_FRAME && fui.n) fuiLog(fui.rid, 'frame:menu-lokal', here ? 'ausdruecklich' : vp ? 'player-offen' : fui.local ? 'lokal' : 'relay-abgelaufen');
     ui();
     // ein neues Blatt ersetzt das offene (z. B. Qualität/Ton nach „Stream …“) – der Verlaufseintrag bleibt, die
     // visualViewport-Listener des alten Blatts werden entfernt
@@ -448,7 +465,7 @@
         used = true;
         box.classList.add('used');
         try { it.fn(); } catch (err) {}
-        if (pageDlEl === ov) pageDlClose();   // hat die Aktion kein neues Blatt geöffnet: jetzt schließen
+        if (pageDlEl === ov) pageDlClose(false, 'nach-aktion');   // hat die Aktion kein neues Blatt geöffnet: jetzt schließen
       });
       else b.disabled = true;
       list.appendChild(b);
@@ -472,4 +489,5 @@
     if (window.visualViewport) { visualViewport.addEventListener('resize', pageDlFit); visualViewport.addEventListener('scroll', pageDlFit); }
     addEventListener('keydown', pageDlKey);
     pageDlPushHist();   // (bei einem ersetzten Blatt bleibt der vorhandene Eintrag)
+    fuiLog('', 'blatt:auf', 'n=' + items.length + ' hist=' + (pageDlHist ? 'eigen' : pageDlWantHist ? 'wartet' : '-') + (pageDlBack ? ' zurueck-unterwegs' : ''));
   }
