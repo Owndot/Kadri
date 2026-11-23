@@ -15,6 +15,7 @@
   </div>
   <div id=w style="font-weight:bold;margin:6px 0"></div>
   <div id=c style="font:13px monospace;white-space:pre-wrap;color:#222"></div>
+  <div id=a style="font:12px monospace;color:#555;margin-top:4px"></div>
   <div style="font-size:14px;color:#333;margin-top:8px">Erwartung: Am Video ⬇ → „DASH-Stream speichern“ mit 2 Optionen
     (360p und 180p, Ton AAC-LC; die gerade gespielte ist „läuft gerade“). Datei: MP4, 20 s, Blitz und Piepton gleichzeitig.
     ⬇ antippen, solange oben „Stückfolge aktuell“ steht (bis 20 s nach dem letzten Stück) – sonst „Neu starten“.</div>
@@ -25,7 +26,7 @@
   const MPD = 's3d-dash/manifest.mpd', AHEAD = 8, WINDOW = 20;
   const v = document.getElementById('v'), s = document.getElementById('s'), w = document.getElementById('w'), c = document.getElementById('c');
   const NS = 'urn:mpeg:dash:schema:mpd:2011';
-  let mpd = null, run = 0, st = null;
+  let mpd = null, run = 0, st = null, mpdBase = '';   // mpdBase: endgültige Adresse des MPD (nach Weiterleitungen)
   const kid = (e, n) => Array.from(e.children).filter((x) => x.localName === n && x.namespaceURI === NS);
   // aus dem gelesenen MPD: Darstellung → { mime, codecs, init, segs: [{ url, t0 (s) }] } (nur diese Fixture-Form)
   function reps(doc) {
@@ -37,10 +38,10 @@
       const segs = []; let time = 0, n = Number(t.getAttribute('startNumber') || 1);
       kid(kid(t, 'SegmentTimeline')[0], 'S').forEach((x) => {
         if (x.getAttribute('t') !== null) time = Number(x.getAttribute('t'));
-        for (let k = 0; k <= Number(x.getAttribute('r') || 0); k++) { segs.push({ url: new URL(fill(t.getAttribute('media'), n++), new URL(MPD, location.href)).href, t0: time / ts }); time += Number(x.getAttribute('d')); }
+        for (let k = 0; k <= Number(x.getAttribute('r') || 0); k++) { segs.push({ url: new URL(fill(t.getAttribute('media'), n++), mpdBase).href, t0: time / ts }); time += Number(x.getAttribute('d')); }
       });
       out[id] = { id: id, mime: r.getAttribute('mimeType'), codecs: r.getAttribute('codecs'), h: Number(r.getAttribute('height') || 0),
-        init: new URL(fill(t.getAttribute('initialization'), 0), new URL(MPD, location.href)).href, segs: segs };
+        init: new URL(fill(t.getAttribute('initialization'), 0), mpdBase).href, segs: segs };
     }));
     return out;
   }
@@ -88,7 +89,16 @@
   document.getElementById('b360').onclick = () => start('1');
   document.getElementById('b180').onclick = () => start('0');
   setInterval(show, 500);
-  fetch(MPD, { cache: 'no-store' }).then((r) => r.text()).then((t) => {
+  // S3h: Stücke relativ zur ENDGÜLTIGEN Adresse des MPD auflösen (Response.url), nicht zur angefragten. Die Auslieferung
+  // leitet MPD und Stücke per 301 auf einen anderen Host um; ein Player, der gegen die angefragte Adresse auflöst, lädt
+  // jedes Stück über die Weiterleitung – die Ressourcen-Zeitleiste nennt dann die Ausgangsadresse, die nicht zum MPD passt.
+  const hostOf = (u) => { try { return new URL(u, location.href).host; } catch (e) { return '?'; } };
+  fetch(MPD, { cache: 'no-store' }).then((r) => {
+    mpdBase = r.url || new URL(MPD, location.href).href;
+    document.getElementById('a').textContent = 'Hosts: Seite ' + location.host + ' · MPD angefragt ' + hostOf(MPD) + ' · MPD endgültig ' + hostOf(mpdBase) +
+      ' · Stücke ' + hostOf(new URL('x', mpdBase).href) + (hostOf(MPD) !== hostOf(mpdBase) ? ' (MPD weitergeleitet – Stücke direkt vom Ziel)' : '');
+    return r.text();
+  }).then((t) => {
     mpd = new DOMParser().parseFromString(t, 'application/xml');
     start(new URLSearchParams(location.search).get('q') === '180' ? '0' : '1');
   }).catch((e) => { s.textContent = 'MPD nicht ladbar: ' + e; });

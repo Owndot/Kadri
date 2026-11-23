@@ -3,7 +3,7 @@
 # dashstart, Datei beim Helfer (Bytes = Init + Stücke der gewählten Darstellungen), Diagnosezeilen, Zeitfenster.
 #   node tools/build.js --test; HELPER_HOST_DIR=<Helper 3887569: tests/java/channel/build.sh OUT> xvfb-run -a python3 tests/s3d_dash_page_e2e.py
 import os, re, sys, time, json, threading, http.server, urllib.parse
-KADRI = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'); sys.path.insert(0, os.path.join(KADRI, 'tests'))
+KADRI = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')); sys.path.insert(0, os.path.join(KADRI, 'tests'))
 from common import *   # noqa
 PORT = 8791
 PUB = os.path.join(KADRI, 'tests', 'web', 'public'); PREFIX = '/Owndot/Kadri/0123456789abcdef0123456789abcdef01234567/tests/web/public/'
