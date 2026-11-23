@@ -13,6 +13,7 @@ with sync_playwright() as p:
     check('Stream ohne Endung (nur Content-Type): eigener Player über hls.js, nicht Spiegeln', not s['mirror'] and s['src'] == 'blob:' and s['dur'] == 60, s)
     sw.evaluate('''async () => { const [t] = await chrome.tabs.query({ active: true }); await chrome.tabs.sendMessage(t.id, { t: 'kadri-menu' }, { frameId: 0 }); }''')
     time.sleep(0.8)
+    pg.evaluate('() => { const b = %s.querySelector(".diag .dfull"); if (b) b.click(); }' % R); time.sleep(0.3)   # S4b-4: volle Fassung nur auf ausdrückliche Wahl
     dg = pg.evaluate('() => { const b = %s.querySelector("textarea"); return b ? b.value : ""; }' % R)
     first = [l for l in dg.split('\n') if l.startswith(' 1.')]
     check('… Diagnose: die Liste steht vorn in der Reihenfolge', first and '/stream/master' in dg and 'M3U8' in first[0], first)

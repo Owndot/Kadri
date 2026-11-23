@@ -109,6 +109,7 @@
   const UI_EN = () => (CONFIG.language === 'en' ? true : CONFIG.language === 'de' ? false : !/^de\b/i.test(navigator.language || ''));
   const EN = {
     // S4b: DASH-Ebenen (src/046), Warteblatt (src/105), Diagnose
+    'Kadri sieht dieses Video erst seit kurzem – einige Sekunden weiterlaufen lassen und erneut tippen': 'Kadri has only been watching this video for a short time – let it play a few more seconds and tap again',
     'DASH vermutet – Manifest nicht lesbar': 'Probably DASH – manifest not readable',
     'Manifest wurde nicht mitgelesen – Seite neu laden und das Video starten': 'The manifest was not captured – reload the page and start the video',
     'Die Seite lädt den Stream verdeckt (Hintergrund-Thread oder eingebettetes Dokument) – kein sicherer Nachweis möglich': 'The page loads the stream out of sight (background thread or embedded document) – no reliable proof possible',

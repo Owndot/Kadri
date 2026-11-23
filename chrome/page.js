@@ -39,6 +39,19 @@
   };
   // Kadri ist (neu) da: alles Aufgehobene noch einmal
   document.addEventListener('kadri-hello', () => { keep.slice().forEach(fire); });
+  // S4b-4: Beginn eines neuen Mediums (loadstart) je Videoelement – nur echte Browser-Ereignisse, rein beobachtend. Kadri in
+  // eingebetteten Fenstern startet oft erst danach; es erfährt den Zeitpunkt dann hier (Ereignis „kadri-ls“ am Element).
+  const lsKeep = [];
+  const lsFire = (v, t) => { try { v.dispatchEvent(new CustomEvent('kadri-ls', { detail: t })); } catch (e) {} };
+  document.addEventListener('loadstart', (e) => {
+    const v = e.target;
+    if (!e.isTrusted || !v || v.tagName !== 'VIDEO') return;
+    const t = Date.now();
+    for (let i = lsKeep.length - 1; i >= 0; i--) if (lsKeep[i][0] === v) lsKeep.splice(i, 1);
+    lsKeep.push([v, t]); if (lsKeep.length > 16) lsKeep.shift();
+    lsFire(v, t);
+  }, true);
+  document.addEventListener('kadri-ls-hello', () => { lsKeep.slice().forEach((x) => lsFire(x[0], x[1])); });
   // Stream-Liste ohne Endung, nur am Content-Type erkannt: Adresse melden (und den Text)
   const byType = (u, finalU, ct, text) => {
     const k = ctKind(ct);

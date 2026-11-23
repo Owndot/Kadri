@@ -365,9 +365,13 @@ with sync_playwright() as p:
         sw.evaluate("""async () => { const [t] = await chrome.tabs.query({ active: true, currentWindow: true });
           await chrome.tabs.sendMessage(t.id, { t: 'kadri-menu' }, { frameId: 0 }); }""")
         pg.wait_for_function('() => !!%s.querySelector(".diag textarea")' % R, timeout=10000)
+        anon0 = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)   # S4b-4: beim Öffnen anonym
+        pg.evaluate('() => %s.querySelector(".diag .dfull").click()' % R); time.sleep(0.4)   # ausdrücklich: vollständig
         full = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)
         pg.evaluate('() => %s.querySelector(".diag .danon").click()' % R); time.sleep(0.4)
         anon = pg.evaluate('() => %s.querySelector(".diag textarea").value' % R)
+        lk0 = re.findall(r'127\.0\.0\.1|https?:|/videos|\.mp4\b|SECRET|sig=|token=', anon0)
+        check('Diagnosefenster zeigt beim Öffnen die anonymisierte Fassung (ohne Adressteile)', anon0.startswith('Kadri – anonymisierte Diagnose') and not lk0, [lk0, anon0[:120]])
         pg.evaluate('() => { const b = %s.querySelector(".diag"); if (b) b.remove(); }' % R)
         return full, anon
     full, anon = anon_diag()

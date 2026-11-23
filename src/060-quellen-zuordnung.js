@@ -287,8 +287,45 @@
   //    Stücke unter anderen Adressen (eigene Umleitung, Blob, Proxy) → keine Treffer → ambiguous.
   //  - SegmentBase/Einzeldatei (Byte-Bereiche derselben Datei): keine Stückfolge erkennbar → ambiguous (nicht-pruefbar).
   //  - Kein Startzeitpunkt bekannt (Kadri erst nach dem Laden im Fenster gestartet): gezählt wird ab dem letzten Seitenwechsel.
-  // Zeitpunkt, ab dem Abrufe zum aktuellen Medium dieses Videos zählen (Bindung und Diagnose gleich)
-  const dashFromOf = (v) => Math.max(navAt, (startAt.get(v) || 0) - 3000);
+  // ---------- S4b-4: Medien-Epoche je Videoelement (Beginn des aktuellen Mediums) ----------
+  // Ein neues Medium im Element (neue MediaSource/Blob-Quelle, neue Datei) beginnt mit loadstart. Gemessen (Desktop-Chromium,
+  // eigener Player, dash.js, Shaka, auch im iframe): jedes Init-/Medienstück wird 0–78 ms NACH dem loadstart seines Mediums
+  // angefragt, keines davor. Darum zählen für die Bindung nur Abrufe, die nach dem Epochenbeginn ANGEFRAGT wurden
+  // (Anfragebeginn, nicht Antwortende – ein vorher begonnener, verspätet eintreffender Abruf gehört zum alten Medium).
+  //  - loadstart selbst gesehen ('loadstart') oder von page.js gemeldet ('seite-loadstart', eingebettete Fenster, in denen
+  //    Kadri erst danach startet): Beginn = dieser Zeitpunkt − DASH_EPOCH_SLACK (Ereignis-Aufgabe vs. sofort gestarteter Abruf)
+  //  - nicht gesehen (Shadow-DOM, Firefox ohne page.js, späte Injektion): Beginn = seit wann Kadri dieses Element mit dieser
+  //    Quelle beobachtet ('beobachtet'); ändert sich die Quelle ohne gesehenes loadstart: neuer Beginn ('quellwechsel').
+  //    Frühere Abrufe zählen dann nie (kein Rückgriff auf den Seitenstart) – vorsichtig, nie lockerer.
+  const DASH_EPOCH_SLACK = 500;
+  const dashEpoch = new WeakMap();
+  const dashEpochSet = (v, t, by) => dashEpoch.set(v, { t: t, by: by, src: '' });
+  document.addEventListener('loadstart', (e) => { const v = e.target; if (v && v.tagName === 'VIDEO') dashEpochSet(v, Date.now(), 'loadstart'); }, true);
+  document.addEventListener('kadri-ls', (e) => {
+    const v = e.target, t = Number(e.detail), cur = v && dashEpoch.get(v);
+    if (!v || v.tagName !== 'VIDEO' || !isFinite(t) || t > Date.now() + 1000 || t < navAt) return;
+    if (cur && cur.by === 'loadstart') return;   // selbst gesehen: das gilt
+    if (!cur || t >= cur.t || cur.by === 'beobachtet') dashEpochSet(v, t, 'seite-loadstart');
+  }, true);
+  try { document.dispatchEvent(new Event('kadri-ls-hello')); } catch (e) {}
+  // Element gesehen (laufendes Video, src/110 tick): Beobachtungsbeginn bzw. unbemerkten Quellwechsel festhalten
+  function dashEpochNote(v) {
+    if (!v || v.tagName !== 'VIDEO') return;
+    let cur = '';
+    try { cur = v.currentSrc || ''; } catch (e) {}
+    const r = dashEpoch.get(v);
+    if (!r) { dashEpoch.set(v, { t: Date.now(), by: 'beobachtet', src: cur }); return; }
+    if (!r.src) { r.src = cur; return; }
+    if (cur && cur !== r.src) dashEpoch.set(v, { t: Date.now(), by: 'quellwechsel', src: cur });
+  }
+  function dashEpochOf(v) {
+    dashEpochNote(v);
+    const r = dashEpoch.get(v) || { t: Date.now(), by: 'beobachtet' };
+    const seen = r.by === 'loadstart' || r.by === 'seite-loadstart';
+    return { from: Math.max(navAt, seen ? r.t - DASH_EPOCH_SLACK : r.t), by: r.by, at: r.t };
+  }
+  // Zeitpunkt, ab dem Abrufe zum aktuellen Medium dieses Videos zählen (Bindung, Angebot und Diagnose gleich)
+  const dashFromOf = (v) => dashEpochOf(v).from;
   function dashBindingFor(v) {
     const list = [], seen = new Set();
     dashInfo.forEach((p, key) => { if (p.dash && !p.dash.error && !seen.has(p)) { seen.add(p); list.push({ key: key, p: p }); } });

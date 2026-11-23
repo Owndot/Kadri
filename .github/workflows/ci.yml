@@ -319,6 +319,7 @@ jobs:
           node tests/dash_message_check.js
           node tests/dash_manifest_model_check.js
           node tests/dash_bind_check.js
+          node tests/dash_epoch_check.js
           node tests/dash_diag_check.js
           node tests/media_registry_check.js --mutations
           git fetch --no-tags origin 7f6d037e865d57fbaaa382f78e19c7acb451f5aa

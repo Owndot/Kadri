@@ -69,6 +69,8 @@
     else if (!inp.bound) {
       let c = DASH_LV_E2[inp.bindReason] || 'none';
       if (c === 'none') { const k = inp.cls || {}; c = k.host > 0 ? 'host' : k.query > 0 ? 'query' : k.number > 0 ? 'number' : inp.invisible ? 'invisible' : 'none'; }
+      // S4b-4: Beginn des Mediums nicht gesehen (nur ab Beobachtung gezählt) und zu wenig gesehen: das konkret sagen
+      if (inp.epochLate && (c === 'none' || c === 'few' || c === 'stale' || c === 'invisible')) c = 'epoch-late';
       L.e2 = { ok: false, code: c };
     }
     // E3 (unabhängig von E2, sobald ein MPD gelesen ist; Schutz laut Registry gilt immer)
@@ -123,6 +125,7 @@
       'E2/duration': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Länge des Streams passt nicht zum Video'],
       'E2/uncheckable': ['DASH-Stream erkannt – Zuordnung hier nicht möglich', 'Stream-Form (Byte-Bereiche einer Datei) erlaubt keinen sicheren Nachweis'],
       'E2/changed': ['DASH-Stream erkannt – Quelle hat sich geändert', 'Erneut tippen'],
+      'E2/epoch-late': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Kadri sieht dieses Video erst seit kurzem – einige Sekunden weiterlaufen lassen und erneut tippen'],
       'E3/format': ['DASH-Stream zugeordnet – Format wird noch nicht gespeichert', null],
       'E3/audio-codec': ['DASH-Stream zugeordnet – Tonformat wird noch nicht gespeichert', null],
       'E3/audio-he-aac': ['DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', 'Ton HE-AAC – gespeichert wird bisher nur AAC-LC'],
@@ -170,7 +173,7 @@
     const from = v ? dashFromOf(v) : 0;
     try {
       recentRes.forEach((x) => {
-        if (x.t < from) return;
+        if ((x.s || x.t) < from) return;
         // (Medienabrufe der Seite: nur xhr/fetch/Medien-Element – „other“ sind u. a. Worker-Skripte, Beacons)
         if (/^(xmlhttprequest|fetch|video|audio)$/.test(x.it || '')) media++;
         if (cand && cand.p.dashIdx) { const k = dashDiagClassify(cand.p.dashIdx, x.k); if (k in cls) cls[k]++; }
@@ -185,6 +188,7 @@
       read: b.list.length > 0, invalid: !b.list.length && Object.keys(dashRejected).length > 0, invisible: mse && media === 0,
       gone: oc === 'manifest-gone', changed: oc === 'source-changed',
       bound: mediaDashState(snaps) === 'bound', bindReason: r.reason || '', cls: cls,
+      epochLate: (() => { try { const ep = v ? dashEpochOf(v) : null; return !!ep && (ep.by === 'beobachtet' || ep.by === 'quellwechsel') && Date.now() - ep.at < 30000; } catch (e) { return false; } })(),
       protectedSource: oc === 'protected' || ents.some((s) => s.protection === 'encrypted' || s.protection === 'drm'),
       gate: fp && !fp.error ? fp.gate : null, fpError: !fp || !!fp.error,
       fmt: (cand && cand.p.dashFmt) || { video: [], audio: [], container: [] },

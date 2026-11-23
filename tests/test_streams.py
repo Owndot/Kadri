@@ -24,6 +24,7 @@ with sync_playwright() as p:
     # Diagnose: Listen wurden wirklich mitgelesen
     sw.evaluate('''async () => { const [t] = await chrome.tabs.query({ active: true }); await chrome.tabs.sendMessage(t.id, { t: 'kadri-menu' }, { frameId: 0 }); }''')
     time.sleep(0.8)
+    pg.evaluate('() => { const b = %s.querySelector(".diag .dfull"); if (b) b.click(); }' % R); time.sleep(0.3)   # S4b-4: volle Fassung nur auf ausdrückliche Wahl
     dg = pg.evaluate('() => { const b = %s.querySelector("textarea"); return b ? b.value : ""; }' % R)
     line = [l for l in dg.split('\n') if l.startswith('Stream-Nachweis')]
     import re as _re

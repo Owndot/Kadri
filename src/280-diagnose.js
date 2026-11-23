@@ -146,7 +146,9 @@
       }
       // DASH (S2): Stückprüfung je gelesenem MPD – nur Zählungen und Grund
       try {
-        const b = dashBindingFor(v);
+        const b = dashBindingFor(v), ep = dashEpochOf(v);
+        // S4b-4: Beginn des aktuellen Mediums dieses Videos (loadstart, seite-loadstart, beobachtet, quellwechsel) – ab dann zählen Abrufe
+        if (b.list.length) L.push('DASH-Epoche: ' + ep.by + ' vor ' + Math.max(0, Math.round((Date.now() - ep.at) / 1000)) + ' s · gezählt werden Abrufe, die danach angefragt wurden');
         b.list.forEach((e, i) => {
           const r = b.res[e.key] || {};
           L.push('DASH-Stückprüfung ' + (i + 1) + '/' + b.list.length + ': Treffer ' + (r.hits || 0) + ' · Darstellungen mit Treffern ' + (r.reps || 0) +
@@ -162,7 +164,7 @@
           const c = { exact: 0, query: 0, host: 0, number: 0, none: 0, init: 0, 'init-query': 0, 'init-host': 0 };
           let n = 0, noneMedia = 0;
           recentRes.forEach((x) => {
-            if (x.t < from) return;
+            if ((x.s || x.t) < from) return;
             n++;
             let k = 'none';
             try { if (e.p.dashIdx) k = dashDiagClassify(e.p.dashIdx, x.k); } catch (er) {}
@@ -182,7 +184,7 @@
       const st = v ? startAt.get(v) : 0, from = v ? dashFromOf(v) : Infinity, since = {};
       let ns = 0, cand = 0;
       obsRes.log.forEach((x) => {
-        if (x.t < from) return;
+        if ((x.s || x.t) < from) return;
         ns++;
         const k = x.a + ':' + x.x;
         since[k] = (since[k] || 0) + 1;
@@ -249,14 +251,16 @@
     ui();
     const box = h('div', { class: 'diag' });
     const ta = h('textarea', { readonly: 'readonly' });
-    ta.value = text;
-    // S4b: vollständig (mit Adressen) nur ausdrücklich so benannt; anonymisiert steht zuerst
+    // S4b-4: beim Öffnen steht die ANONYMISIERTE Diagnose im Feld; die vollständige (mit Adressen) wird erst durch den
+    // ausdrücklich so benannten Knopf sichtbar und kopiert – vorher steht sie weder im Feld noch sonst im Dokument
+    const anonText = () => { try { return diagAnon(); } catch (e) { return 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } };
+    ta.value = anonText();
     const copy = h('button', { class: 'dfull' }, tr('Vollständige Diagnose kopieren (mit Adressen)'));
     const close = h('button', null, 'Schließen');
     copy.addEventListener('click', () => { ta.value = text; ta.select(); copyText(text, 'Vollständige Diagnose kopiert – enthält Adressen, nur bewusst weitergeben'); });
     // Anonymisiert: zeigt genau den Text, der kopiert wird (zum Weitergeben ohne Seitenbezug)
     const anon = h('button', { class: 'danon' }, 'Anonymisiert kopieren');
-    anon.addEventListener('click', () => { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } ta.value = t; ta.select(); copyText(t, 'Anonymisierte Diagnose kopiert'); });
+    anon.addEventListener('click', () => { const t = anonText(); ta.value = t; ta.select(); copyText(t, 'Anonymisierte Diagnose kopiert'); });
     close.addEventListener('click', () => box.remove());
     box.append(h('div', { class: 'dh' }, 'Video-Assistent · Diagnose'), ta, h('div', { class: 'db' }, anon, copy, close));
     root.append(box);
@@ -277,8 +281,11 @@
       showDiagBox(text);
     } catch (e) {
       // Notlösung: Eingabefeld des Browsers – dort lässt sich der Text markieren und kopieren
-      try { prompt('Diagnose – alles markieren und kopieren:', text.replace(/\n/g, ' | ')); }
-      catch (e2) { try { alert(text); } catch (e3) {} }
+      // (auch hier nur die anonymisierte Fassung – keine Adressen ohne ausdrückliche Auswahl)
+      let t = '';
+      try { t = diagAnon(); } catch (e2) { t = 'Kadri – anonymisierte Diagnose: Fehler'; }
+      try { prompt('Anonymisierte Diagnose – alles markieren und kopieren:', t.replace(/\n/g, ' | ')); }
+      catch (e2) { try { alert(t); } catch (e3) {} }
     }
   }
   try {

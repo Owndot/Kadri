@@ -67,4 +67,18 @@ r = run([man('A', at(0, [[10, NOW - 59000], [11, NOW - 29000], [12, NOW - 1000]]
 check('… alle 29 s (Serie 58 s, über 45 s): ambiguous – nicht als eine Serie nachweisbar', r.A.state === 'ambiguous' && r.A.reason === 'zu-wenig-folge', r.A);
 r = run([man('A', at(0, [[10, NOW - 59000], [11, NOW - 58500], [12, NOW - 58000], [40, NOW - 1000]]))]);
 check('zusammenhängende Serie nur früher, jetzt nur ein Einzelstück: ambiguous (nicht-aktiv)', r.A.state === 'ambiguous' && r.A.reason === 'nicht-aktiv', r.A);
+// S4b-4: Zugehörigkeit zur Medien-Epoche nach ANFRAGEBEGINN (h.s): ein vor dem Epochenbeginn angefragter, aber erst danach
+// eingetroffener Abruf zählt nicht; ohne Angabe (h.s fehlt) bleibt es bei der Ankunftszeit (bisheriges Verhalten)
+{
+  const FROM = NOW - 10000;
+  const late = [0, 1, 2].map((i) => ({ rep: 0, idx: i, t: FROM + 500 + i * 10, s: FROM - 2000 }));   // vorher angefragt, danach angekommen
+  const inEp = [0, 1, 2].map((i) => ({ rep: 0, idx: i, t: FROM + 900 + i * 300, s: FROM + 800 + i * 300 }));
+  const noS = [0, 1, 2].map((i) => ({ rep: 0, idx: i, t: FROM + 500 + i * 10 }));
+  const r1 = run([man('ALT', late)], {}, FROM), r2 = run([man('NEU', inEp)], {}, FROM), r3 = run([man('OHNE', noS)], {}, FROM);
+  check('Epoche: vor Beginn angefragt, danach angekommen → zählt nicht (keine-treffer)', r1.ALT.state === 'ambiguous' && r1.ALT.reason === 'keine-treffer', r1);
+  check('Epoche: nach Beginn angefragt → bound', r2.NEU.state === 'bound', r2);
+  check('Epoche: ohne Anfragebeginn wie bisher nach Ankunft', r3.OHNE.state === 'bound', r3);
+  const both = run([man('ALT', late), man('NEU', inEp)], {}, FROM);
+  check('Epoche: Vorspann (vorher angefragt) konkurriert nicht mehr mit dem Hauptvideo', both.NEU.state === 'bound' && both.ALT.state === 'ambiguous', both);
+}
 console.log('RESULT dash-bind PASS ' + passed + '/' + passed);

@@ -372,7 +372,8 @@
     };
     const qual = [];
     (c.manifests || []).forEach((m) => {
-      const hs = (m.hits || []).filter((h) => h.t >= from && Number.isInteger(h.idx));
+      // S4b-4: zur Medien-Epoche gehört ein Abruf, der nach ihrem Beginn ANGEFRAGT wurde (s; ohne Angabe: t)
+      const hs = (m.hits || []).filter((h) => (h.s != null ? h.s : h.t) >= from && Number.isInteger(h.idx));
       const by = new Map();
       hs.forEach((h) => { if (!by.has(h.rep)) by.set(h.rep, new Set()); by.get(h.rep).add(h.idx); });
       let n = 0;

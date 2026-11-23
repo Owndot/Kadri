@@ -54,7 +54,11 @@ DELAY = {}   # S4b-3: Verzögerung (s) für MPD-Abrufe je Szenario – ab dem Ti
 mk('a4', mpd_dur(BASE_MPD)); mk('a5', BASE_MPD.replace('$Number%05d$', '$Time$'), time=True)
 mk('d1', BASE_MPD, redir='mpd'); mk('d2', BASE_MPD, redir='mpd'); mk('d3', BASE_MPD, redir='seg-signed')
 mk('d5', mpd_base(BASE_MPD, 'http://%s/m/d5/' % FRONT, 'http://%s/m/d5/' % OTHER)); mk('d6', mpd_base(BASE_MPD, 'http://%s/m/d6/' % OTHER))
-mk('e2', mpd_list(BASE_MPD)); mk('e3', mpd_list(BASE_MPD, timeline=False)); mk('f1ad', mpd_drop_rep(BASE_MPD, '1')); mk('f1bad', mpd_drop_rep(BASE_MPD, '1')); mk('f1b', BASE_MPD); mk('g1', BASE_MPD); mk('h3', BASE_MPD.replace('mp4a.40.2', 'mp4a.40.5'))
+mk('e2', mpd_list(BASE_MPD)); mk('e3', mpd_list(BASE_MPD, timeline=False)); mk('f1ad', mpd_drop_rep(BASE_MPD, '1')); mk('f1bad', mpd_drop_rep(BASE_MPD, '1')); mk('f1b', BASE_MPD);
+# S4b-4: Medien-Epochen – Vorspann mit verspäteten Antworten, Vorladen, schneller Wechsel (sauber / alter Lader lädt weiter), Shadow-DOM
+for k in ('f1cad', 'r1x', 'r2x'): mk(k, mpd_drop_rep(BASE_MPD, '1'))
+for k in ('f1c', 'p1', 'r1', 'r2', 's1'): mk(k, BASE_MPD)
+SEGDELAY = {'f1cad': 3.0}   # Stücke dieses Szenarios kommen 3 s verspätet an mk('g1', BASE_MPD); mk('h3', BASE_MPD.replace('mp4a.40.2', 'mp4a.40.5'))
 if fx('sb'): mk('e1', fx('sb'), d=os.path.join(FX, 'sb'))
 if fx('wm'): mk('h1', fx('wm'), d=os.path.join(FX, 'wm'))
 if fx('vm'): mk('h2', fx('vm'), d=os.path.join(FX, 'vm'))
@@ -66,6 +70,9 @@ def own(*cfgs, seq=False):
     vids = sorted(set(c.get('v', 0) for c in cfgs))
     js = ['const C = %s;' % json.dumps(list(cfgs)), 'C.forEach((c) => { c.video = document.getElementById("v" + (c.v || 0)); });']
     # seq: nacheinander im selben Video; seq=='play': das erste (Vorspann) läuft ≥ 6 s, seq=='tight': das zweite startet 2,5 s nach dem Laden
+    if seq in ('fast', 'overlap'):   # S4b-4: zweites start() nach 1,2 s bzw. 1,0 s, ohne auf das erste zu warten
+        js.append('C.forEach((c, i) => setTimeout(() => S4A.start(c), i * %d));' % (1200 if seq == 'fast' else 1000))
+        return page(''.join(VID % i for i in vids) + '<script src="/lib/own.js"></script><script>' + '\n'.join(js) + '</script>')
     js.append(('(async () => { for (const c of C) { await S4A.start(c); const v = c.video; if (%s) { const t0 = Date.now(); while (v.currentTime < 6 && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 200)); } else await new Promise((r) => setTimeout(r, 2500)); } })();' % ('true' if seq == 'play' else 'false')) if seq else 'C.forEach((c) => S4A.start(c));')
     return page(''.join(VID % i for i in vids) + '<script src="/lib/own.js"></script><script>' + '\n'.join(js) + '</script>')
 def dashjs(mpd): return page(VID % 0 + '<script src="/lib/dash.all.min.js"></script><script>const p = dashjs.MediaPlayer().create(); p.updateSettings({ debug: { logLevel: 0 } }); p.initialize(document.getElementById("v0"), %s, true);</script>' % json.dumps(mpd))
@@ -91,6 +98,13 @@ PAGES = {
     'f1': own(dict(mpd=mp('f1ad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1'), mode='main'), seq='play'),
     'f1b': own(dict(mpd=mp('f1bad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1b'), mode='main'), seq='tight'),
     'f2': own(dict(mpd=mp('f2a'), mode='main', v=0), dict(mpd=mp('f2b'), mode='main', v=1)),
+    'f1c': own(dict(mpd=mp('f1cad'), mode='main', vid='0', maxSegs=3, burst=True, parallel=True), dict(mpd=mp('f1c'), mode='main'), seq='overlap'),
+    'p1': own(dict(mpd=mp('p1'), mode='main', preload=2)),
+    'r1': own(dict(mpd=mp('r1x'), mode='main', vid='0', burst=True), dict(mpd=mp('r1'), mode='main'), seq='fast'),
+    'r2': own(dict(mpd=mp('r2x'), mode='main', vid='0', zombie=True), dict(mpd=mp('r2'), mode='main'), seq='fast'),
+    's1': page('<div id=host></div><script src="/lib/dash.all.min.js"></script><script>const sr = document.getElementById("host").attachShadow({ mode: "open" }); const v = document.createElement("video"); '
+               'v.muted = true; v.playsInline = true; v.controls = true; v.style.cssText = "width:100%%;display:block;aspect-ratio:16/9;background:#000"; sr.appendChild(v); '
+               'const p = dashjs.MediaPlayer().create(); p.updateSettings({ debug: { logLevel: 0 } }); p.initialize(v, %s, true);</script>' % json.dumps(mp('s1'))),
     'g1': own(dict(inline='/api/g1.json', mode='main')),
     'h1': dashjs(mp('h1')), 'h2': dashjs(mp('h2')), 'h3': own(dict(mpd=mp('h3'), mode='main')),
 }
@@ -124,13 +138,18 @@ SCN = [
     ('e3', 'E Form', 'dash.js · SegmentList mit fester Dauer, Ton-Abdeckung im MPD falsch (24 s statt 20 s) – Vorprüfungs-Gegenprobe', 'richtig', True, False),
     ('f1', 'F Mehrere', 'eigener Player · erst Vorspann-MPD (nur 180p, 3 Stücke), dann Haupt-MPD im selben Video', 'richtig', True, False),
     ('f1b', 'F Mehrere', 'eigener Player · wie f1, aber Haupt-MPD startet 2,5 s nach dem Laden des Vorspanns (Vorspann vorgeladen)', 'richtig', True, False),
+    ('f1c', 'F Mehrere', 'S4b-4: Vorspann (3 Stücke gleichzeitig angefragt, Antworten 3 s verspätet); Haupt-MPD startet 1 s nach dem Vorspann', 'richtig', True, False),
+    ('p1', 'F Epoche', 'S4b-4: Init + 2 Stücke VOR dem Anlegen der MediaSource geladen (Vorladen), danach angehängt', 'richtig', True, False),
+    ('r1', 'F Epoche', 'S4b-4: schneller Wechsel im selben Video nach 1,2 s (neue MediaSource), alter Lader hört auf', 'richtig', True, False),
+    ('r2', 'F Epoche', 'S4b-4: schneller Wechsel, alter Lader lädt weiter Stücke des alten MPD (schlecht aufgeräumt)', None, True, False),
+    ('s1', 'F Epoche', 'S4b-4: dash.js-Video in Shadow-DOM (loadstart für das Dokument unsichtbar)', None, True, False),
     ('f2', 'F Mehrere', 'eigener Player · zwei Videos gleichzeitig, zwei MPDs', None, True, False),
     ('g1', 'G Quelle', 'eigener Player · MPD-Text aus API-JSON (kein .mpd-Abruf)', 'nie', False, False),
     ('h1', 'H Codec', 'dash.js · VP9 + Opus in WebM', 'richtig', True, False),
     ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4', 'richtig', True, False),
     ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
 ]
-WANT_OPTS = {'f1': OPT2, 'f1b': OPT2, 'h1': None, 'h2': None}
+WANT_OPTS = {'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
 # S4b: harte FUNKTIONS-Erwartungen je Szenario (heutiger Soll-Stand; jede S4b-Stufe ändert hier nur, was sie ausdrücklich
 # liefert). bound/offer: Bindung und Angebot; plan: erwartete Optionen ('rejected' = Helfer lehnt beim Plan ab);
 # file: vollständige Datei beim Helfer (Größe = Init + alle Stücke der gewählten Darstellung + Ton).
@@ -139,7 +158,9 @@ FILE_OK = {FX_SIZE('1'), FX_SIZE('0')}   # 360p bzw. 180p (je nach dem, was der 
 EXPECT = {}
 for k in ('a1', 'a2', 'a3', 'a4', 'd1', 'd6', 'f1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
 for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
-for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd5', 'e1', 'f1b', 'f2'): EXPECT[k] = dict(bound=False, offer=False)
+for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd5', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
+# S4b-4: Medien-Epoche – der Vorspann gehört zur vorigen MediaSource: das Haupt-MPD (360p + 180p) wird gebunden
+for k in ('f1b', 'f1c', 'p1', 'r1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
 EXPECT['e3'] = dict(bound=True, offer=True, plan='rejected')
 for k in ('h1', 'h2', 'h3'): EXPECT[k] = dict(bound=True, offer=False)
 for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer=True)
@@ -153,7 +174,11 @@ LV.update({
     'b1': ('E1/unread-invisible', M_E1, r'verdeckt'), 'b2': ('E1/unread-invisible', M_E1, r'verdeckt'), 'c2': ('E1/unread-invisible', M_E1, r'verdeckt'),
     'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd5': ('E2/host', M_E2, r'anderen Server'),
     'e1': ('E2/uncheckable', 'DASH-Stream erkannt – Zuordnung hier nicht möglich', r'^Stream-Form \(Byte-Bereiche einer Datei\) erlaubt keinen sicheren Nachweis$'),
-    'f1b': ('E2/competing', M_E2, r'Werbung'), 'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
+    'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
+    'f1b': ('-', None, None), 'f1c': ('-', None, None), 'p1': ('-', None, None), 'r1': ('-', None, None),
+    'r2': ('E2/competing', M_E2, r'Werbung'),
+    # Shadow-DOM: loadstart für Kadri unsichtbar → Epoche ab Beobachtung; alle Stücke waren schon vorher geladen → keine Bindung (Grenze)
+    's1': ('E2/epoch-late', M_E2, r'erst seit kurzem'),
     'g1': (None, 'Keine speicherbare Videodatei erkannt – Video abspielen und erneut tippen', None),
     'h1': ('E3/format', M_FMT, r'^Video VP9 · Ton Opus · WebM – gespeichert wird bisher nur H\.264 mit AAC-LC \(MP4\)$'),
     'h2': ('E3/format', M_FMT, r'^Video VP9 · Ton Opus · MP4 – gespeichert wird bisher nur H\.264 mit AAC-LC \(MP4\)$'),
@@ -205,6 +230,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if DELAY.get(key): time.sleep(DELAY[key])
             if key in FAILMPD: return self.out(404)
             return self.out(200, m['mpd'].encode(), 'application/dash+xml')
+        if SEGDELAY.get(key) and name.startswith('chunk-'): time.sleep(SEGDELAY[key])
         if m.get('time'):
             mm = re.match(r'chunk-(\d)-(\d+)\.m4s$', name)
             if mm:
@@ -235,9 +261,34 @@ ITEMS = 'return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => [b.firstC
 OFFER = 'DASH-Stream mit Helper herunterladen …'
 KEEP = ('Quellen am Video', 'Auswahl', 'DASH', 'Helfer-Fähigkeiten', 'Rahmen', 'Fenster-Ebene', 'Beobachter', 'Download')
 want = [a for a in sys.argv[1:] if not a.startswith('-')]
-RUN = [s for s in SCN if (not want or s[0] in want) and s[0] in PAGES and (s[0] in M or s[0] in ('c1', 'c3', 'f1', 'f1b', 'f2'))]
+RUN = [s for s in SCN if (not want or s[0] in want) and s[0] in PAGES and (s[0] in M or s[0] in ('c1', 'c3', 'f1', 'f1b', 'f1c', 'r1', 'r2', 'f2'))]
 skipped = [s[0] for s in SCN if s not in RUN and (not want or s[0] in want)]
 check('Fixtures/Player vorhanden (sonst übersprungen: %s)' % (', '.join(skipped) or '–'), bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js')), PLAYERS)
+# S4b-4: Messmodus (ohne Erweiterung, nur Test-Instrumentierung der Seite): je Szenario die Zeitpunkte von loadstart/emptied
+# des Videoelements, sourceopen der MediaSource und Anfragebeginn/-ende jedes Init-/Medienstücks (Resource Timing).
+# Ergebnis als JSON (S4A_MEASURE=<Datei>), danach Ende.
+MEASURE_JS = """(() => {
+  const T = window.__ep = { ev: [] };
+  const now = () => performance.timeOrigin + performance.now();
+  document.addEventListener('loadstart', (e) => { if (e.target.tagName === 'VIDEO') T.ev.push(['loadstart', now(), String(e.target.currentSrc || e.target.src || '').slice(0, 5)]); }, true);
+  document.addEventListener('emptied', (e) => { if (e.target.tagName === 'VIDEO') T.ev.push(['emptied', now()]); }, true);
+  const MS = window.MediaSource;
+  if (MS) { const add = MS.prototype.addEventListener; window.MediaSource = function () { const m = new MS(); add.call(m, 'sourceopen', () => T.ev.push(['sourceopen', now()])); return m; };
+    window.MediaSource.prototype = MS.prototype; window.MediaSource.isTypeSupported = MS.isTypeSupported.bind(MS); window.MediaSource.canConstructInDedicatedWorker = MS.canConstructInDedicatedWorker; }
+  new PerformanceObserver((l) => l.getEntries().forEach((e) => { if (/[.](m4s|webm|mp4|mpd)([?]|$)/.test(e.name)) T.ev.push(['res', performance.timeOrigin + e.startTime, performance.timeOrigin + e.responseEnd, e.name.replace(/^https?:[/][/][^/]+/, '').replace(/[?].*$/, ''), e.initiatorType]); })).observe({ type: 'resource', buffered: true });
+})();"""
+if os.environ.get('S4A_MEASURE'):
+    out = {}
+    with sync_playwright() as p:
+        b = p.chromium.launch(executable_path=os.environ.get('KADRI_CHROMIUM') or None, args=['--host-resolver-rules=MAP %s 127.0.0.1' % OTHER_NAME, '--no-proxy-server', '--autoplay-policy=no-user-gesture-required'])
+        for sid in [x[0] for x in RUN]:
+            ctx = b.new_context(); ctx.add_init_script(MEASURE_JS); pg = ctx.new_page()
+            pg.goto('http://%s/p/%s.html' % (FRONT, sid)); time.sleep(14)
+            out[sid] = [{'frame': f.url.split('/p/')[-1], 'ev': f.evaluate('() => window.__ep ? window.__ep.ev : null')} for f in pg.frames]
+            ctx.close()
+        b.close()
+    json.dump(out, open(os.environ['S4A_MEASURE'], 'w'), indent=1)
+    print('MESSUNG', ', '.join(out)); sys.exit(0)
 helper = ChannelHelper()
 _r = [helper.ready, helper.cmd('downloads %d' % PORT), helper.cmd('hls on'), helper.cmd('dash on')]
 check('Kanal-Helfer mit DASH-Engine', _r[0].startswith('READY') and _r[1] == 'DOWNLOADS on' and _r[3] == 'DASH on', _r)
@@ -251,13 +302,14 @@ with sync_playwright() as p:
         r = {'id': sid, 'group': grp, 'title': title, 'safety': safety}
         n0 = len(HITS)
         pg.goto('http://%s/p/%s.html' % (FRONT, sid)); pg.bring_to_front()
-        vids = lambda: [x for f in pg.frames for x in (f.evaluate('() => Array.from(document.querySelectorAll("video")).map((v) => [v.currentTime, v.paused, v.readyState])') or [])]
+        vids = lambda: [x for f in pg.frames for x in (f.evaluate('() => Array.from(document.querySelectorAll("video")).concat(Array.from(document.querySelectorAll("#host")).flatMap((h) => h.shadowRoot ? Array.from(h.shadowRoot.querySelectorAll("video")) : [])).map((v) => [v.currentTime, v.paused, v.readyState])') or [])]
         def playing():
+            if sid in ('f1c', 'r1', 'r2'): return pg.evaluate('() => window.S4A && S4A.players.length === 2 && S4A.players[1].segs >= 3 && document.getElementById("v0").currentTime > 2')
             if sid in ('f1', 'f1b'): return pg.evaluate('() => window.S4A && S4A.players.length === 2 && S4A.players[1].segs >= 3 && document.getElementById("v0").currentTime > 2')
             return any(v[0] > 6 for v in vids())
         r['plays'] = wait(playing, 45)
         for f in pg.frames:
-            try: f.evaluate('() => document.querySelectorAll("video").forEach((v) => { v.muted = false; })')
+            try: f.evaluate('() => { document.querySelectorAll("video").forEach((v) => { v.muted = false; }); document.querySelectorAll("#host").forEach((h) => h.shadowRoot && h.shadowRoot.querySelectorAll("video").forEach((v) => { v.muted = false; })); }')
             except Exception: pass
         time.sleep(1.5)
         r['video'] = vids()

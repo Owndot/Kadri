@@ -98,6 +98,8 @@
     if (quiet > 5 && tickN % 5 && !vp) return;
     if (hostEl && !hostEl.isConnected) attachHost();   // von der Seite entfernt? Wieder einsetzen.
     if (vp) { if (IN_FRAME) fuiFrameOff(); hidePill(); return; }   // eigener Player offen: kein Button darüber
+    // S4b-4: Beobachtungsbeginn aller Videos festhalten (auch stummer, noch ohne Knopf) – Medien-Epoche, src/060
+    try { allVideos().forEach(dashEpochNote); } catch (e) {}
     const v = pickPlaying();
     quiet = lastVidCount || fuiTop.regs.size ? 0 : quiet + 1;
     // Hauptfenster: läuft das größte Video in einem eingebetteten Fenster, steht der Knopf dafür hier (src/035)
@@ -106,6 +108,7 @@
     if (fuiTop.cur) fuiTopDrop();
     if (v) {
       miss = 0;
+      try { dashEpochNote(v); } catch (e) {}   // S4b-4: Beobachtungsbeginn/Quellwechsel dieses Videos (src/060)
       // eingebettetes Fenster: zeigt das Hauptfenster den Knopf, hier keinen eigenen (das Video bleibt „active“)
       if (IN_FRAME && fuiFrameHold(v)) { if (pill) hidePill(); if (v !== active) { active = v; watchSize(null); } }
       else if (v !== active || !pill || !pill.classList.contains('on')) showPill(v);

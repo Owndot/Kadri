@@ -7,6 +7,10 @@
 //   addQuery       Query, die an jedes Init/Stück angehängt wird (Token-Weitergabe wie bei UrlQueryInfo)
 //   base           welches von mehreren BaseURL-Elementen benutzt wird (Ausweich-CDN)
 //   inline         MPD-Text aus einer JSON-Antwort (kein .mpd-Abruf), Basis aus derselben Antwort
+//   S4b-4: preload n  Init + die ersten n Stücke VOR dem Anlegen der MediaSource laden (Vorladen)
+//          parallel   die ersten maxSegs Stücke gleichzeitig anfragen (verspätet eintreffende Antworten)
+//          zombie     nach einem neueren start() am selben Video weiter Stücke laden (ohne anzuhängen) – schlecht
+//                     aufgeräumter alter Lader; ohne zombie hört ein älterer Lauf dann auf
 // Nur die hier benutzte Fixture-Form: eine Periode, SegmentTemplate + SegmentTimeline, $Number[%0wd]$ oder $Time$.
 (() => {
   'use strict';
@@ -68,6 +72,7 @@
         base = cfg.resolve === 'initial' ? new URL(cfg.mpd, location.href).href : (g.url || new URL(cfg.mpd, location.href).href);
       }
       const P = plan(text, base, cfg), v = cfg.video;
+      const myGen = (v.__s4aGen = (v.__s4aGen || 0) + 1), gone = () => v.__s4aGen !== myGen;
       const tracks = [P.reps[cfg.vid || '1'], P.reps[cfg.aid || '2']].filter(Boolean);
       const max = cfg.maxSegs || Infinity;
       if (cfg.mode === 'wmse') {
@@ -78,6 +83,7 @@
         st.ready = true;
         return st;
       }
+      const pre = cfg.preload ? await Promise.all(tracks.map(async (t) => [await getBuf(t.init, cfg)].concat(await Promise.all(t.segs.slice(0, cfg.preload).map((x) => getBuf(x.url, cfg)))))) : null;
       const ms = new MediaSource();
       v.src = URL.createObjectURL(ms);
       await new Promise((res) => ms.addEventListener('sourceopen', res, { once: true }));
@@ -86,16 +92,25 @@
       const app = (sb, b) => new Promise((res, rej) => { sb.addEventListener('updateend', res, { once: true }); sb.addEventListener('error', rej, { once: true }); sb.appendBuffer(b); });
       st.ready = true;
       await Promise.all(tracks.map(async (t, i) => {
-        await app(sbs[i], await getBuf(t.init, cfg));
         let k = 0;
+        if (pre) { for (const b of pre[i]) await app(sbs[i], b); k = pre[i].length - 1; if (i === 0) { st.segs = k; v.play().catch(() => {}); } }
+        else await app(sbs[i], await getBuf(t.init, cfg));
+        if (cfg.parallel) {
+          const bufs = await Promise.all(t.segs.slice(0, Math.min(max, t.segs.length)).map((x) => getBuf(x.url, cfg)));
+          for (const b of bufs) { if (gone()) break; await app(sbs[i], b); k++; if (i === 0) st.segs = k; }
+        }
         while (k < t.segs.length && k < max) {
+          if (gone()) {
+            if (!cfg.zombie) break;
+            await getBuf(t.segs[k].url, cfg); k++; await new Promise((res) => setTimeout(res, 300)); continue;   // lädt weiter, hängt nichts mehr an
+          }
           if (t.segs[k].t0 < v.currentTime + AHEAD || cfg.burst) { await app(sbs[i], await getBuf(t.segs[k].url, cfg)); k++; if (i === 0) st.segs = k; }
           else await new Promise((res) => setTimeout(res, 250));
           if (i === 0 && k === 1) v.play().catch(() => {});
         }
       }));
       st.done = true;
-      if (ms.readyState === 'open' && max === Infinity) ms.endOfStream();
+      if (!gone() && ms.readyState === 'open' && max === Infinity) ms.endOfStream();
     } catch (e) { st.err = String(e && e.message || e); }
     return st;
   };

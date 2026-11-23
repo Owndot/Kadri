@@ -150,9 +150,9 @@
     if (arr.length > 60) arr.shift();
     if (assetHits.size > 200) assetHits.delete(assetHits.keys().next().value);
   }
-  function seeUrl(u, arrived, it) {
+  function seeUrl(u, arrived, it, started) {
     if (typeof u !== 'string' || u.indexOf('http') !== 0) return;
-    try { dashSee(u, arrived, it); } catch (e) {}
+    try { dashSee(u, arrived, it, started); } catch (e) {}
     if (SPLIT_CDN_RE.test(hostOf(u))) { noteSplit(u, arrived); return; }
     noteSegment(u);
     if (isMedia(u)) addSource(u);
@@ -416,21 +416,22 @@
   // (in eingebetteten Fenstern startet Kadri erst, wenn ein Video auftaucht)
   if (IS_KADRI) { try { document.dispatchEvent(new Event('kadri-hello')); } catch (e) {} }
   // Ein beobachteter Abruf als Stück einer Darstellung eines gelesenen MPD (nur Pfad + Zeit; höchstens 3000 je Manifest)
-  function dashHit(info, k, t) {
+  // (t: Antwort angekommen; s: Anfrage begonnen – S4b-4: für die Zugehörigkeit zur Medien-Epoche, src/060)
+  function dashHit(info, k, t, s) {
     const m = dashMatchSegment(info.dashIdx, k);
     if (!m) return;
     if (m.init) { info.dashInit++; return; }
-    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t });
+    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t, s: s > 0 ? s : t });
     if (info.dashHits.length > 3000) info.dashHits.shift();
   }
-  function dashSee(u, arrived, it) {
+  function dashSee(u, arrived, it, started) {
     let k = '';
     try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) { return; }
     if (!k) return;
-    const t = arrived || Date.now();
-    recentRes.push({ k: k, t: t, it: typeof it === 'string' ? it : '' });
+    const t = arrived || Date.now(), s = started > 0 && started <= t ? started : t;
+    recentRes.push({ k: k, t: t, s: s, it: typeof it === 'string' ? it : '' });
     if (recentRes.length > 800) recentRes.shift();
-    new Set(dashInfo.values()).forEach((p) => { if (p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t); });
+    new Set(dashInfo.values()).forEach((p) => { if (p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t, s); });
   }
   // Initiator → feste Klasse (Browserwerte; Unbekanntes als „sonst“), Endung → anonExt-Klasse (src/280)
   const obsKind = (it) => (it === 'xmlhttprequest' ? 'xhr' : /^(fetch|other|video|audio|img|script|link|css|iframe|beacon|track|navigation)$/.test(it) ? it : 'sonst');
@@ -484,7 +485,7 @@
     if (!p || !p.dash || p.dash.error || !p.dashFp) return null;
     if (p.dashFp.error) return { error: p.dashFp.error };
     const n = new Map();
-    (p.dashHits || []).forEach((h) => { if (h.t >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
+    (p.dashHits || []).forEach((h) => { if ((h.s || h.t) >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
     const played = Array.from(n.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map((x) => x[0]);
     return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
   }
@@ -517,7 +518,7 @@
       list.getEntries().forEach((e) => {
         const t = e.responseEnd > 0 && performance.timeOrigin ? performance.timeOrigin + e.responseEnd : 0;
         try { obsNote(e.name, e.initiatorType, t || Date.now()); } catch (x) {}
-        seeUrl(e.name, t, e.initiatorType);
+        seeUrl(e.name, t, e.initiatorType, performance.timeOrigin ? performance.timeOrigin + e.startTime : 0);
       });
     }).observe({ type: 'resource', buffered: true });
   } catch (e) {}
