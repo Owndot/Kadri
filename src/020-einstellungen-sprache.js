@@ -151,6 +151,7 @@
     'DASH-Stream zugeordnet – Manifest nicht prüfbar': 'DASH stream matched – manifest cannot be checked',
     'Aufbau nicht eindeutig (z. B. mehrere Server-Alternativen)': 'Structure ambiguous (e.g. several server alternatives)',
     // S4b-5: Vorprüfung im Gleichlauf mit dem Helfer
+    'Ladebeginn der Stücke nicht feststellbar – kein sicherer Nachweis möglich': 'Segment request start cannot be determined – no reliable proof possible',
     'DASH-Stream erkannt – nicht speicherbar': 'DASH stream detected – cannot be saved',
     'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt': 'The manifest lists several server alternatives (BaseURL) – not supported yet',
     'Manifest widersprüchlich': 'Manifest contradicts itself',

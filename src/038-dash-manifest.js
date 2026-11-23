@@ -372,18 +372,22 @@
     };
     const qual = [];
     (c.manifests || []).forEach((m) => {
-      // S4b-4: zur Medien-Epoche gehört ein Abruf, der nach ihrem Beginn ANGEFRAGT wurde (s; ohne Angabe: t)
-      const hs = (m.hits || []).filter((h) => (h.s != null ? h.s : h.t) >= from && Number.isInteger(h.idx));
+      // S4b-4: zur Medien-Epoche gehört ein Abruf, der nach ihrem Beginn ANGEFRAGT wurde (s). S4b-6 P1: ohne bekannten
+      // Anfragebeginn (s fehlt/null) ist die Zugehörigkeit nicht belegt – solche Abrufe zählen NIE (nur als start-unknown)
+      const known = (h) => typeof h.s === 'number' && isFinite(h.s) && h.s > 0;
+      const valid = (m.hits || []).filter((h) => Number.isInteger(h.idx));
+      const hs = valid.filter((h) => known(h) && h.s >= from);
+      const unknown = valid.filter((h) => !known(h) && h.t >= from).length;
       const by = new Map();
       hs.forEach((h) => { if (!by.has(h.rep)) by.set(h.rep, new Set()); by.get(h.rep).add(h.idx); });
       let n = 0;
       by.forEach((set) => { n += set.size; });
       const last = hs.reduce((x, h) => Math.max(x, h.t), 0);
       const co = coherent(hs);
-      const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: co.recent, last: last };
+      const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: co.recent, last: last, unknownStart: unknown };
       res[m.key] = r;
       if (!m.checkable) { r.reason = 'nicht-pruefbar'; return; }
-      if (!n) { r.reason = 'keine-treffer'; return; }
+      if (!n) { r.reason = unknown ? 'start-unknown' : 'keine-treffer'; return; }
       // keine zusammenhängende Serie: entweder nie (zu-wenig-folge) oder nur früher (nicht-aktiv, z. B. Werbung vorher)
       if (co.any < DASH_RUN) { r.reason = 'zu-wenig-folge'; return; }
       if (vid.othersPlaying) { r.reason = 'mehrere-videos'; return; }

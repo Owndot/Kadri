@@ -301,9 +301,10 @@
   const dashRejected = {};
   const dashRejectedKeys = new Set();   // Adressen (volle, ohne #), deren gelesener Text KEIN gültiges MPD war (Inhalt widerlegt Typ/Endung)
   const recentRes = [];   // { k, t, s, it } – it: Initiator laut Resource Timing (nur für die Diagnose-Zählung)
-  // S4b-4: Zeitpunkt eines beobachteten Abrufs für die Medien-Epoche – der Anfragebeginn (Resource Timing startTime), wo er
-  // bekannt ist; nur wo er wirklich unbekannt ist, ausdrücklich die Ankunft. Für Bindung, Angebot und Diagnose derselbe.
-  const resAt = (x) => (x.s > 0 ? x.s : x.t);
+  // S4b-4/S4b-6 P1: Anfragebeginn eines beobachteten Abrufs – aus Resource Timing (startTime) oder vom Mitleser beim Absenden
+  // erfasst. null = UNBEKANNT: dann gibt es keinen Zeitpunkt, der die Zugehörigkeit zur aktuellen Medien-Epoche belegt (nie die
+  // spätere Ankunft einsetzen). Bindung, Angebot und Diagnose verwenden dieselbe Funktion; Unbekanntes zählt nie als Beleg.
+  const resAt = (x) => (x && typeof x.s === 'number' && isFinite(x.s) && x.s > 0 ? x.s : null);
   // Diagnose: was der Resource-Timing-BEOBACHTER (PerformanceObserver) im Hauptthread dieses Fensters tatsächlich meldet –
   // nur Initiator, Endungsklasse und Zeit, nie die Adresse. Unabhängig vom begrenzten Zeitleisten-Puffer (getEntriesByType).
   const obsRes = { n: 0, total: {}, log: [], dropped: 0 };
@@ -375,7 +376,7 @@
         [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
         // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
-        if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t, x.s));   // (mit Anfragebeginn – S4b-4)
+        if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t, x.s));   // (mit Anfragebeginn bzw. null = unbekannt)
         info.live = /\btype\s*=\s*["']dynamic["']/.test(text);
         const m = /mediaPresentationDuration\s*=\s*["']([^"']+)["']/.exec(text);
         if (m && !info.live) info.dur = isoDur(m[1]);
@@ -419,19 +420,21 @@
   // (in eingebetteten Fenstern startet Kadri erst, wenn ein Video auftaucht)
   if (IS_KADRI) { try { document.dispatchEvent(new Event('kadri-hello')); } catch (e) {} }
   // Ein beobachteter Abruf als Stück einer Darstellung eines gelesenen MPD (nur Pfad + Zeit; höchstens 3000 je Manifest)
-  // (t: Antwort angekommen; s: Anfrage begonnen – S4b-4: für die Zugehörigkeit zur Medien-Epoche, src/060)
+  // (t: Antwort angekommen; s: Anfrage begonnen – S4b-4: für die Zugehörigkeit zur Medien-Epoche, src/060; null = unbekannt)
   function dashHit(info, k, t, s) {
     const m = dashMatchSegment(info.dashIdx, k);
     if (!m) return;
     if (m.init) { info.dashInit++; return; }
-    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t, s: s > 0 ? s : t });
+    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t, s: typeof s === 'number' && isFinite(s) && s > 0 ? s : null });
     if (info.dashHits.length > 3000) info.dashHits.shift();
   }
   function dashSee(u, arrived, it, started) {
     let k = '';
     try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) { return; }
     if (!k) return;
-    const t = arrived || Date.now(), s = started > 0 && started <= t ? started : t;
+    // arrived: Antwortende (Beobachter) oder 0 (unbekannt, z. B. Mitleser beim Absenden) · started: Anfragebeginn oder fehlt
+    const t = arrived > 0 ? arrived : Date.now();
+    const s = typeof started === 'number' && isFinite(started) && started > 0 && started <= t ? started : null;
     recentRes.push({ k: k, t: t, s: s, it: typeof it === 'string' ? it : '' });
     if (recentRes.length > 800) recentRes.shift();
     new Set(dashInfo.values()).forEach((p) => { if (p.dashIdx && p.dashIdx.reps.length) dashHit(p, k, t, s); });
@@ -490,7 +493,7 @@
     if (!p || !p.dash || p.dash.error || !p.dashFp) return null;
     if (p.dashFp.error) return { error: p.dashFp.error };
     const n = new Map();
-    (p.dashHits || []).forEach((h) => { if (resAt(h) >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
+    (p.dashHits || []).forEach((h) => { const st = resAt(h); if (st !== null && st >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
     const played = Array.from(n.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map((x) => x[0]);
     return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
   }
@@ -559,7 +562,8 @@
     if (of) {
       window.fetch = function (input) {
         let u = '';
-        try { u = typeof input === 'string' ? input : (input && input.url) || ''; seeUrl(u); } catch (e) {}
+        // (beim Absenden: der Anfragebeginn ist JETZT – ausdrücklich übergeben, nicht aus der Ankunft geschätzt)
+        try { u = typeof input === 'string' ? input : (input && input.url) || ''; seeUrl(u, 0, '', Date.now()); } catch (e) {}
         const p = of.apply(this, arguments);
         if (PLAYLIST_RE.test(u)) p.then((res) => { if (res && res.ok) readCapped(res, 4e6).then((t) => { if (t) notePlaylist(u, res.url, t); }, () => {}); }, () => {});
         if (META && API_RE.test(u)) {
@@ -572,7 +576,7 @@
     XMLHttpRequest.prototype.open = function (m, url) {
       try {
         const u = String(url);
-        seeUrl(u);
+        seeUrl(u, 0, '', Date.now());   // (beim Öffnen/Absenden: Anfragebeginn jetzt)
         if (PLAYLIST_RE.test(u)) {
           this.addEventListener('load', function () {
             try { if (this.status < 400 && (!this.responseType || this.responseType === 'text')) notePlaylist(new URL(u, location.href).href, this.responseURL, this.responseText); } catch (e) {}

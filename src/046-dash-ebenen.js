@@ -46,7 +46,7 @@
   }
 
   const DASH_LV_E2 = { 'keine-treffer': 'none', 'zu-wenig-folge': 'few', 'nicht-aktiv': 'stale', 'mehrere-videos': 'multi-video',
-    konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable' };
+    konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable', 'start-unknown': 'start-unknown' };
   const DASH_LV_E3 = { 'dash-live': 'live', 'dash-type': 'live', 'dash-protected': 'protected', 'dash-multiperiod': 'multiperiod',
     'dash-duration-unknown': 'duration-unknown', 'dash-duration-limit': 'duration-limit', 'dash-no-audio': 'no-audio', 'dash-no-video': 'no-video',
     'dash-addressing': 'addressing', 'dash-codec': 'format', 'dash-audio-codec': 'audio-codec', 'dash-unsupported': 'unsupported',
@@ -132,6 +132,7 @@
       'E2/uncheckable': ['DASH-Stream erkannt – Zuordnung hier nicht möglich', 'Stream-Form (Byte-Bereiche einer Datei) erlaubt keinen sicheren Nachweis'],
       'E2/changed': ['DASH-Stream erkannt – Quelle hat sich geändert', 'Erneut tippen'],
       'E2/epoch-late': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Kadri sieht dieses Video erst seit kurzem – einige Sekunden weiterlaufen lassen und erneut tippen'],
+      'E2/start-unknown': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Ladebeginn der Stücke nicht feststellbar – kein sicherer Nachweis möglich'],
       'E2/baseurl-multiple': ['DASH-Stream erkannt – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/format': ['DASH-Stream zugeordnet – Format wird noch nicht gespeichert', null],
       'E3/audio-codec': ['DASH-Stream zugeordnet – Tonformat wird noch nicht gespeichert', null],
@@ -189,7 +190,8 @@
     const from = v ? dashFromOf(v) : 0;
     try {
       recentRes.forEach((x) => {
-        if (resAt(x) < from) return;
+        const st = resAt(x);
+        if (st === null || st < from) return;   // (unbekannter Anfragebeginn: nicht der aktuellen Epoche zugerechnet)
         // (Medienabrufe der Seite: nur xhr/fetch/Medien-Element – „other“ sind u. a. Worker-Skripte, Beacons)
         if (/^(xmlhttprequest|fetch|video|audio)$/.test(x.it || '')) media++;
         if (cand && cand.p.dashIdx) { const k = dashDiagClassify(cand.p.dashIdx, x.k); if (k in cls) cls[k]++; }

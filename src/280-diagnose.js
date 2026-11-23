@@ -154,6 +154,7 @@
           L.push('DASH-Stückprüfung ' + (i + 1) + '/' + b.list.length + ': Treffer ' + (r.hits || 0) + ' · Darstellungen mit Treffern ' + (r.reps || 0) +
             ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
             ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')' +
+            (r.unknownStart ? ' · Anfragebeginn unbekannt ' + r.unknownStart + ' (start-unknown, nicht gezählt)' : '') +
             // S3g: S3-Vorprüfung dieses MPD (am gelesenen Text, src/039) – fester Code, auch wenn es (noch) nicht gebunden ist
             ' · Vorprüfung ' + (!e.p.dashFp || e.p.dashFp.error ? 'nicht prüfbar' + (e.p.dashFp && /^[a-z0-9-]{1,40}$/.test(e.p.dashFp.error || '') ? ' (' + e.p.dashFp.error + ')' : '')
               : e.p.dashFp.gate && e.p.dashFp.gate.ok ? 'bestanden' : dashGateCode(e.p.dashFp.gate && e.p.dashFp.gate.reason)
@@ -166,9 +167,11 @@
         const from = dashFromOf(v);
         b.list.forEach((e, i) => {
           const c = { exact: 0, query: 0, host: 0, number: 0, none: 0, init: 0, 'init-query': 0, 'init-host': 0 };
-          let n = 0, noneMedia = 0;
+          let n = 0, noneMedia = 0, unk = 0;
           recentRes.forEach((x) => {
-            if (resAt(x) < from) return;
+            const st = resAt(x);
+            if (st === null) { unk++; return; }   // S4b-6 P1: Anfragebeginn unbekannt – nicht zugerechnet, eigens gezählt
+            if (st < from) return;
             n++;
             let k = 'none';
             try { if (e.p.dashIdx) k = dashDiagClassify(e.p.dashIdx, x.k); } catch (er) {}
@@ -179,16 +182,18 @@
             (recentRes.length >= 800 && resAt(recentRes[0]) > from ? ', ältere nicht mehr gespeichert' : '') + '): Stücke exakt ' + c.exact +
             ' · nur Query abweichend ' + c.query + ' · gleicher Pfad, anderer Host ' + c.host + ' · Muster passt, Nummer/Zeitleiste abweichend ' + c.number +
             ' · kein struktureller Treffer ' + c.none + ' (davon xhr/fetch/other/Medien ' + noneMedia + ') · Init exakt ' + c.init +
-            ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Bindung zählt nur exakt');
+            ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Bindung zählt nur exakt' + (unk ? ' · Anfragebeginn unbekannt ' + unk + ' (start-unknown, nicht gezählt)' : ''));
         });
       } catch (e) {}
     } else L.push('Video-Element: keines');
     // Beobachter (PerformanceObserver, laufend mitgezählt) – getrennt vom Zeitleisten-Puffer unten (beim Aufruf gelesen)
     try {
       const st = v ? startAt.get(v) : 0, from = v ? dashFromOf(v) : Infinity, since = {};
-      let ns = 0, cand = 0;
+      let ns = 0, cand = 0, unkObs = 0;
       obsRes.log.forEach((x) => {
-        if (resAt(x) < from) return;
+        const st = resAt(x);
+        if (st === null) { unkObs++; return; }
+        if (st < from) return;
         ns++;
         const k = x.a + ':' + x.x;
         since[k] = (since[k] || 0) + 1;
@@ -196,7 +201,8 @@
       });
       L.push('Ladevorgänge hier (Beobachter, laufend gezählt, Hauptthread dieses Fensters): gesamt ' + obsRes.n + ' (' + anonCount(obsRes.total) + ')' +
         (v ? ' · seit Videostart' + (st ? '' : ' (Start unbekannt, seit Seitenwechsel)') + ' ' + ns + (obsRes.dropped && obsRes.log.length && resAt(obsRes.log[0]) > from ? ', ältere verworfen' : '') +
-          ' (Art:Endung: ' + anonCount(since) + ') · Medien-Kandidaten seit Videostart ' + cand : '') +
+          ' (Art:Endung: ' + anonCount(since) + ') · Medien-Kandidaten seit Videostart ' + cand +
+          (unkObs ? ' · Anfragebeginn unbekannt ' + unkObs + ' (start-unknown)' : '') : '') +
         ' · nicht sichtbar: Abrufe aus Workern, anderen Fenstern, WebSocket/WebRTC');
     } catch (e) {}
     let rs = [];

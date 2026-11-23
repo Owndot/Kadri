@@ -9,7 +9,8 @@ const ctx = { console, URL, Map, Set, Math, Number, String, Array, Object, JSON,
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(root, 'src/038-dash-manifest.js'), 'utf8') + '\nglobalThis.D = dashBindDecision;', ctx);
 const D = ctx.D, NOW = 1e6;
-const hits = (rep, idxs, t) => idxs.map((i, k) => ({ rep, idx: i, t: (t || NOW - 5000) + k * 100 }));
+// (S4b-6 P1: jeder Treffer trägt seinen Anfragebeginn s – hier kurz vor der Ankunft; ohne s zählt ein Treffer nie, siehe unten)
+const hits = (rep, idxs, t) => idxs.map((i, k) => ({ rep, idx: i, t: (t || NOW - 5000) + k * 100, s: (t || NOW - 5000) + k * 100 - 50 }));
 const man = (key, hs, extra) => Object.assign({ key, hits: hs, duration: 600, checkable: true }, extra || {});
 const run = (ms, video, from) => D({ manifests: ms, from: from === undefined ? NOW - 60000 : from, now: NOW, video: Object.assign({ duration: 600, othersPlaying: false }, video || {}) });
 
@@ -51,7 +52,7 @@ check('doppelte Abrufe derselben Stücke zählen einmal', r.A.hits === 3 && r.A.
 r = run([man('A', hits(0, [10, 11, 12])), man('B', [])]);
 check('zweites Manifest ohne Treffer stört nicht: A bound, B keine-treffer', r.A.state === 'bound' && r.B.reason === 'keine-treffer', r);
 // ---------- zeitliche Kohärenz der Folge (S2-Korrektur) ----------
-const at = (rep, pairs) => pairs.map(([idx, t]) => ({ rep, idx, t }));
+const at = (rep, pairs) => pairs.map(([idx, t]) => ({ rep, idx, t, s: t - 50 }));
 const runAt = (hs, now, from) => D({ manifests: [man('A', hs)], from: from || 0, now: now, video: { duration: 600, othersPlaying: false } }).A;
 r = runAt(at(0, [[0, 5000], [1, 6000], [2, 98000]]), 100000);
 check('Stück 0 bei 5 s, 1 bei 6 s, 2 bei 98 s (jetzt 100 s): KEINE Bindung – keine zusammenhängende Serie (zu-wenig-folge)', r.state === 'ambiguous' && r.reason === 'zu-wenig-folge' && r.run < 3, r);
@@ -68,7 +69,8 @@ check('… alle 29 s (Serie 58 s, über 45 s): ambiguous – nicht als eine Seri
 r = run([man('A', at(0, [[10, NOW - 59000], [11, NOW - 58500], [12, NOW - 58000], [40, NOW - 1000]]))]);
 check('zusammenhängende Serie nur früher, jetzt nur ein Einzelstück: ambiguous (nicht-aktiv)', r.A.state === 'ambiguous' && r.A.reason === 'nicht-aktiv', r.A);
 // S4b-4: Zugehörigkeit zur Medien-Epoche nach ANFRAGEBEGINN (h.s): ein vor dem Epochenbeginn angefragter, aber erst danach
-// eingetroffener Abruf zählt nicht; ohne Angabe (h.s fehlt) bleibt es bei der Ankunftszeit (bisheriges Verhalten)
+// eingetroffener Abruf zählt nicht. S4b-6 P1: ohne bekannten Anfragebeginn (h.s fehlt, null, 0) zählt er NIE – die Ankunft
+// belegt die Epoche nicht (vorher: Rückfall auf die Ankunft → falsche Bindung möglich)
 {
   const FROM = NOW - 10000;
   const late = [0, 1, 2].map((i) => ({ rep: 0, idx: i, t: FROM + 500 + i * 10, s: FROM - 2000 }));   // vorher angefragt, danach angekommen
@@ -77,7 +79,15 @@ check('zusammenhängende Serie nur früher, jetzt nur ein Einzelstück: ambiguou
   const r1 = run([man('ALT', late)], {}, FROM), r2 = run([man('NEU', inEp)], {}, FROM), r3 = run([man('OHNE', noS)], {}, FROM);
   check('Epoche: vor Beginn angefragt, danach angekommen → zählt nicht (keine-treffer)', r1.ALT.state === 'ambiguous' && r1.ALT.reason === 'keine-treffer', r1);
   check('Epoche: nach Beginn angefragt → bound', r2.NEU.state === 'bound', r2);
-  check('Epoche: ohne Anfragebeginn wie bisher nach Ankunft', r3.OHNE.state === 'bound', r3);
+  check('Epoche: ohne Anfragebeginn (s fehlt) → keine Bindung, start-unknown, 3 unbekannt gezählt', r3.OHNE.state === 'ambiguous' && r3.OHNE.reason === 'start-unknown' && r3.OHNE.unknownStart === 3 && r3.OHNE.hits === 0, r3);
+  const nul = noS.map((h) => Object.assign({}, h, { s: null })), zero = noS.map((h) => Object.assign({}, h, { s: 0 }));
+  const r4 = run([man('N', nul), man('Z', zero)], {}, FROM);
+  check('Epoche: s = null bzw. 0 (unbekannt) → beide nicht gebunden, start-unknown', r4.N.reason === 'start-unknown' && r4.Z.reason === 'start-unknown' && r4.N.state === 'ambiguous' && r4.Z.state === 'ambiguous', r4);
+  const mixed = inEp.slice(0, 2).concat([{ rep: 0, idx: 2, t: FROM + 1600 }]);
+  const r5 = run([man('M', mixed)], {}, FROM);
+  check('Epoche: 2 Stücke mit bekanntem Beginn + 1 ohne → Folge nur 2: nicht gebunden (zu-wenig-folge), 1 unbekannt', r5.M.state === 'ambiguous' && r5.M.reason === 'zu-wenig-folge' && r5.M.unknownStart === 1, r5);
+  const r6 = run([man('ALT', noS), man('NEU', inEp)], {}, FROM);
+  check('Epoche: unbekannte Treffer eines anderen MPD konkurrieren nicht – nur das belegte MPD bound', r6.NEU.state === 'bound' && r6.ALT.reason === 'start-unknown', r6);
   const both = run([man('ALT', late), man('NEU', inEp)], {}, FROM);
   check('Epoche: Vorspann (vorher angefragt) konkurriert nicht mehr mit dem Hauptvideo', both.NEU.state === 'bound' && both.ALT.state === 'ambiguous', both);
 }

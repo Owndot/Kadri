@@ -119,12 +119,13 @@ with sync_playwright() as p:
               K.obsNote(b + 'v/x3.m4s', 'fetch', T, T - 700); const o2 = L[L.length - 1];
               K.seeUrl(b + 'v/x4.m4s', T); const r0 = R[R.length - 1];
               K.seeUrl(b + 'v/x5.m4s', T, 'fetch', T - 700); const r1 = R[R.length - 1];
-              return { o0: [o0.s === undefined, at(o0) === T], o1: [o1.s === undefined, at(o1) === T], o2: [o2.s === T - 700, at(o2) === T - 700],
-                r0: [r0.s === r0.t, at(r0) === T], r1: [at(r1) === T - 700] }; }''', B)
-            check('B: Anfragebeginn unbekannt (Resource Timing ohne startTime): Beobachter-Eintrag ohne s, Zeitpunkt ausdrücklich die Ankunft t', all(f['o0']), f)
-            check('B: … unplausibler Anfragebeginn (nach der Ankunft): verworfen, Rückfall auf t', all(f['o1']), f)
+              return { o0: [o0.s === undefined, at(o0) === null], o1: [o1.s === undefined, at(o1) === null], o2: [o2.s === T - 700, at(o2) === T - 700],
+                r0: [r0.s === null, at(r0) === null], r1: [at(r1) === T - 700] }; }''', B)
+            # S4b-6 P1 (ersetzt den Rückfall auf die Ankunft aus S4b-4): unbekannt bleibt unbekannt – kein Zeitpunkt, eigens gezählt
+            check('B: Anfragebeginn unbekannt (Resource Timing ohne startTime): Beobachter-Eintrag ohne s, Zeitpunkt UNBEKANNT (null, nicht die Ankunft)', all(f['o0']), f)
+            check('B: … unplausibler Anfragebeginn (nach der Ankunft): verworfen, ebenfalls unbekannt', all(f['o1']), f)
             check('B: … bekannter Anfragebeginn: Beobachter-Zählung und Bindung (recentRes) verwenden ihn gleich', all(f['o2']) and all(f['r1']), f)
-            check('B: seeUrl ohne Anfragebeginn (z. B. Mitleser beim Abruf): Rückfall auf t wie bisher', all(f['r0']), f)
+            check('B: seeUrl ohne Anfragebeginn: s = null (unbekannt), nicht die Ankunft – der Mitleser übergibt den Absendezeitpunkt ausdrücklich', all(f['r0']), f)
         check('%s: keine Fehler der Seite' % way, not errs, errs)
         pg.close()
     br.close()

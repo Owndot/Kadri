@@ -21,7 +21,7 @@ with sync_playwright() as p:
                       '\nwindow.__cls = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u); return keys.map((k) => dashDiagClassify(ix, dashUrlKey(k))); };'
                       # wie dashHit (040) + dashBindingFor (060): nur dashMatchSegment erzeugt Treffer – die Diagnose-Stufen nie
                       '\nwindow.__bindVia = (t, u, keys) => { const ix = dashSegmentIndex(dashParse(t), u), now = 1e6, hits = [];'
-                      ' keys.forEach((k, i) => { const m = dashMatchSegment(ix, dashUrlKey(k)); if (m && !m.init) hits.push({ rep: m.rep, idx: m.idx, t: now - 3000 + i * 100 }); });'
+                      ' keys.forEach((k, i) => { const m = dashMatchSegment(ix, dashUrlKey(k)); if (m && !m.init) hits.push({ rep: m.rep, idx: m.idx, t: now - 3000 + i * 100, s: now - 3050 + i * 100 }); });'   # (S4b-6 P1: mit bekanntem Anfragebeginn)
                       ' const r = dashBindDecision({ manifests: [{ key: "A", hits: hits, duration: 0, checkable: ix.reps.length > 0 }], from: 0, now: now, video: { duration: NaN, othersPlaying: false } }).A;'
                       ' return { state: r.state, reason: r.reason, hits: r.hits, cls: keys.map((k) => dashDiagClassify(ix, dashUrlKey(k))) }; };')
     def run(text):
