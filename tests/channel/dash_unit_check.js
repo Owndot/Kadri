@@ -191,17 +191,44 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     check('HLS-Plan nicht als DASH-Start verwendbar (Art des Plans geprüft)', (await rejectWith(w3.dl.dashStart(hp.planId || PLAN, OPT, 'x'))).reason === 'plan_stale');
   }
   {
-    // Antwort verloren: Kennung gespeichert; Nachprüfung sendet denselben Start mit DERSELBEN Kennung
-    let lose = 1;
-    const w = world({ dashstart: () => (lose-- > 0 ? err('timeout') : undefined) });
+    // Antwort verloren: Der alte Plan ist noch in beiden Speichern. Der Helfer kennt die Kennung zunächst nicht.
+    const w = world({ dashstart: () => err('timeout') });
     const p = await w.dl.dashPlan(URL1, FP, BIND);
     const r = await w.dl.dashStart(p.planId, p.options[0].id, 'x');
     check('Antwort verloren: Auftrag unbestätigt und gespeichert', r.job.state === 'unconfirmed' && w.mem.jobs.length === 1 && w.timers.length === 1);
+    const before = w.sent.length;
     const s = await w.dl.status(r.job.id);
-    check('Nachprüfung: Helfer kennt die Kennung nicht → derselbe Start erneut, DIESELBE Kennung → läuft', s.job.state === 'running' && ops(w, 'dashstart').length === 2
-      && ops(w, 'dashstart')[0].a.id === ops(w, 'dashstart')[1].a.id, JSON.stringify(ops(w, 'dashstart').map((x) => x.a.id)));
-    const c = await w.dl.cancel(r.job.id);
-    check('Abbruch: dlcancel mit der Kennung → cancelled', c.job.state === 'cancelled' && ops(w, 'dlcancel').length === 1);
+    const list = await w.dl.list();
+    const delays = [];
+    while (w.timers.length && delays.length < 4) {
+      const timer = w.timers.shift();
+      delays.push(timer.ms);
+      timer.f();
+      await new Promise(setImmediate);
+    }
+    const follow = w.sent.slice(before).map(({ op }) => op);
+    check('Nach Antwortverlust: Status, Liste und begrenzter Timer senden ausschließlich fünf Abfragen',
+      JSON.stringify(delays) === '[2000,6000,20000]' && follow.length === 5 && follow.every(op => op === 'dlstatus'),
+      JSON.stringify({ delays, follow }));
+    check('unknown bleibt unbestätigt, kein neuer Auftrag und keine Neuplanung',
+      s.job.state === 'unconfirmed' && list[0].state === 'unconfirmed' && w.mem.jobs.length === 1 &&
+      w.mem.jobs[0].state === 'unconfirmed' && w.helper.jobs.size === 0 && w.helper.plans.has(p.planId),
+      JSON.stringify({ status: s.job.state, list: list[0].state, journal: w.mem.jobs[0].state, jobs: w.helper.jobs.size }));
+    const cancel = await w.dl.cancel(r.job.id);
+    check('Abbruch bei unknown bleibt vorgemerkt', cancel.job.state === 'cancelling');
+    w.helper.jobs.set(r.job.id, { kind: 'dash', state: 'running' });
+    const late = await w.dl.status(r.job.id);
+    check('Spät bekannter Altauftrag: Abbruch vor Wiederstart', late.job.state === 'cancelled' &&
+      ops(w, 'dlcancel').length === 2 && ops(w, 'dashstart').length === 1 && ops(w, 'dashplan').length === 1);
+  }
+  {
+    // Neustart des Hintergrunds: Nur der Journaleintrag ist noch vorhanden.
+    const w = world();
+    w.mem.jobs = [{ id: ID, key: 'legacy', name: 'Altauftrag', kind: 'dash', state: 'starting', at: 1 }];
+    const s = await w.dl.status(ID);
+    check('Alter DASH-Journaleintrag ohne Plan bleibt bei unknown unbestätigt',
+      s.job.state === 'unconfirmed' && w.mem.jobs[0].state === 'unconfirmed' && w.sent.length === 1 &&
+      w.sent[0].op === 'dlstatus', JSON.stringify({ state: s.job.state, sent: w.sent.map(({ op }) => op) }));
   }
   {
     // Status: Art bleibt dash; Fehlerort nur feste Codes
@@ -259,10 +286,35 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../channel/channel-service.js'), 'utf8'), context);
     const tab = { id: 'test-extension', tab: { id: 1 }, url: 'https://page.example/watch' };
     const call = (m, s) => new Promise((resolve) => receive(Object.assign({ t: 'kadri-download' }, m), s || tab, resolve));
-    const ok = await call({ op: 'dashplan', url: URL1, fp: FP, bind: BIND, played: '1' });
-    check('Route dashplan aus dem Tab: Optionen, Antwort ohne Adresse/Fingerabdruck', ok.ok && ok.value.options.length === 2 && !JSON.stringify(ok).includes('https:') && !JSON.stringify(ok).includes(FP), JSON.stringify(ok));
-    const st = await call({ op: 'dashstart', planId: ok.value.planId, option: ok.value.options[0].id, name: 'x' });
-    check('Route dashstart: Auftrag mit festem Text', st.ok && st.value.job.kind === 'dash' && st.value.job.label === 'Lädt …', JSON.stringify(st));
+    const popup = { id: 'test-extension', url: 'chrome-extension://test-extension/popup.html' };
+    const oldPlan = await w.dl.dashPlan(URL1, FP, BIND);
+    const old = await w.dl.dashStart(oldPlan.planId, oldPlan.options[0].id, 'Altauftrag');
+    const unused = await w.dl.dashPlan('https://media.example/other/manifest.mpd', FP, BIND);
+    const planRequest = { op: 'dashplan', url: URL1, fp: FP, bind: BIND, played: '1' };
+    const startRequest = { op: 'dashstart', planId: unused.planId, option: unused.options[0].id, name: 'x' };
+    const refused = (r) => r.ok === false && r.error.kind === 'refused';
+    const before = w.sent.length;
+    const requests = await Promise.all([call(planRequest), call(startRequest), call(startRequest)]);
+    check('Berechtigter Tab: gültiges dashplan und wiederholtes dashstart mit altem Plan lokal abgewiesen',
+      requests.every(refused), JSON.stringify(requests.map(r => r.ok ? 'weitergeleitet' : r.error.kind)));
+    const forwarded = w.sent.slice(before).map(({ op }) => op);
+    check('Sperre: null weitergeleitete Befehle, null neue Pläne und Jobs',
+      forwarded.length === 0 && w.helper.plans.size === 1 && w.helper.plans.has(unused.planId) &&
+      w.helper.jobs.size === 1 && w.mem.jobs.length === 1,
+      JSON.stringify({ forwarded, plans: w.helper.plans.size, jobs: w.helper.jobs.size }));
+    const status = await call({ op: 'status', id: old.job.id });
+    const list = await call({ op: 'list' }, popup);
+    const cancel = await call({ op: 'cancel', id: old.job.id }, popup);
+    check('Berechtigter Tab und Popup verwalten einen laufenden DASH-Altauftrag',
+      status.value.job.state === 'running' && list.value.some(j => j.id === old.job.id && j.state === 'running') &&
+      cancel.value.job.state === 'cancelled' && w.sent.slice(before + forwarded.length).map(({ op }) => op).every(op => op === 'dlstatus' || op === 'dlcancel'));
+    w.helper.hooks.dlstart = (m) => ({ ok: true, id: m.id, state: 'running' });
+    w.helper.hooks.hlsplan = () => ({ ok: true, planId: PLAN, options: [{ id: OPT, height: 360, audio: 'muxed' }] });
+    const mp4 = await call({ op: 'start', url: 'https://media.example/clip.mp4' });
+    const hls = await call({ op: 'hlsplan', url: 'https://media.example/master.m3u8', bind: BIND });
+    check('Dispatcher: MP4-Start und HLS-Plan weiterhin erlaubt', mp4.ok && mp4.value.job.state === 'running' &&
+      hls.ok && hls.value.options[0].id === OPT && ops(w, 'dlstart').length === 1 && ops(w, 'hlsplan').length === 1,
+      JSON.stringify({ mp4: mp4.ok, hls: hls.ok }));
     for (const [what, m, s] of [
       ['ohne Tab (Menü)', { op: 'dashplan', url: URL1, fp: FP, bind: BIND }, { id: 'test-extension', url: 'chrome-extension://test-extension/popup.html' }],
       ['fremde Erweiterung', { op: 'dashplan', url: URL1, fp: FP, bind: BIND }, { id: 'other', tab: { id: 1 }, url: 'https://page.example/' }],
@@ -271,9 +323,7 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
       ['played ungültig', { op: 'dashplan', url: URL1, fp: FP, bind: BIND, played: '1,1' }],
       ['dashstart mit URL', { op: 'dashstart', planId: PLAN, option: OPT, url: URL1 }],
     ]) { const r = await call(m, s); check('Route abgelehnt: ' + what, r.ok === false && r.error.kind === 'refused'); }
-    const mm = await call({ op: 'dashplan', url: URL1, fp: '0'.repeat(64), bind: BIND });
-    check('Route: manifest_mismatch als fester Text mit Grund und nur der Phase', mm.ok === false && mm.error.reason === 'manifest_mismatch' && JSON.stringify(mm.error.diag) === '{"v":1,"phase":"fingerprint"}'
-      && mm.error.message === 'Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert', JSON.stringify(mm));
+
   }
   {
     // Quellen-Registry: nur bound + dash-segments, genau eines; Auflösung mit Bindung

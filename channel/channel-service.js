@@ -78,9 +78,7 @@
     hlsplan: { keys: ['url', 'bind'], ok: (s) => fromTab(s), run: (m, s) => downloads.hlsPlan(m.url, m.bind, pageContext(s)) },
     hlsstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.hlsStart(m.planId, m.option, m.name) },
     hlsresume: { keys: ['id', 'planId', 'option'], ok: (s) => fromTab(s), run: (m) => downloads.hlsResume(m.id, m.planId, m.option) },
-    // S3c: DASH-Streams – nur aus Kadris Inhaltsskript und nur nach Tipp (Plan mit Fingerabdruck des gebundenen MPD, Start)
-    dashplan: { keys: ['url', 'fp', 'bind', 'played', 'alt'], ok: (s) => fromTab(s), run: (m, s) => downloads.dashPlan(m.url, m.fp, m.bind, m.played, pageContext(s), m.alt) },
-    dashstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.dashStart(m.planId, m.option, m.name) },
+    // P0-A: Ohne nachgewiesene Elementzuordnung darf kein Tab einen DASH-Plan oder -Start anfordern.
   };
   const HEX = (n) => new RegExp('^[0-9a-f]{' + n + '}$');
   const dlValid = (m, d) => Object.keys(m).every((k) => k === 't' || k === 'op' || d.keys.includes(k)) &&
@@ -89,9 +87,7 @@
     (m.name === undefined || (typeof m.name === 'string' && m.name.length <= 400)) &&
     (!d.keys.includes('planId') || (typeof m.planId === 'string' && HEX(32).test(m.planId))) &&
     (!d.keys.includes('option') || (typeof m.option === 'string' && HEX(24).test(m.option))) &&
-    (!d.keys.includes('bind') || NS.hlsBindValid(m.bind)) &&
-    (!d.keys.includes('fp') || (typeof m.fp === 'string' && HEX(64).test(m.fp))) &&
-    (m.played === undefined || NS.dashPlayedValid(m.played));
+    (!d.keys.includes('bind') || NS.hlsBindValid(m.bind));
 
   const own = (sender) => !!sender && sender.id === api.runtime.id;
   const pageOf = (sender) => (sender && typeof sender.url === 'string' ? sender.url.split(/[?#]/)[0] : '');
@@ -120,7 +116,7 @@
       }, (e) => {
         const kind = (e && e.kind) || 'error';
         const reason = e && typeof e.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(e.reason) ? e.reason : '';
-        const diag = kind !== 'plan' ? null : m.op === 'hlsplan' ? NS.planDiagnostic(e.diag) : m.op === 'dashplan' ? NS.dashPlanDiagnostic(e.diag) : null;
+        const diag = kind === 'plan' && m.op === 'hlsplan' ? NS.planDiagnostic(e.diag) : null;
         reply({ ok: false, error: Object.assign({ kind, message: reason ? NS.downloadReasonText(reason) : NS.downloadErrorText(kind) }, reason ? { reason } : {}, diag ? { diag } : {}) });
       });
       return true;

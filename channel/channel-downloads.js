@@ -76,8 +76,6 @@
     // P4c: unbestätigter HLS-Start (Antwort verloren): Plan-Kennung und Auswahl, nur im Arbeitsspeicher, damit die
     // Nachprüfung denselben Start mit DERSELBEN Kennung erneut senden kann (der Helfer startet je Kennung einmal).
     const hlsPending = new Map();
-    // S3c: dasselbe für DASH (Plan-Kennung, Auswahl, Name; nur im Arbeitsspeicher)
-    const dashPending = new Map();
     let chain = Promise.resolve();
     const serial = (fn) => { const p = chain.then(fn, fn); chain = p.catch(() => {}); return p; };
     let caps = null;
@@ -171,7 +169,7 @@
       }
       j.seen = now();
       if (j.check) j.check = '';   // P4c-3: der Helfer hat geantwortet
-      if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); dashPending.delete(j.id); }
+      if (j.state !== 'starting' && j.state !== 'unconfirmed') { pending.delete(j.id); hlsPending.delete(j.id); }
       return r.state;
     }
 
@@ -258,13 +256,9 @@
           // Abbruch kam (noch) nicht an, etwa wegen eines Verbindungsabbruchs: erneut senden (dlcancel ist idempotent).
           try { apply(j, await channel.download('dlcancel', { id })); } catch (e) { /* nächste Abfrage versucht es wieder */ }
         } else if (s === 'unknown' && j.kind === 'dash') {
-          // S3c: unbestätigter DASH-Start: derselbe Start mit derselben Kennung, solange Plan und Auswahl im Speicher sind
-          const dp = dashPending.get(id);
-          if (j.state === 'cancelling') { dashPending.delete(id); }
-          else if (dp && plans.get(dp.planId)) {
-            try { await dashSend(j, plans.get(dp.planId), dp.option, dp.name); }
-            catch (e) { if (!uncertain(e)) { j.state = 'failed'; j.reason = e.kind === 'helper-busy' ? 'busy' : (e.reason || 'not_started'); dashPending.delete(id); } }
-          } else { j.state = 'failed'; j.reason = 'not_started'; dashPending.delete(id); }
+          // P0-A: Ein später eintreffender Start ist möglich. Nur seinen Status klären, nie erneut starten.
+          // Eine gespeicherte Abbruchabsicht oder einen bereits bestätigten Stand beibehalten.
+          if (j.state === 'starting') j.state = 'unconfirmed';
         } else if (s === 'unknown' && j.kind === 'hls') {
           // P4c: unbestätigter HLS-Start: derselbe Start mit derselben Kennung, solange Plan und Auswahl im Speicher sind
           const hp = hlsPending.get(id);
@@ -557,12 +551,10 @@
           done: 0, of: 0, phase: '', at: now(), seen: 0 };
         jobs.unshift(j);
         await save(jobs);                // erst gespeichert, dann gesendet
-        dashPending.set(j.id, { planId, option, name: named ? j.name : null });
         try {
           await dashSend(j, plan, option, named ? j.name : null);
         } catch (e) {
           if (uncertain(e)) { j.state = 'unconfirmed'; await save(jobs); followUp(j.id); return { job: view(j), existing: false }; }
-          dashPending.delete(j.id);
           await save(jobs.filter((x) => x.id !== j.id));
           throw e;
         }
@@ -627,7 +619,8 @@
     const lost = j.check ? errorText(j.check) : '';
     switch (j.state) {
       case 'starting': return { label: lost ? 'Start nicht bestätigt – ' + lost : 'Startet …', progress };
-      case 'unconfirmed': return { label: lost ? 'Start nicht bestätigt – ' + lost + ' (wird beim nächsten Öffnen geprüft)' : 'Verbindung unterbrochen – Stand wird geprüft', progress };
+      case 'unconfirmed': return { label: lost ? 'Start nicht bestätigt – ' + lost + ' (wird beim nächsten Öffnen geprüft)'
+        : j.kind === 'dash' ? 'Start nicht bestätigt – Stand wird geprüft' : 'Verbindung unterbrochen – Stand wird geprüft', progress };
       case 'running': return lost ? { label: lost + ' – letzter bekannter Stand', progress }
         : j.wait === 'offline' ? { label: 'Wartet auf Internet – setzt automatisch fort', progress }
         : j.wait === 'retry' ? { label: 'Verbindung gestört – neuer Versuch in Kürze', progress } : { label: 'Lädt …', progress };
