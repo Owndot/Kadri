@@ -1,0 +1,15 @@
+# S4b-7a – VORSCHLAG (nicht in Kraft): gemeinsame Regression „unbekanntes EssentialProperty“ für Kadri (src/039) und Helfer
+# (DashManifest/DashProfile). Spalten: datei, ist (heutiges Verhalten beider Seiten, aus tests/s4b7_essential_audit.py),
+# vorschlag (code wie dashplan), begruendung. Neuer Grund: mpd-essential (fatal, Anzeige dash-unsupported).
+datei	ist	vorschlag	begruendung
+e01-mpd-essential-unknown.mpd	ok	mpd_essential	MPD-Ebene: wer das Schema nicht kennt, darf das ganze MPD nicht deuten
+e02-mpd-supplemental-unknown.mpd	ok	ok	SupplementalProperty darf übergangen werden
+e03-period-essential-unknown.mpd	ok	mpd_essential	Period-Essential steht nicht im Schema 5th Ed.; trotzdem „wesentlich“ gemeint – nicht übergehen
+e04-period-supplemental-unknown.mpd	ok	ok	SupplementalProperty darf übergangen werden
+e05-mpd-essential-unknown-and-urlparam.mpd	ok	mpd_essential	ein unterstützter Annex-I-Descriptor erlaubt kein zweites, unbekanntes
+e06-mpd-essential-no-scheme.mpd	ok	mpd_essential	ohne schemeIdUri ist nichts verstanden
+e07-mpd-essential-cicp.mpd	ok	mpd_essential	auch bekannte Farb-Schemata sind für Kadri/Helfer nicht ausgewertet (kein Freibrief nach Name)
+e08-set-essential-unknown.mpd	dash_unsupported	dash_unsupported	Kontrolle: heutiges set-essential bleibt
+e09-rep-essential-one.mpd	ok	ok	Kontrolle: rep-essential schließt nur v0 aus, v1 bleibt
+e10-essential-misplaced.mpd	ok	mpd_essential	EssentialProperty an einer Stelle, die das Schema nicht vorsieht: wie ContentProtection überall zählen
+e11-audio-set-essential-unknown.mpd	dash_unsupported	dash_unsupported	Kontrolle: Ton vorhanden, aber unbrauchbar – nicht stumm anbieten

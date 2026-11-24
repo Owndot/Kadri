@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Kadri S4b-7a Messsonde (nur Test, nicht Kadri)",
+  "version": "0.0.1",
+  "description": "Experimentelle Messsonde für die Machbarkeitsstudie S4b-7a. webRequest nur beobachtend; nur Testhosts.",
+  "permissions": ["webRequest"],
+  "host_permissions": ["http://127.0.0.1/*", "http://cdn.example.org/*"],
+  "background": { "service_worker": "sw.js" },
+  "content_scripts": [
+    { "matches": ["http://127.0.0.1/*", "http://cdn.example.org/*"], "js": ["main.js"], "world": "MAIN",
+      "run_at": "document_start", "all_frames": true, "match_about_blank": true, "match_origin_as_fallback": true },
+    { "matches": ["http://127.0.0.1/*", "http://cdn.example.org/*"], "js": ["cs.js"],
+      "run_at": "document_start", "all_frames": true, "match_about_blank": true, "match_origin_as_fallback": true }
+  ]
+}

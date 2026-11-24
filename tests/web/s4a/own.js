@@ -12,6 +12,7 @@
 //   S4b-6: switchAt k  ab dem k-ten Stück dieselbe Folge von der NÄCHSTEN BaseURL laden (CDN-Wechsel mitten in der Folge)
 //          zombie     nach einem neueren start() am selben Video weiter Stücke laden (ohne anzuhängen) – schlecht
 //                     aufgeräumter alter Lader; ohne zombie hört ein älterer Lauf dann auf
+//   S4b-7a: restartAt k  (mode 'worker') nach dem k-ten Videostück einen NEUEN Worker anlegen (der alte endet 1,5 s später)
 // Nur die hier benutzte Fixture-Form: eine Periode, SegmentTemplate + SegmentTimeline, $Number[%0wd]$ oder $Time$.
 (() => {
   'use strict';
@@ -103,6 +104,7 @@
           for (const b of bufs) { if (gone()) break; await app(sbs[i], b); k++; if (i === 0) st.segs = k; }
         }
         while (k < t.segs.length && k < max) {
+          if (cfg.restartAt && i === 0 && k === cfg.restartAt && worker && !st.restarted) { const old = worker; worker = null; st.restarted = true; setTimeout(() => old.terminate(), 1500); }
           if (gone()) {
             if (!cfg.zombie) break;
             await getBuf(t.segs[k].url, cfg); k++; await new Promise((res) => setTimeout(res, 300)); continue;   // lädt weiter, hängt nichts mehr an
