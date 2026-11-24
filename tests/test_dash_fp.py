@@ -41,7 +41,13 @@ with sync_playwright() as p:
     diff, n_ok, n_err = [], 0, 0
     for u, f, want in rows:
         r = fp(rd(os.path.join(FIX, 'fp', 'x', f)), u)
-        if want.startswith('ERROR:'):
+        if want == 'ERROR:baseurl-multiple':
+            # S4b-6: mehrere BaseURL sind jetzt Alternativen – Kadri berechnet den Abdruck über alle (wie der Helfer mit
+            # BaseSelection.FIRST, geprüft in test_dash_gate gegen gate-v1-fp.tsv) und kennzeichnet das MPD als multi;
+            # ohne Auswahl lehnt der Helfer weiterhin ab (dashplan v1: mpd_baseurl_multiple)
+            n_err += 1
+            if not (r.get('fp') and r.get('multi') is True): diff.append((f, u, want, r))
+        elif want.startswith('ERROR:'):
             n_err += 1
             if r.get('fp'): diff.append((f, u, want, r.get('fp')))
         else:
@@ -50,7 +56,7 @@ with sync_playwright() as p:
     check('Querprüfung: %d Abdrücke identisch mit dem Helper, %d vom Helper abgelehnte MPDs auch hier ohne Abdruck' % (n_ok, n_err),
           len(rows) == 116 and n_ok == 74 and n_err == 42 and not diff, diff[:5])
     r = fp(fx('vod-timeline-avc-aac.mpd'))
-    check('Ergebnis enthält nur Abdruck (64 Hex) und Vorprüfung – keine Adresse, keine Kennung', set(r.keys()) <= {'fp', 'gate', 'text'} and len(r['fp']) == 64
+    check('Ergebnis enthält nur Abdruck (64 Hex), Vorprüfung und Kennzeichen „Alternativen“ – keine Adresse, keine Kennung', set(r.keys()) <= {'fp', 'gate', 'text', 'multi'} and len(r['fp']) == 64
           and 'http' not in json.dumps(r) and 'cdn.example' not in json.dumps(r), r)
     big = '<?xml version="1.0"?><MPD xmlns="%s" type="static" mediaPresentationDuration="PT9999S"><Period><SegmentList timescale="1" duration="1">%s</SegmentList><AdaptationSet mimeType="video/mp4">%s</AdaptationSet></Period></MPD>' % (
         NS, ''.join('<SegmentURL media="s%d"/>' % i for i in range(20000)), ''.join('<Representation id="r%d" bandwidth="1"><BaseURL>b%d/</BaseURL></Representation>' % (i, i) for i in range(120)))

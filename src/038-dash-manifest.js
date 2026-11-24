@@ -163,7 +163,10 @@
   // Video-Identität (…/seg1.m4s?video=A ≠ ?video=B). Platzhalter dürfen auch in der Query stehen (…?n=$Number$). Fehlende,
   // abweichende, zusätzliche oder umsortierte Parameter → kein Treffer (Identität nicht nachweisbar → ambiguous).
   // Grenzen: höchstens 64 Darstellungen, 20000 Zeitleisten-Einträge je Darstellung, 20000 Listeneinträge.
-  const DASH_IDX = Object.freeze({ reps: 64, timeline: 20000, list: 20000 });
+  // S4b-6: mehrere BaseURL (CDN-Alternativen): je Darstellung ein Eintrag JE ERKLÄRTER Alternative (wie der Helfer: höchstens
+  // 8 BaseURL je Element, 16 Kombinationen je Darstellung), höchstens 256 Einträge insgesamt – darüber ist das MPD nicht
+  // prüfbar (overflow) statt unvollständig indiziert.
+  const DASH_IDX = Object.freeze({ reps: 64, timeline: 20000, list: 20000, perElement: 8, combinations: 16, records: 256 });
   // S3c: Vorlagen wie der Helper (DashTemplate, ISO/IEC 23009-1 5.3.9.4.4) in EINEM Durchgang: $$, $RepresentationID$
   // (ohne Format, nur unschädliche Zeichen), $Bandwidth$ und $Bandwidth%0[w]d$ (mit führenden Nullen auf w Stellen – vorher
   // wurde das Format ignoriert), $Number$/$Time$ (je optional %0[w]d, w 1–20) → slot. Alles andere ($SubNumber$, unbekannte
@@ -212,41 +215,81 @@
   const dashUrlKey = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin + x.pathname + x.search : ''; } catch (e) { return ''; } };
   const dashEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   function dashSegmentIndex(parsed, mpdUrl) {
-    const out = { reps: [], single: 0 };
+    const out = { reps: [], single: 0, overflow: false, multi: false };
     if (!parsed || !parsed.root || typeof mpdUrl !== 'string') return out;
     const root = parsed.root;
-    const baseOf = (el, base) => { const b = dashKid(el, 'BaseURL'); if (!b) return base; try { return new URL(String(b.textContent || '').trim(), base).href; } catch (e) { return base; } };
+    // Alternativen einer Ebene: [{ base, sel: ['m:1', …] }] – Auswahlschlüssel wie beim Helfer (BaseSelection), nur für
+    // Elemente mit mehreren BaseURL; null = Grenze überschritten (dann wird nichts indiziert, overflow)
+    const altsOf = (el, outer, key) => {
+      if (outer === null) return null;
+      const bs = dashKids(el, 'BaseURL');
+      if (!bs.length) return outer;
+      if (bs.length > DASH_IDX.perElement) return null;
+      if (bs.length > 1) out.multi = true;
+      const next = [];
+      for (const o of outer) bs.forEach((b, i) => { try { next.push({ base: new URL(String(b.textContent || '').trim(), o.base).href, sel: bs.length > 1 ? o.sel.concat([key + ':' + i]) : o.sel }); } catch (e) {} });
+      return next.length > DASH_IDX.combinations ? null : next;
+    };
     const tplAttr = (chain, k) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); if (t && t.getAttribute(k) != null) return t.getAttribute(k); } return null; };
     const tplTimeline = (chain) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); const tl = t && dashKid(t, 'SegmentTimeline'); if (tl) return tl; } return null; };
-    let mpdBase;
-    try { mpdBase = baseOf(root, new URL(mpdUrl).href); } catch (e) { return out; }
-    // S3c: Nummer jeder Darstellung in Dokumentreihenfolge über alle Perioden – dieselbe wie beim Helper (Plan, "played")
-    let g = -1;
+    let mpdAlts;
+    try { mpdAlts = altsOf(root, [{ base: new URL(mpdUrl).href, sel: [] }], 'm'); } catch (e) { return out; }
+    // S3c: Nummer jeder Darstellung in Dokumentreihenfolge über alle Perioden – dieselbe wie beim Helper (Plan, "played");
+    // S4b-6: ebenso Perioden und Sets (Schlüssel der Auswahl p<n>, s<n>, r<n>)
+    let g = -1, gs = -1, gp = -1, built = 0;
     dashKids(root, 'Period').forEach((per) => {
-      const perBase = baseOf(per, mpdBase);
+      gp++;
+      const perAlts = altsOf(per, mpdAlts, 'p' + gp);
       dashKids(per, 'AdaptationSet').forEach((a) => {
-        const aBase = baseOf(a, perBase);
+        gs++;
+        const aAlts = altsOf(a, perAlts, 's' + gs);
         dashKids(a, 'Representation').forEach((r) => {
           g++;
-          if (out.reps.length >= DASH_IDX.reps) return;
-          const base = baseOf(r, aBase), chain = [r, a, per];
+          if (built >= DASH_IDX.reps) return;
+          const rAlts = altsOf(r, aAlts, 'r' + g);
+          if (!rAlts) { out.overflow = true; return; }
+          built++;
+          const seen = new Set();
+          rAlts.forEach((alt) => {
+            if (out.reps.length >= DASH_IDX.records) { out.overflow = true; return; }
+            const rec = dashIndexRep(r, a, per, alt.base, g, gs, alt.sel.join(';'), out);
+            if (!rec) return;
+            // gleiche Adressen über verschiedene Alternativen: einmal (die erste Alternative in Dokumentreihenfolge)
+            const sig = rec.mode === 'list' ? 'L|' + Array.from(rec.list.keys()).join('\n') + '|' + rec.init : rec.re.source + '|' + rec.init;
+            if (seen.has(sig)) return;
+            seen.add(sig);
+            out.reps.push(rec);
+          });
+        });
+      });
+    });
+    return out;
+  }
+  // Eintrag einer Darstellung für EINE Basis (src/038 vor S4b-6: die einzige) – null, wenn keine Stückfolge erkennbar
+  function dashIndexRep(r, a, per, base, g, gs, alt, out) {
+    const tplAttr = (chain, k) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); if (t && t.getAttribute(k) != null) return t.getAttribute(k); } return null; };
+    const tplTimeline = (chain) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); const tl = t && dashKid(t, 'SegmentTimeline'); if (tl) return tl; } return null; };
+    {
+      {
+        {
+          const chain = [r, a, per];
           const id = r.getAttribute('id'), bw = dashBwText(r.getAttribute('bandwidth'));
-          const rep = { i: g, kind: '', mode: '', prefix: '', re: null, width: 0, start: 1, times: null, dur: 0, list: null, init: '' };
+          const rep = { i: g, set: gs, alt: alt, kind: '', mode: '', prefix: '', re: null, width: 0, start: 1, times: null, dur: 0, list: null, init: '' };
           // S3c: eine Vorlage, die der Helper ablehnen würde (ungültige ID, Format, unbekannter Platzhalter), ergibt keine Muster
           const fill = (tpl) => { const x = bw === null ? null : dashTplExpand(tpl, id, bw, false, ''); return x ? x.text : null; };
           const media = tplAttr(chain, 'media');
           if (media != null) {
             // genau EIN Zahlen-Platzhalter (sonst ist die Stücknummer nicht eindeutig ablesbar)
             const ex = bw === null ? null : dashTplExpand(media, id, bw, true, '\u0001');
-            if (!ex) { out.single++; return; }
+            if (!ex) { out.single++; return null; }
             const hasNum = ex.kind === 'number', hasTime = ex.kind === 'time';
             // Marke nur aus Ziffern, kollisionsfrei gegen Vorlage, eingesetzte Werte und Basis (siehe dashMark)
             const tok = dashMark(ex.text, base);
             let abs = '';
             try { abs = dashUrlKey(new URL(ex.text.replace('\u0001', tok), base).href); } catch (e) { abs = ''; }
-            if (!abs || abs.split(tok).length !== 2) { out.single++; return; }
+            if (!abs || abs.split(tok).length !== 2) { out.single++; return null; }
             const parts = abs.split(tok);
-            try { if (new URL(abs).origin.indexOf(tok) >= 0) { out.single++; return; } } catch (e) { out.single++; return; }   // Marke im Host
+            try { if (new URL(abs).origin.indexOf(tok) >= 0) { out.single++; return null; } } catch (e) { out.single++; return null; }   // Marke im Host
             rep.width = ex.width;
             rep.prefix = parts[0];
             rep.re = new RegExp('^' + dashEsc(parts[0]) + '(\\d{1,20})' + dashEsc(parts[1]) + '$');
@@ -272,7 +315,7 @@
                   for (let j = 0; j <= rr && n < DASH_IDX.timeline; j++) { rep.times.set(String(t), n++); t += d; }
                 }
               } else rep.dur = Number(tplAttr(chain, 'duration')) || 0;
-              if (!rep.times && !(rep.dur > 0)) { out.single++; return; }
+              if (!rep.times && !(rep.dur > 0)) { out.single++; return null; }
             }
             const ini = tplAttr(chain, 'initialization');
             const iniText = ini ? fill(ini) : null;
@@ -281,10 +324,10 @@
             let sl = null;
             for (let i = 0; i < chain.length && !sl; i++) sl = dashKid(chain[i], 'SegmentList');
             const urls = sl ? dashKids(sl, 'SegmentURL').map((x) => x.getAttribute('media')).filter((x) => x) : [];
-            if (!urls.length) { out.single++; return; }   // SegmentBase/Einzeldatei/nur mediaRange: keine Stückfolge
+            if (!urls.length) { out.single++; return null; }   // SegmentBase/Einzeldatei/nur mediaRange: keine Stückfolge
             rep.mode = 'list'; rep.list = new Map();
             urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashUrlKey(new URL(m, base).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
-            if (rep.list.size < 2) { out.single++; return; }   // alle auf dieselbe Datei (Byte-Bereiche): keine Folge erkennbar
+            if (rep.list.size < 2) { out.single++; return null; }   // alle auf dieselbe Datei (Byte-Bereiche): keine Folge erkennbar
             // nur für die Diagnose: dieselben Stücke ohne Query (Herkunft+Pfad) und nur nach Pfad
             rep.dList = new Set(); rep.dListPath = new Set();
             rep.list.forEach((k, key) => { try { const ux = new URL(key); rep.dList.add(ux.origin + ux.pathname); rep.dListPath.add(ux.pathname); } catch (e) {} });
@@ -294,29 +337,43 @@
           if (rep.init) { try { const ux = new URL(rep.init); rep.dInitOP = ux.origin + ux.pathname; rep.dInitPath = ux.pathname; } catch (e) {} }
           const ct = String(a.getAttribute('contentType') || '').toLowerCase(), mime = String(r.getAttribute('mimeType') || a.getAttribute('mimeType') || '').toLowerCase();
           rep.kind = /^(video|audio|text|image)$/.test(ct) ? ct : /^video\//.test(mime) ? 'video' : /^audio\//.test(mime) ? 'audio' : 'other';
-          out.reps.push(rep);
-        });
-      });
-    });
-    return out;
+          return rep;
+        }
+      }
+    }
   }
   // Ein beobachteter Abruf (Schlüssel dashUrlKey: volle Adresse ohne #) → { rep, idx } oder null; init → { rep, init: true }
+  // S4b-6: jede Alternative ist ein eigener Eintrag. Passt eine Adresse zu Einträgen VERSCHIEDENER Alternativen, die
+  // verschiedene Darstellungen bzw. Stücke beschreiben, ist sie kein Beleg (null – keine eindeutige Alternative). Dieselbe
+  // Darstellung/dasselbe Stück über mehrere Alternativen: die erste (Dokumentreihenfolge). Innerhalb derselben Alternative wie
+  // bisher der erste Eintrag (unverändert gegenüber S3c).
   function dashMatchSegment(index, key) {
     if (!index || !key) return null;
+    let hit = null;
     for (let i = 0; i < index.reps.length; i++) {
-      const r = index.reps[i];
-      if (r.init && r.init === key) return { rep: r.i, init: true };
-      if (r.mode === 'list') { const k = r.list.get(key); if (k !== undefined) return { rep: r.i, idx: k }; continue; }
-      if (!r.re || key.indexOf(r.prefix) !== 0) continue;
-      const m = r.re.exec(key);
+      const m = dashMatchOne(index.reps[i], key);
       if (!m) continue;
+      if (!hit) { hit = m; continue; }
+      if ((hit.alt || '') === (m.alt || '')) continue;
+      if (hit.rep !== m.rep || hit.idx !== m.idx || !!hit.init !== !!m.init) return null;
+    }
+    return hit;
+  }
+  function dashMatchOne(r, key) {
+    {
+      const w = (x) => (r.alt ? Object.assign(x, { alt: r.alt }) : x);   // (Alternative nur, wenn das MPD welche hat)
+      if (r.init && r.init === key) return w({ rep: r.i, init: true });
+      if (r.mode === 'list') { const k = r.list.get(key); if (k !== undefined) return w({ rep: r.i, idx: k }); return null; }
+      if (!r.re || key.indexOf(r.prefix) !== 0) return null;
+      const m = r.re.exec(key);
+      if (!m) return null;
       // S3c: genau die Schreibweise, die die Vorlage erzeugt (%0[w]d: auf w Stellen mit Nullen; ohne Format: keine
       // führenden Nullen) – "seg-7" ist nicht das Stück "seg-00007"; Werte nur bis 2^53−1 (exakt wie beim Helper)
       const nv = m[1].length <= 16 ? Number(m[1]) : NaN;
-      if (!Number.isSafeInteger(nv) || String(nv).padStart(r.width || 0, '0') !== m[1]) continue;
-      if (r.mode === 'number') { const n = Number(m[1]) - r.start; if (n >= 0) return { rep: r.i, idx: n }; continue; }
-      if (r.times) { const k = r.times.get(String(Number(m[1]))); if (k !== undefined) return { rep: r.i, idx: k }; continue; }
-      if (r.dur > 0) { const q = Number(m[1]) / r.dur; if (Number.isInteger(q)) return { rep: r.i, idx: q }; }
+      if (!Number.isSafeInteger(nv) || String(nv).padStart(r.width || 0, '0') !== m[1]) return null;
+      if (r.mode === 'number') { const n = Number(m[1]) - r.start; return n >= 0 ? w({ rep: r.i, idx: n }) : null; }
+      if (r.times) { const k = r.times.get(String(Number(m[1]))); return k !== undefined ? w({ rep: r.i, idx: k }) : null; }
+      if (r.dur > 0) { const q = Number(m[1]) / r.dur; if (Number.isInteger(q)) return w({ rep: r.i, idx: q }); }
     }
     return null;
   }
@@ -386,8 +443,21 @@
       const co = coherent(hs);
       const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: co.recent, last: last, unknownStart: unknown };
       res[m.key] = r;
-      if (!m.checkable) { r.reason = 'nicht-pruefbar'; return; }
+      if (!m.checkable || m.overflow) { r.reason = 'nicht-pruefbar'; return; }
       if (!n) { r.reason = unknown ? 'start-unknown' : 'keine-treffer'; return; }
+      // S4b-6: Alternative (BaseURL) der Treffer – je Darstellung genau eine (kein stiller CDN-Wechsel in einer Folge),
+      // über alle Darstellungen widerspruchsfrei (gleiche Wahl für gemeinsame Ebenen); daraus die Auswahl für den Helfer
+      const altBy = new Map(), pick = new Map();
+      let mixed = false, competing = false;
+      hs.forEach((h) => {
+        const a = typeof h.alt === 'string' ? h.alt : '';
+        if (!altBy.has(h.rep)) altBy.set(h.rep, a); else if (altBy.get(h.rep) !== a) mixed = true;
+        a.split(';').filter(Boolean).forEach((t) => { const i = t.indexOf(':'), k = t.slice(0, i), v = t.slice(i + 1); if (pick.has(k) && pick.get(k) !== v) competing = true; pick.set(k, v); });
+      });
+      if (mixed) { r.reason = 'alt-mixed'; return; }
+      if (competing) { r.reason = 'alt-competing'; return; }
+      const order = (x, y) => { const kx = 'mpsr'.indexOf(x[0]), ky = 'mpsr'.indexOf(y[0]); return kx !== ky ? kx - ky : (Number(x.slice(1)) || 0) - (Number(y.slice(1)) || 0); };
+      r.alt = Array.from(pick.keys()).sort(order).map((k) => k + ':' + pick.get(k)).join(';');
       // keine zusammenhängende Serie: entweder nie (zu-wenig-folge) oder nur früher (nicht-aktiv, z. B. Werbung vorher)
       if (co.any < DASH_RUN) { r.reason = 'zu-wenig-folge'; return; }
       if (vid.othersPlaying) { r.reason = 'mehrere-videos'; return; }

@@ -64,7 +64,7 @@ jobs:
           node tests/channel/dash_unit_check.js
           node tests/dash_bind_check.js
           node tests/dash_message_check.js
-          TESTS="test_dash_fp.py test_dash_mpd.py test_dash_gate.py" tests/run_all.sh
+          TESTS="test_dash_fp.py test_dash_mpd.py test_dash_gate.py test_dash_alt.py test_dash_start_unknown.py" tests/run_all.sh
       - name: DASH integration against the real DashEngine (Node, encrypted channel)
         env:
           HELPER_HOST_DIR: ${{ runner.temp }}/dash-harness

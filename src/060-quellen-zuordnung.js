@@ -334,7 +334,7 @@
     try { others = allVideos().some((x) => x !== v && !x.paused && !x.ended && /^blob:/.test(x.currentSrc || '')); } catch (e) {}
     const res = dashBindDecision({
       manifests: list.map((e) => ({ key: e.key, hits: e.p.dashHits || [], duration: e.p.dash.type === 'static' ? e.p.dash.duration : 0,
-        checkable: !!(e.p.dashIdx && e.p.dashIdx.reps.length) })),
+        checkable: !!(e.p.dashIdx && e.p.dashIdx.reps.length), overflow: !!(e.p.dashIdx && e.p.dashIdx.overflow) })),
       from: dashFromOf(v), now: Date.now(), video: { duration: v.duration, othersPlaying: others } });
     return { list: list, res: res };
   }

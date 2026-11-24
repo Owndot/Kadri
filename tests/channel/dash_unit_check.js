@@ -23,6 +23,11 @@ check('dashplan mit played, ref, ua', JSON.stringify(dm('dashplan', { url: URL1,
 check('dashstart: op, v:1, id, planId, option, bind, name',
   JSON.stringify(dm('dashstart', { id: ID, planId: PLAN, option: OPT, bind: BIND, name: 'Clip' })) ===
   JSON.stringify({ op: 'dashstart', v: 1, id: ID, planId: PLAN, option: OPT, bind: BIND, name: 'Clip' }));
+// S4b-6: Auswahl unter mehreren BaseURL → dashplan v2 mit alt (genau die BaseSelection-Form des Helfers)
+check('dashplan mit alt → v:2 und alt', JSON.stringify(dm('dashplan', { url: URL1, fp: FP, bind: BIND, alt: 'm:1;s3:0' })) === JSON.stringify({ op: 'dashplan', v: 2, url: URL1, fp: FP, bind: BIND, alt: 'm:1;s3:0' }));
+for (const bad of ['', 'm:1;', 'x:1', 'm:10', 'm:1 ', 'https://cdn.example/', 'm:1;'.repeat(70) + 'm:1', 1])
+  check('abgelehnt: dashplan mit ungültigem alt ' + JSON.stringify(String(bad).slice(0, 20)), dm('dashplan', { url: URL1, fp: FP, bind: BIND, alt: bad }) === null);
+check('abgelehnt: alt bei dashstart', dm('dashstart', { id: ID, planId: PLAN, option: OPT, bind: BIND, alt: 'm:1' }) === null);
 check('dashplan wird nach Sitzungswechsel wiederholt, dashstart nicht', NS.retryableAfterStaleSession('dashplan') && !NS.retryableAfterStaleSession('dashstart'));
 for (const [what, op, a] of [
   ['dashplan ohne Fingerabdruck', 'dashplan', { url: URL1, bind: BIND }],
@@ -65,7 +70,7 @@ function world(hooks) {
   const mem = { jobs: undefined };
   const sent = [];
   let n = 0, planNo = 0;
-  const helper = { jobs: new Map(), plans: new Map(), hooks: hooks || {}, dashCaps: true, ctx: false, opts: OPTS };
+  const helper = { jobs: new Map(), plans: new Map(), hooks: hooks || {}, dashCaps: true, ctx: false, alt: false, opts: OPTS };
   const salted = (p, o) => crypto.createHash('sha256').update(p + o.id).digest('hex').slice(0, 24);
   const channel = {
     async download(op, a) {
@@ -95,7 +100,7 @@ function world(hooks) {
     },
     async status() {
       return Object.assign({ ok: true, v: 3, hls: { v: 1, profiles: ['ts-avc-aac'], opus: false, ctx: 1 } },
-        helper.dashCaps ? { dashdl: Object.assign({ v: 1, profiles: ['fmp4-avc-aac'], fp: 'kadri-dash-fp/1' }, helper.ctx ? { ctx: 1 } : {}) } : {});
+        helper.dashCaps ? { dashdl: Object.assign({ v: 1, profiles: ['fmp4-avc-aac'], fp: 'kadri-dash-fp/1' }, helper.ctx ? { ctx: 1 } : {}, helper.alt ? { alt: 1 } : {}) } : {});
     },
   };
   const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); } };
@@ -224,6 +229,15 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     const w3 = world(); w3.helper.ctx = false;
     await w3.dl.dashPlan(URL1, FP, BIND, undefined, { ref: 'https://site.example/', ua: 'Mozilla/5.0 (X11)' });
     check('Kontext nur an Helfer mit dashdl.ctx 1: ohne → ohne ref/ua', !('ref' in ops(w3, 'dashplan')[0].a) && !('ua' in ops(w3, 'dashplan')[0].a));
+    // S4b-6: alt nur an einen Helfer, der "dashdl":{…,"alt":1} meldet – sonst lokal abgelehnt, nichts gesendet
+    const w5 = world();
+    check('Fähigkeit: dashAlt false ohne "alt" im dashdl', (await w5.dl.capabilities()).dashAlt === false);
+    let e5 = null; try { await w5.dl.dashPlan(URL1, FP, BIND, undefined, null, 'm:1'); } catch (e) { e5 = e; }
+    check('dashplan mit alt an Helfer ohne alt: abgelehnt (alt_unsupported), kein dashplan gesendet', e5 && e5.reason === 'alt_unsupported' && ops(w5, 'dashplan').length === 0, e5 && e5.reason);
+    const w6 = world(); w6.helper.alt = true;
+    check('Fähigkeit: dashAlt true mit "alt":1', (await w6.dl.capabilities()).dashAlt === true);
+    await w6.dl.dashPlan(URL1, FP, BIND, undefined, null, 'm:1');
+    check('… dashplan mit alt gesendet (an den Helfer, der die Auswahl selbst prüft)', ops(w6, 'dashplan').length === 1 && ops(w6, 'dashplan')[0].a.alt === 'm:1', JSON.stringify(ops(w6, 'dashplan')));
     const w4 = world(); w4.helper.ctx = true;
     await w4.dl.dashPlan(URL1, FP, BIND, undefined, { ref: 'https://site.example/', ua: 'Mozilla/5.0 (X11)' });
     check('… mit dashdl.ctx 1: ref (nur Herkunft) und ua gesendet', ops(w4, 'dashplan')[0].a.ref === 'https://site.example/' && ops(w4, 'dashplan')[0].a.ua === 'Mozilla/5.0 (X11)');

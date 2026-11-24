@@ -3,6 +3,7 @@
 # Getrennt vom WASM-Pin (vendor/kadri-pairing-poc/SOURCE, unverändert): dieser Commit wird NUR als Desktop-Gegenstelle
 # (ChannelServer + DashEngine, tests/java/channel/build.sh) gebaut – nie für WASM, nie für eine Auslieferung.
 # Inhalt: Helfer ee54864 (S3b-Fix 2) + 3887569 (nur Testcode: Harness-Kommando „dash on“).
+# S4b-6: be157b2 auf test/s4b5-dash (enthält 3887569) – dashplan v2 mit Auswahl unter mehreren BaseURL (Fähigkeit dashdl.alt).
 repository=Owndot/video-assistent-helper
-helper_commit=3887569fbc12e9cce5f47fe821b9a5cec7952249
+helper_commit=be157b28be5017d44a8ccec8e9ff49ac983250dc
 product_base=ee5486442266f2730893353ac71611809dfd21b1

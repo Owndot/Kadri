@@ -54,6 +54,8 @@ DELAY = {}   # S4b-3: Verzögerung (s) für MPD-Abrufe je Szenario – ab dem Ti
 mk('a4', mpd_dur(BASE_MPD)); mk('a5', BASE_MPD.replace('$Number%05d$', '$Time$'), time=True)
 mk('d1', BASE_MPD, redir='mpd'); mk('d2', BASE_MPD, redir='mpd'); mk('d3', BASE_MPD, redir='seg-signed')
 mk('d5', mpd_base(BASE_MPD, 'http://%s/m/d5/' % FRONT, 'http://%s/m/d5/' % OTHER)); mk('d6', mpd_base(BASE_MPD, 'http://%s/m/d6/' % OTHER))
+# S4b-6: CDN-Wechsel mitten in der Folge (Stücke 1–2 von der Seite, ab 3 vom CDN) – nie still akzeptiert
+mk('d8', mpd_base(BASE_MPD, 'http://%s/m/d8/' % FRONT, 'http://%s/m/d8/' % OTHER))
 mk('e2', mpd_list(BASE_MPD)); mk('e3', mpd_list(BASE_MPD, timeline=False)); mk('f1ad', mpd_drop_rep(BASE_MPD, '1')); mk('f1bad', mpd_drop_rep(BASE_MPD, '1')); mk('f1b', BASE_MPD);
 # S4b-4: Medien-Epochen – Vorspann mit verspäteten Antworten, Vorladen, schneller Wechsel (sauber / alter Lader lädt weiter), Shadow-DOM
 for k in ('f1cad', 'r1x', 'r2x'): mk(k, mpd_drop_rep(BASE_MPD, '1'))
@@ -94,6 +96,7 @@ PAGES = {
     'd1': dashjs(mp('d1')), 'd2': own(dict(mpd=mp('d2'), mode='main', resolve='initial')), 'd3': dashjs(mp('d3')),
     'd4': own(dict(mpd=mp('d4') + '?tok=s4a-token', mode='main', addQuery='tok=s4a-token')),
     'd5': own(dict(mpd=mp('d5'), mode='main', base=1)), 'd6': dashjs(mp('d6')),
+    'd8': own(dict(mpd=mp('d8'), mode='main', base=0, switchAt=2)),
     'e1': dashjs(mp('e1')), 'e2': shaka(mp('e2')), 'e3': dashjs(mp('e3')),
     'f1': own(dict(mpd=mp('f1ad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1'), mode='main'), seq='play'),
     'f1b': own(dict(mpd=mp('f1bad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1b'), mode='main'), seq='tight'),
@@ -131,7 +134,8 @@ SCN = [
     ('d2', 'D Adressen', 'eigener Player · wie d1, aber Auflösung gegen ANGEFRAGTE Adresse (Gegenprobe, Fehler S3h)', 'nie', False, False),
     ('d3', 'D Adressen', 'dash.js · jedes Stück 302 auf signierte CDN-Adresse (?exp&sig)', 'richtig', True, True),
     ('d4', 'D Adressen', 'eigener Player · MPD mit ?tok=…, Token an jedes Stück angehängt (MPD nennt es nicht)', 'nie', False, False),
-    ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN)', 'nie', False, False),
+    ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN) – S4b-6: gebunden, Download über die zweite', 'richtig', True, True),
+    ('d8', 'D Adressen', 'eigener Player · zwei BaseURL, CDN-Wechsel mitten in der Folge (S4b-6: nie still akzeptiert)', 'nie', False, False),
     ('d6', 'D Adressen', 'dash.js · absolute BaseURL auf CDN-Host', 'richtig', True, False),
     ('e1', 'E Form', 'dash.js · Einzeldatei je Darstellung, SegmentList mit mediaRange (Byte-Bereiche)', 'nie', False, False),
     ('e2', 'E Form', 'Shaka · SegmentList + SegmentTimeline mit einzeln signierten SegmentURL', 'richtig', True, True),
@@ -149,7 +153,7 @@ SCN = [
     ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4', 'richtig', True, False),
     ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
 ]
-WANT_OPTS = {'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
+WANT_OPTS = {'d5': OPT2, 'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
 # S4b: harte FUNKTIONS-Erwartungen je Szenario (heutiger Soll-Stand; jede S4b-Stufe ändert hier nur, was sie ausdrücklich
 # liefert). bound/offer: Bindung und Angebot; plan: erwartete Optionen ('rejected' = Helfer lehnt beim Plan ab);
 # file: vollständige Datei beim Helfer (Größe = Init + alle Stücke der gewählten Darstellung + Ton).
@@ -158,7 +162,9 @@ FILE_OK = {FX_SIZE('1'), FX_SIZE('0')}   # 360p bzw. 180p (je nach dem, was der 
 EXPECT = {}
 for k in ('a1', 'a2', 'a3', 'a4', 'd1', 'd6', 'f1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
 for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
-for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd5', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
+for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd8', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
+# S4b-6: mehrere BaseURL – an die beobachtete zweite Alternative gebunden, Helfer prüft die Auswahl und lädt vollständig über sie
+EXPECT['d5'] = dict(bound=True, offer=True, plan=OPT2, file=True)
 # S4b-4: Medien-Epoche – der Vorspann gehört zur vorigen MediaSource: das Haupt-MPD (360p + 180p) wird gebunden
 for k in ('f1b', 'f1c', 'p1', 'r1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
 # S4b-5: Vorprüfung im Gleichlauf mit dem Helfer – e3 (Ton-Abdeckung 24 s statt 20 s) wird schon von Kadri erkannt: kein Angebot,
@@ -171,10 +177,10 @@ for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer
 M_E1 = 'DASH vermutet – Manifest nicht lesbar'
 M_E2 = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 M_FMT = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
-LV = {k: ('-', None, None) for k in ('a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
+LV = {k: ('-', None, None) for k in ('a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd5', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
 LV.update({
     'b1': ('E1/unread-invisible', M_E1, r'verdeckt'), 'b2': ('E1/unread-invisible', M_E1, r'verdeckt'), 'c2': ('E1/unread-invisible', M_E1, r'verdeckt'),
-    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd5': ('E2/baseurl-multiple', 'DASH-Stream erkannt – nicht speicherbar', r'^Manifest nennt mehrere Server-Alternativen \(BaseURL\) – noch nicht unterstützt$'),
+    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd8': ('E2/alt-mixed', M_E2, r'verschiedenen Server-Alternativen \(CDN-Wechsel\)'),
     'e3': ('E3/coverage', 'DASH-Stream zugeordnet – nicht speicherbar', r'^Manifest widersprüchlich: Tonspur 24 s statt 20 s$'),
     'e1': ('E2/uncheckable', 'DASH-Stream erkannt – Zuordnung hier nicht möglich', r'^Stream-Form \(Byte-Bereiche einer Datei\) erlaubt keinen sicheren Nachweis$'),
     'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
@@ -454,6 +460,7 @@ with sync_playwright() as p:
                 got[0] = helper.cmd('dl-files')
                 r['file'] = got[0] if got[0] != f0 else ''
                 r['new_files'] = [x for x in got[0].split()[1:] if x not in f0.split()[1:]]
+                r['dl_hosts'] = sorted({x['host'] for x in HITS[n2:] if re.search(r'(init|chunk)-', x['path'])})   # S4b-6: Hosts der Helfer-Abrufe
                 r['helper_clean'] = r['helper_clean'] and not any(x['cookie'] or x['auth'] for x in HITS[n2:])
                 d3 = diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
             if sid.startswith('c') or sid == 'a2w':   # S4b-3: Relay-Spur beider Seiten (anonym)
@@ -488,6 +495,8 @@ with sync_playwright() as p:
             if ex.get('noplan'): check('[%s] Funktion: kein dashplan – der Helfer lädt das MPD nicht' % sid, r.get('mpd_after_menu') == 0, r.get('mpd_after_menu'))
             if ex.get('plan') == 'rejected': check('[%s] Funktion: Helfer lehnt beim Plan ab' % sid, not r.get('plan') and 'abgelehnt' in r.get('helper_line', ''), r.get('helper_line'))
             elif ex.get('plan'): check('[%s] Funktion: Planoptionen %s' % (sid, ' + '.join(x.split(' ')[0] for x in ex['plan'])), sorted(x[0] for x in r.get('plan', [])) == sorted(ex['plan']), r.get('plan') or r.get('toast'))
+            if sid == 'd5':   # S4b-6: der Helfer lud alle Init-/Stückabrufe über die ZWEITE BaseURL (CDN-Host), keinen über die erste
+                check('[d5] Funktion: Download vollständig über die zweite BaseURL (alle Stückabrufe an %s)' % OTHER_NAME, r.get('dl_hosts') == [OTHER], r.get('dl_hosts'))
             if ex.get('file'):
                 sizes = [int(x.rsplit(':', 1)[1]) for x in r.get('new_files', []) if ':' in x]
                 check('[%s] Funktion: genau EIN Download trotz Doppeltipp, Datei vollständig (%s Byte)' % (sid, '/'.join(map(str, sorted(FILE_OK)))), len(sizes) == 1 and sizes[0] in FILE_OK, r.get('new_files'))

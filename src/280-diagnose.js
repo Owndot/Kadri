@@ -46,7 +46,8 @@
     // Nur diese vollständigen festen Codes des gepinnten Helpers sind öffentliche Protokollbegriffe.
     // Einige sind ≥ 20 Zeichen lang und wurden bisher wie private Kennungen entfernt. Keine allgemeine
     // Ausnahme für „blocked_*“, Unterstriche oder längere Fehlertexte: unbekannte Werte bleiben verborgen.
-    const publicCodes = new Set(['no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
+    // (S4b-6: feste Codes der Server-Alternativen)
+    const publicCodes = new Set(['baseurl-undetermined', 'dash-baseurl-undetermined', 'mpd-baseurl-undetermined', 'dash_baseurl_undetermined', 'mpd_baseurl_undetermined', 'no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
       'blocked_automatic_retry', 'blocked_bad_argument', 'blocked_body_too_large', 'blocked_credential_header',
       'blocked_credentials_in_url', 'blocked_headers_too_large', 'blocked_redirect_target',
       'blocked_redirect_without_location', 'blocked_too_many_redirects',

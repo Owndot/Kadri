@@ -152,6 +152,10 @@
     'Aufbau nicht eindeutig (z. B. mehrere Server-Alternativen)': 'Structure ambiguous (e.g. several server alternatives)',
     // S4b-5: Vorprüfung im Gleichlauf mit dem Helfer
     'Ladebeginn der Stücke nicht feststellbar – kein sicherer Nachweis möglich': 'Segment request start cannot be determined – no reliable proof possible',
+    'Stücke kamen von verschiedenen Server-Alternativen (CDN-Wechsel) – Video weiterlaufen lassen und erneut tippen': 'Segments came from different server alternatives (CDN switch) – let the video play and tap again',
+    'Stücke passen zu verschiedenen Server-Alternativen – keine eindeutige Auswahl': 'Segments match different server alternatives – no unique choice',
+    'Server-Alternative für diesen Stream nicht eindeutig bestimmbar': 'The server alternative for this stream cannot be determined uniquely',
+    'Diese Helfer-App-Version kennt keine Server-Alternativen (mehrere BaseURL)': 'This helper app version does not support server alternatives (several BaseURL)',
     'DASH-Stream erkannt – nicht speicherbar': 'DASH stream detected – cannot be saved',
     'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt': 'The manifest lists several server alternatives (BaseURL) – not supported yet',
     'Manifest widersprüchlich': 'Manifest contradicts itself',

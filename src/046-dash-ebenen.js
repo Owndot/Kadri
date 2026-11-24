@@ -46,12 +46,14 @@
   }
 
   const DASH_LV_E2 = { 'keine-treffer': 'none', 'zu-wenig-folge': 'few', 'nicht-aktiv': 'stale', 'mehrere-videos': 'multi-video',
-    konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable', 'start-unknown': 'start-unknown' };
+    konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable', 'start-unknown': 'start-unknown',
+    // S4b-6: mehrere BaseURL – Wechsel der Alternative innerhalb einer Folge bzw. widersprüchliche Alternativen
+    'alt-mixed': 'alt-mixed', 'alt-competing': 'alt-competing' };
   const DASH_LV_E3 = { 'dash-live': 'live', 'dash-type': 'live', 'dash-protected': 'protected', 'dash-multiperiod': 'multiperiod',
     'dash-duration-unknown': 'duration-unknown', 'dash-duration-limit': 'duration-limit', 'dash-no-audio': 'no-audio', 'dash-no-video': 'no-video',
     'dash-addressing': 'addressing', 'dash-codec': 'format', 'dash-audio-codec': 'audio-codec', 'dash-unsupported': 'unsupported',
     // S4b-5: Gründe aus der Vorprüfung im Gleichlauf mit dem Helfer (src/039 dfpGate)
-    'dash-coverage': 'coverage', 'dash-timeline': 'timeline', 'dash-limit': 'limit' };
+    'dash-coverage': 'coverage', 'dash-timeline': 'timeline', 'dash-limit': 'limit', 'dash-baseurl-undetermined': 'baseurl-undetermined' };
   // Reine Entscheidung. inp: {
   //   read: gültiges MPD gelesen · invalid: nur verworfene MPD-Texte · invisible: MSE läuft, aber kein Medienabruf sichtbar ·
   //   gone/changed: Angebot zwischen Prüfung und Tipp verschwunden bzw. Quelle gewechselt ·
@@ -83,6 +85,7 @@
     const fmt = inp.fmt || { video: [], audio: [], container: [] };
     if (inp.protectedSource) L.e3 = { ok: false, code: 'protected' };
     else if (!L.e1.ok) L.e3 = { ok: false, code: 'n/a' };
+    else if (inp.altCode === 'baseurl-undetermined') L.e3 = { ok: false, code: 'baseurl-undetermined' };   // S4b-6
     else if (inp.fpError || !inp.gate) L.e3 = { ok: false, code: inp.fpCode === 'baseurl-multiple' ? 'baseurl-multiple' : 'unchecked' };
     else if (!inp.gate.ok) {
       let c = DASH_LV_E3[inp.gate.reason] || 'unsupported';
@@ -96,6 +99,7 @@
     else if (!cp.reachable) L.e4 = { ok: false, code: cp.error === 'unpaired' || cp.error === 'rejected' ? cp.error : 'unreachable' };
     else if (!cp.supported) L.e4 = { ok: false, code: 'no-downloads' };
     else if (!cp.dash) L.e4 = { ok: false, code: 'no-dash' };
+    else if (inp.altCode === 'helper-no-alt') L.e4 = { ok: false, code: 'no-alt' };   // S4b-6: Helfer prüft keine Alternativen
     // E5 (nur Diagnose)
     const j = inp.job;
     if (j) {
@@ -132,6 +136,8 @@
       'E2/uncheckable': ['DASH-Stream erkannt – Zuordnung hier nicht möglich', 'Stream-Form (Byte-Bereiche einer Datei) erlaubt keinen sicheren Nachweis'],
       'E2/changed': ['DASH-Stream erkannt – Quelle hat sich geändert', 'Erneut tippen'],
       'E2/epoch-late': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Kadri sieht dieses Video erst seit kurzem – einige Sekunden weiterlaufen lassen und erneut tippen'],
+      'E2/alt-mixed': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Stücke kamen von verschiedenen Server-Alternativen (CDN-Wechsel) – Video weiterlaufen lassen und erneut tippen'],
+      'E2/alt-competing': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Stücke passen zu verschiedenen Server-Alternativen – keine eindeutige Auswahl'],
       'E2/start-unknown': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Ladebeginn der Stücke nicht feststellbar – kein sicherer Nachweis möglich'],
       'E2/baseurl-multiple': ['DASH-Stream erkannt – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/format': ['DASH-Stream zugeordnet – Format wird noch nicht gespeichert', null],
@@ -149,6 +155,7 @@
       'E3/coverage': ['DASH-Stream zugeordnet – nicht speicherbar', null],
       'E3/timeline': ['DASH-Stream zugeordnet – nicht speicherbar', 'Manifest widersprüchlich: Zeitleiste der Stücke mit Lücken oder Überschneidungen'],
       'E3/limit': ['DASH-Stream zugeordnet – nicht speicherbar', 'Zu viele Stücke oder zu groß für einen Download'],
+      'E3/baseurl-undetermined': ['DASH-Stream zugeordnet – nicht speicherbar', 'Server-Alternative für diesen Stream nicht eindeutig bestimmbar'],
       'E3/baseurl-multiple': ['DASH-Stream zugeordnet – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/unchecked': ['DASH-Stream zugeordnet – Manifest nicht prüfbar', 'Aufbau nicht eindeutig (z. B. mehrere Server-Alternativen)'],
       'E3/n/a': ['DASH-Stream – nicht speicherbar', 'Geschützt (DRM)'],
@@ -156,6 +163,7 @@
       'E4/rejected': ['DASH-Stream zugeordnet – Helfer-App erkennt die Kopplung nicht mehr', 'Neu koppeln'],
       'E4/unreachable': ['DASH-Stream zugeordnet – Helfer-App nicht erreichbar', 'App öffnen und erneut tippen'],
       'E4/no-downloads': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version kann keine direkten Downloads'],
+      'E4/no-alt': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version kennt keine Server-Alternativen (mehrere BaseURL)'],
       'E4/no-dash': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version speichert kein DASH'],
     };
     const e = T[out.code] || T[first + '/' + 'unsupported'] || ['DASH-Stream – nicht speicherbar', ''];
@@ -200,6 +208,9 @@
     let mse = false;
     try { mse = !!v && (!!v.srcObject || /^blob:/.test(v.currentSrc || '')); } catch (e) {}
     const fp = cand ? cand.p.dashFp : null, oc = offer && offer.code ? offer.code : '';
+    // S4b-6: mehrere BaseURL – Auswahl und Vorprüfung aus der Bindung, auch wenn (noch) kein Angebot besteht (Helfer unbekannt)
+    let multiOffer = null;
+    try { if (fp && fp.multi && !fp.error) multiOffer = (offer && offer.offer) || dashOfferOf(fp.url, v ? dashFromOf(v) : 0); } catch (e) { multiOffer = null; }
     let job = null;
     try { job = hdlDiags.find((d) => d.dash === true || d.type === 'dash') || null; } catch (e) {}
     const lv = dashLevels({
@@ -208,11 +219,14 @@
       bound: mediaDashState(snaps) === 'bound', bindReason: r.reason || '', cls: cls,
       epochLate: (() => { try { const ep = v ? dashEpochOf(v) : null; return !!ep && (ep.by === 'beobachtet' || ep.by === 'quellwechsel') && Date.now() - ep.at < 30000; } catch (e) { return false; } })(),
       protectedSource: oc === 'protected' || ents.some((s) => s.protection === 'encrypted' || s.protection === 'drm'),
-      gate: fp && !fp.error ? fp.gate : null, fpError: !fp || !!fp.error, fpCode: fp && fp.error ? String(fp.error) : '',
+      // S4b-6: mehrere BaseURL – Vorprüfung der Projektion der gebundenen Auswahl (dashOfferOf), nicht die der ersten Alternative
+      gate: fp && !fp.error ? (fp.multi ? (multiOffer ? multiOffer.gate : null) : fp.gate) : null,
+      fpError: !fp || !!fp.error, fpCode: fp && fp.error ? String(fp.error) : '',
+      altCode: /^(baseurl-undetermined|helper-no-alt)$/.test(oc) ? oc : fp && fp.multi && !fp.error && r.state === 'bound' && !(multiOffer && multiOffer.alt) ? 'baseurl-undetermined' : '',
       fmt: (cand && cand.p.dashFmt) || { video: [], audio: [], container: [] },
       caps: caps || { known: false }, job: job }, typeof tr === 'function' ? tr : null);
     lv.offer = !!(offer && offer.offer);
     return lv;
   }
   // Fähigkeit der Helfer-App für dashLevels aus einer caps-Antwort ({ reachable, supported, dash, error }) bzw. null
-  const dashCapsOf = (c) => (c ? { known: true, reachable: !!c.reachable, supported: !!c.supported, dash: !!(c.supported && c.dash), error: c.error || '' } : { known: false });
+  const dashCapsOf = (c) => (c ? { known: true, reachable: !!c.reachable, supported: !!c.supported, dash: !!(c.supported && c.dash), alt: !!(c.supported && c.dash && c.dashAlt), error: c.error || '' } : { known: false });

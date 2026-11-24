@@ -494,13 +494,24 @@
 
     // dashplan: Optionen (Qualität × Ton) für einen vom Nutzer gewählten, an genau dieses Video gebundenen DASH-Stream.
     // fp: Kadris Fingerabdruck des gebundenen MPD (der Helfer lehnt ein abweichendes MPD ab); played: Hinweis.
-    function dashPlan(rawUrl, fp, bind, played, rawCtx) {
+    function dashPlan(rawUrl, fp, bind, played, rawCtx, alt) {
+      // S4b-6: Fähigkeit VOR dem Einreihen abfragen (capabilities() reiht sich selbst in serial ein – sonst Verklemmung)
+      if (alt !== undefined && alt !== null) {
+        return capabilities().then((c) => {
+          if (!c || !c.dashAlt) { const e = new Error('plan'); e.kind = 'plan'; e.reason = 'alt_unsupported'; throw e; }
+          return dashPlanSerial(rawUrl, fp, bind, played, rawCtx, alt);
+        });
+      }
+      return dashPlanSerial(rawUrl, fp, bind, played, rawCtx, alt);
+    }
+    function dashPlanSerial(rawUrl, fp, bind, played, rawCtx, alt) {
       return serial(async () => {
         const url = normalizeUrl(rawUrl);
         if (!url || typeof fp !== 'string' || !/^[0-9a-f]{64}$/.test(fp)) { const e = new Error('input'); e.kind = 'input'; throw e; }
         const ctx = await contextFor(rawCtx, true);
         const key = await digest('dash\n' + url);
-        const args = Object.assign({ url, fp, bind }, played ? { played } : {}, ctx || {});
+        // (S4b-6: mit Auswahl nur an einen Helfer, der sie prüft – oben vor dem Einreihen geprüft)
+        const args = Object.assign({ url, fp, bind }, played ? { played } : {}, ctx || {}, alt ? { alt } : {});
         const r = await channel.download('dashplan', args);
         if (r && r.ok === false) {
           const ok = typeof r.reason === 'string' && /^[a-z0-9_]{1,40}$/.test(r.reason);
@@ -510,7 +521,7 @@
         }
         const p = dashPlanOf(r);
         if (!p) { const e = new Error('protocol'); e.kind = 'protocol'; throw e; }
-        keepPlan(Object.assign({ kind: 'dash', key, url, fp, bind, played: played || '', ctx, at: now() }, p));
+        keepPlan(Object.assign({ kind: 'dash', key, url, fp, bind, played: played || '', ctx, alt: alt || '', at: now() }, p));
         const all = await load();
         for (const x of all) if (x.kind === 'dash' && x.key === key && !TERMINAL.has(x.state)) await stillActive(all, x);
         const job = all.find((x) => x.key === key && x.kind === 'dash' && !TERMINAL.has(x.state));
@@ -526,10 +537,10 @@
         const stale = (e && e.kind === 'plan-rejected' && e.reason === 'plan_stale') || (e && e.kind === 'stale-session' && e.notSent);
         if (!stale) throw e;
         const want = plan.options.find((o) => o.id === option);
-        const fresh = dashPlanOf(await channel.download('dashplan', Object.assign({ url: plan.url, fp: plan.fp, bind: plan.bind }, plan.played ? { played: plan.played } : {}, plan.ctx || {})));
+        const fresh = dashPlanOf(await channel.download('dashplan', Object.assign({ url: plan.url, fp: plan.fp, bind: plan.bind }, plan.played ? { played: plan.played } : {}, plan.ctx || {}, plan.alt ? { alt: plan.alt } : {})));
         const again = fresh && want && fresh.options.filter((o) => sameDashOption(o, want));
         if (!again || again.length !== 1) { const e2 = new Error('plan-changed'); e2.kind = 'plan-rejected'; e2.reason = 'plan_changed'; throw e2; }
-        const np = Object.assign({ kind: 'dash', key: plan.key, url: plan.url, fp: plan.fp, bind: plan.bind, played: plan.played, ctx: plan.ctx, at: now() }, fresh);
+        const np = Object.assign({ kind: 'dash', key: plan.key, url: plan.url, fp: plan.fp, bind: plan.bind, played: plan.played, ctx: plan.ctx, alt: plan.alt || '', at: now() }, fresh);
         keepPlan(np);
         return apply(j, await channel.download('dashstart', args(np, again[0].id)));
       }
@@ -577,6 +588,7 @@
               ctxCaps = { at: now(), ok: value.ctx };
               // S3c: DASH nur, wenn der Helfer genau dieses Profil und diesen Fingerabdruck meldet (alte Helfer: kein Angebot)
               value.dash = !!(st && dashCapable(st));
+              value.dashAlt = value.dash && st.dashdl.alt === 1;   // S4b-6: dashplan v2 (Auswahl unter mehreren BaseURL)
               dashCtxCaps = { at: now(), ok: value.dash && st.dashdl.ctx === 1 };
             } catch (e) { value.hls = false; value.dash = false; }
           }

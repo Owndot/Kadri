@@ -322,6 +322,7 @@
         st.hdl.ok = !!(v && v.supported);
         st.hdl.hls = !!(v && v.supported && v.hls);   // P4b: nur ein Helfer, der HLS meldet (alte: nie)
         st.hdl.dash = !!(v && v.supported && v.dash);   // S3c: nur ein Helfer, der "dashdl" meldet
+        st.hdl.dashAlt = !!(v && v.supported && v.dash && v.dashAlt);   // S4b-6: und Server-Alternativen prüft
         if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
         if (!st.hdl.ok) { st.hdl.checked = u; drop('unsupported'); return; }
         hdlMark('find');
@@ -421,7 +422,8 @@
       st.hdl.busy = true;
       toast('Helfer-App prüft den Stream …');
       const info = Object.assign(hdlDiagInfo(d.x, d.offer.url), { stream: true, dash: true, stage: 'dashplan' });
-      helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {})).then((r) => {
+      helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {},
+        d.offer.alt ? { alt: d.offer.alt } : {})).then((r) => {
         st.hdl.busy = false;
         if (!r || !r.ok || !r.value || !Array.isArray(r.value.options)) hdlDiagFailure(info, r);
         if (vp !== st) return;
@@ -502,7 +504,7 @@
       // S3c: gebundenes DASH mit Vorprüfung und Fähigkeit (dashOfferFor) – sonst ein fester Grund für die Unterzeile des
       // Hinweises (dashWhy; nur zusammen mit dem Hinweis „DASH-Stream erkannt“ gezeigt)
       let dashD = null;
-      try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig)); } catch (e) { dashD = null; }
+      try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig), { reachable: true, dash: st.hdl.dash, dashAlt: st.hdl.dashAlt }); } catch (e) { dashD = null; }
       if (dashD && dashD.offer) dashD.v = orig;   // (für die Nachprüfung vor Auswahl und Start)
       const dashOk = dashD && dashD.offer ? dashD : null;
       const dashWhy = dashD && dashD.reason ? dashD.reason : '';

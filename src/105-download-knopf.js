@@ -35,7 +35,7 @@
   // selectDashStreams), Kadri hat es gelesen und daraus Fingerabdruck und S3-Vorprüfung berechnet (src/039: fMP4/H.264 mit
   // AAC-LC, statisch, eine Periode, ohne ContentProtection) und der Helfer meldet die Fähigkeit "dashdl" (caps.dash).
   // Ergebnis: { x, offer } – sonst { reason } (fester Hinweistext) oder null (kein gebundenes DASH-Manifest).
-  function dashOfferFor(list, from) {
+  function dashOfferFor(list, from, caps) {
     // (S3g: je Grund zusätzlich ein fester Code für die anonyme Diagnose – die Entscheidung selbst ist unverändert)
     const bound = (list || []).filter((x) => x.state === 'attemptable' || x.reason === 'helper-unavailable');
     if (!bound.length) return (list || []).some((x) => x.reason === 'protected') ? { reason: 'geschützt (DRM) – nicht speicherbar', code: 'protected' } : null;
@@ -46,12 +46,15 @@
     const offer = dashOfferOf(sel.url, from);
     if (!offer) return { reason: 'Manifest nicht mehr verfügbar – Video kurz abspielen und erneut tippen', code: 'manifest-gone' };
     if (offer.error === 'baseurl-multiple') return { reason: 'mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt', code: 'baseurl-multiple' };
+    // S4b-6: mehrere BaseURL – nur mit eindeutig aus der Bindung bestimmter Alternative und einem Helfer, der sie prüft (alt)
+    if (offer.multi && !offer.alt) return { reason: 'Server-Alternative nicht eindeutig bestimmbar', code: offer.altError === 'alt-mixed' || offer.altError === 'alt-competing' ? offer.altError : 'baseurl-undetermined' };
+    if (offer.multi && caps && caps.reachable && caps.dash && !caps.dashAlt) return { reason: 'diese Helfer-App-Version kennt keine Server-Alternativen', code: 'helper-no-alt' };
     if (offer.error || !offer.fp) return { reason: 'Manifest nicht prüfbar', code: 'manifest-unchecked' };
     if (!offer.gate || !offer.gate.ok) return { reason: dashGateText(offer.gate && offer.gate.reason), code: dashGateCode(offer.gate && offer.gate.reason) };
     return { x: x, sel: sel, offer: offer };
   }
   const DASH_GATE_CODES = ['dash-live', 'dash-protected', 'dash-multiperiod', 'dash-codec', 'dash-audio-codec', 'dash-no-audio', 'dash-no-video',
-    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit', 'dash-coverage', 'dash-timeline', 'dash-limit'];
+    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit', 'dash-coverage', 'dash-timeline', 'dash-limit', 'dash-baseurl-undetermined'];
   const dashGateCode = (r) => (DASH_GATE_CODES.indexOf(r) >= 0 ? r : 'dash-unsupported');
   function dashGateText(r) {
     return ({ 'dash-live': 'Live-Stream – nicht speicherbar', 'dash-protected': 'geschützt (DRM) – nicht speicherbar',
@@ -59,7 +62,8 @@
       'dash-audio-codec': 'Tonformat nicht unterstützt (nur AAC-LC)', 'dash-no-audio': 'ohne Ton – nicht speicherbar',
       'dash-no-video': 'kein Video', 'dash-addressing': 'Stream-Form nicht unterstützt', 'dash-duration-unknown': 'Länge unbekannt – nicht speicherbar',
       'dash-duration-limit': 'zu lang (über 48 h)', 'dash-coverage': 'Manifest widersprüchlich (Länge der Spuren)',
-      'dash-timeline': 'Manifest widersprüchlich (Zeitleiste)', 'dash-limit': 'zu viele Stücke oder zu groß' })[r] || 'Stream-Form nicht unterstützt';
+      'dash-timeline': 'Manifest widersprüchlich (Zeitleiste)', 'dash-limit': 'zu viele Stücke oder zu groß',
+      'dash-baseurl-undetermined': 'Server-Alternative nicht eindeutig bestimmbar' })[r] || 'Stream-Form nicht unterstützt';
   }
   // Optionen des Helfers den Darstellungen des eigenen Modells zuordnen: Höhe, Breite, Sprache und Summe der Bandbreiten
   // (Video + Ton) müssen GENAU ein Paar ergeben – sonst ist die Option nicht eindeutig zuordenbar und entfällt. Der Ton wird
@@ -102,7 +106,7 @@
       now = dashOfferFor(list, dashFromOf(d.v));
     } catch (e) { return false; }
     if (!now || !now.offer || now.x.sourceId !== d.x.sourceId || now.x.revision !== d.x.revision) return false;
-    if (now.offer.url !== d.offer.url || now.offer.fp !== d.offer.fp) return false;
+    if (now.offer.url !== d.offer.url || now.offer.fp !== d.offer.fp || (now.offer.alt || '') !== (d.offer.alt || '')) return false;   // (S4b-6: auch dieselbe Alternative)
     // kein anderes MPD inzwischen an dieses Video gebunden oder mit ihm in Konkurrenz (dieselben Stücke beschrieben) – die
     // Registry hält nur Bindungen; eine Konkurrenz zeigt allein die aktuelle Entscheidung (src/060 dashBindingFor)
     try {
@@ -129,7 +133,7 @@
     const snap2 = mediaRegistry.snapshot(ctx);
     const allD = selectDashStreams(snap2, { dash: !!(caps && caps.dash) }).map((o) => Object.assign({ ctx: ctx }, o));
     let dashOffer = null;
-    try { dashOffer = dashOfferFor(allD, dashFromOf(v)); } catch (e) { dashOffer = null; }
+    try { dashOffer = dashOfferFor(allD, dashFromOf(v), caps); } catch (e) { dashOffer = null; }
     if (dashOffer && dashOffer.offer) dashOffer.v = v;   // (für die Nachprüfung vor Auswahl und Start)
     // S4b: dieselbe Ebenen-Entscheidung wie Player-Menü und Diagnose (src/046)
     let dashLv = null;
@@ -340,7 +344,8 @@
     const info = Object.assign(hdlSourceInfo(d.x), { stream: true, dash: true, stage: 'dashplan' });
     toast('Helfer-App prüft den Stream …');
     fuiLog(rid, 'plan:helfer-send', '');
-    const r = await helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {}));
+    const r = await helperDl('dashplan', Object.assign({ url: d.offer.url, fp: d.offer.fp, bind: sel.bind }, dashPlayedArg(d.offer) ? { played: dashPlayedArg(d.offer) } : {},
+      d.offer.alt ? { alt: d.offer.alt } : {}));
     fuiLog(rid, 'plan:helfer-antwort', (!r ? 'keine' : r.ok && r.value && Array.isArray(r.value.options) ? 'ok:' + r.value.options.length : 'fehler:' + hdlDiagCode(r.error && (r.error.reason || r.error.kind))) + ' ms=' + (Date.now() - t0));
     if (!r) { hdlDiagFailure(info, r); toast('Helfer-App nicht erreichbar'); return; }
     if (!r.ok || !r.value || !Array.isArray(r.value.options)) { hdlDiagFailure(info, r); toast((r.error && r.error.message) || 'Stream lässt sich nicht speichern'); return; }

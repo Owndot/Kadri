@@ -127,16 +127,20 @@
     const xs = p.split(',').map(Number);
     return xs.every((x) => x <= 4095) && new Set(xs).size === xs.length;
   }
+  const DASH_ALT = /^(m|[psr](0|[1-9][0-9]{0,3})):(0|[1-9])(;(m|[psr](0|[1-9][0-9]{0,3})):(0|[1-9])){0,63}$/;
+  const dashAltValid = (x) => typeof x === 'string' && x.length <= 512 && DASH_ALT.test(x);
   function dashMessage(op, a) {
     if (!a || typeof a !== 'object') return null;
     const keys = Object.keys(a);
     const bind = hlsBind(a.bind);
     if (!bind) return null;
     if (op === 'dashplan') {
-      if (!keys.every((k) => k === 'url' || k === 'fp' || k === 'bind' || k === 'played' || k === 'ref' || k === 'ua')) return null;
+      if (!keys.every((k) => k === 'url' || k === 'fp' || k === 'bind' || k === 'played' || k === 'ref' || k === 'ua' || k === 'alt')) return null;
       const url = typeof a.url === 'string' ? a.url : '';
       if (!url || url.length > 2048 || !DL_URL.test(url) || typeof a.fp !== 'string' || !DASH_FP.test(a.fp)) return null;
-      const m = { op, v: 1, url, fp: a.fp, bind };
+      // S4b-6: Auswahl unter mehreren BaseURL → dashplan v2 (Helfer prüft sie selbst am MPD); genau die Form BaseSelection
+      if (a.alt !== undefined && !dashAltValid(a.alt)) return null;
+      const m = a.alt !== undefined ? { op, v: 2, url, fp: a.fp, bind, alt: a.alt } : { op, v: 1, url, fp: a.fp, bind };
       if (a.played !== undefined) { if (!dashPlayedValid(a.played)) return null; m.played = a.played; }
       return withContext(m, a);
     }

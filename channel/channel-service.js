@@ -79,7 +79,7 @@
     hlsstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.hlsStart(m.planId, m.option, m.name) },
     hlsresume: { keys: ['id', 'planId', 'option'], ok: (s) => fromTab(s), run: (m) => downloads.hlsResume(m.id, m.planId, m.option) },
     // S3c: DASH-Streams – nur aus Kadris Inhaltsskript und nur nach Tipp (Plan mit Fingerabdruck des gebundenen MPD, Start)
-    dashplan: { keys: ['url', 'fp', 'bind', 'played'], ok: (s) => fromTab(s), run: (m, s) => downloads.dashPlan(m.url, m.fp, m.bind, m.played, pageContext(s)) },
+    dashplan: { keys: ['url', 'fp', 'bind', 'played', 'alt'], ok: (s) => fromTab(s), run: (m, s) => downloads.dashPlan(m.url, m.fp, m.bind, m.played, pageContext(s), m.alt) },
     dashstart: { keys: ['planId', 'option', 'name'], ok: (s) => fromTab(s), run: (m) => downloads.dashStart(m.planId, m.option, m.name) },
   };
   const HEX = (n) => new RegExp('^[0-9a-f]{' + n + '}$');

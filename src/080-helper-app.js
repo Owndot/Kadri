@@ -22,7 +22,7 @@
   function hdlCapsNote(r) {
     const v = r && r.ok && r.value;
     hdlCapsSeen = { at: Date.now(), reachable: !!(v && v.reachable), supported: !!(v && v.supported), hls: !!(v && v.supported && v.hls),
-      dash: !!(v && v.supported && v.dash), error: hdlDiagCode((v && v.error) || (r && r.error && r.error.kind)) };
+      dash: !!(v && v.supported && v.dash), dashAlt: !!(v && v.supported && v.dash && v.dashAlt), error: hdlDiagCode((v && v.error) || (r && r.error && r.error.kind)) };
   }
   // ---------- Diagnose der Helfer-Downloads (Seitenleben, NICHT an den Player gebunden; nie eine Adresse) ----------
   // Je gestartetem oder gefundenem Auftrag: Herkunft/Bindung/Art der Quelle (aus der Registry, ohne Adresse), Alter beim

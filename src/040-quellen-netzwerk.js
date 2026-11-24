@@ -370,7 +370,9 @@
         try {
           const doc = new URL(base, location.href).href.split('#')[0];
           const f = dashFingerprint(text, parsed, doc);
-          info.dashFp = f && f.fp ? { fp: f.fp, gate: f.gate, url: doc } : { error: (f && f.error) || 'fp' };
+          info.dashFp = f && f.fp ? { fp: f.fp, gate: f.gate, url: doc, multi: !!f.multi } : { error: (f && f.error) || 'fp' };
+          // S4b-6: mehrere BaseURL – für die Vorprüfung der später gebundenen Auswahl (dashGateFor) Text und Baum behalten
+          if (f && f.fp && f.multi) info.dashSrc = { text: text, parsed: parsed, doc: doc };
         } catch (e) { info.dashFp = { error: 'fp' }; }
         info.dashHits = []; info.dashInit = 0;
         [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
@@ -425,7 +427,7 @@
     const m = dashMatchSegment(info.dashIdx, k);
     if (!m) return;
     if (m.init) { info.dashInit++; return; }
-    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t, s: typeof s === 'number' && isFinite(s) && s > 0 ? s : null });
+    info.dashHits.push({ rep: m.rep, idx: m.idx, t: t, s: typeof s === 'number' && isFinite(s) && s > 0 ? s : null, alt: m.alt || '' });
     if (info.dashHits.length > 3000) info.dashHits.shift();
   }
   function dashSee(u, arrived, it, started) {
@@ -495,7 +497,19 @@
     const n = new Map();
     (p.dashHits || []).forEach((h) => { const st = resAt(h); if (st !== null && st >= (from || 0) && Number.isInteger(h.rep) && h.rep >= 0 && h.rep <= 4095) n.set(h.rep, (n.get(h.rep) || 0) + 1); });
     const played = Array.from(n.entries()).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 8).map((x) => x[0]);
-    return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
+    if (!p.dashFp.multi) return { url: p.dashFp.url, fp: p.dashFp.fp, gate: p.dashFp.gate, played: played };
+    // S4b-6: mehrere BaseURL – die Auswahl genau aus der Bindung (dieselbe Entscheidung wie dashBindDecision: nur Treffer mit
+    // bekanntem Anfragebeginn ab der Epoche, je Darstellung eine Alternative, widerspruchsfrei); Vorprüfung dieser Projektion
+    let alt = '', why = '';
+    try {
+      const r = dashBindDecision({ manifests: [{ key: 'x', hits: p.dashHits || [], duration: 0, checkable: true }], from: from || 0, now: Date.now(), video: {} }).x;
+      if (r.reason === 'alt-mixed' || r.reason === 'alt-competing') why = r.reason; else alt = r.alt || '';
+    } catch (e) { why = 'alt-unknown'; }
+    if (!alt) return { url: p.dashFp.url, fp: p.dashFp.fp, multi: true, altError: why || 'baseurl-undetermined', gate: null, played: played };
+    // (je Auswahl einmal gerechnet: das MPD ändert sich unter derselben Adresse nicht, ein neuer Text ergibt ein neues info)
+    let gate = p.dashGateAlt && p.dashGateAlt.alt === alt ? p.dashGateAlt.gate : null;
+    if (!gate) { try { gate = dashGateFor(p.dashSrc.text, p.dashSrc.parsed, p.dashSrc.doc, alt); } catch (e) { gate = null; } p.dashGateAlt = { alt: alt, gate: gate }; }
+    return { url: p.dashFp.url, fp: p.dashFp.fp, multi: true, alt: alt, gate: gate, played: played };
   }
   function dashSummaryOf(u) { let k = ''; try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) {} const p = k && dashInfo.get(k); return p && p.dash ? p.dash : null; }
   // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)

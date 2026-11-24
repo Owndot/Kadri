@@ -295,14 +295,63 @@
       return { scheme: p.attr('schemeIdUri'), value: p.attr('value'), extra: extra };
     });
   }
-  function dfpBaseOf(e, outer) {
+  // ---------- S4b-6: mehrere BaseURL (Alternativen) wie DashManifest/BaseSelection des Helfers ----------
+  // Auswahl: je Element mit MEHREREN BaseURL der Index der gewählten – „m:1;p0:0;s3:1;r7:0“ (Schlüssel m, p<Periode>, s<Set>,
+  // r<Darstellung>, Nummern über alle Perioden in Dokumentreihenfolge; aufsteigend, je einmal). sel: null = mehrere BaseURL
+  // fatal (wie bisher), DFP_FIRST = jeweils die erste (Abdruck, Vorprüfung vor der Bindung), sonst dfpSelection(alt).
+  const DFP_ALT = Object.freeze({ PER_ELEMENT: 8, COMBINATIONS: 16, ENTRIES: 64, CHARS: 512 });
+  const DFP_FIRST = Object.freeze({ first: true });
+  const dfpSelOrder = (a, b) => { const ka = 'mpsr'.indexOf(a[0]), kb = 'mpsr'.indexOf(b[0]); return ka !== kb ? ka - kb : a.length === 1 ? 0 : Number(a.slice(1)) - Number(b.slice(1)); };
+  function dfpSelection(alt) {
+    if (typeof alt !== 'string' || !alt || alt.length > DFP_ALT.CHARS) dfpFail('alt-invalid');
+    const pick = new Map();
+    let prev = null;
+    alt.split(';').forEach((e) => {
+      const x = /^(m|[psr](?:0|[1-9][0-9]{0,3})):(0|[1-9])$/.exec(e);
+      if (!x || pick.has(x[1]) || (prev !== null && dfpSelOrder(prev, x[1]) >= 0)) dfpFail('alt-invalid');
+      pick.set(x[1], Number(x[2])); prev = x[1];
+      if (pick.size > DFP_ALT.ENTRIES) dfpFail('alt-invalid');
+    });
+    return { first: false, pick: pick, used: new Set() };
+  }
+  function dfpChoose(sel, key, count) {
+    if (sel.first) return 0;
+    if (!sel.pick.has(key)) return -1;
+    const i = sel.pick.get(key);
+    if (i >= count) dfpFail('alt-invalid');
+    sel.used.add(key);
+    return i;
+  }
+  function dfpRawBases(e) {
     const b = e.all('BaseURL');
-    if (!b.length) return outer;
-    if (b.length > 1) dfpFail('baseurl-multiple');
-    b[0].attrs.forEach((v, k) => { if (k.charAt(0) !== '{' && !DFP_BASEURL_ATTRS.has(k)) dfpFail('baseurl-attr'); });
-    const t = dfpTrim(b[0].text || '');
-    if (!t) dfpFail('baseurl-empty');
-    return dfpResolve(outer, t);
+    if (b.length > DFP_ALT.PER_ELEMENT) dfpFail('baseurl-limits');
+    return b.map((x) => {
+      x.attrs.forEach((v, k) => { if (k.charAt(0) !== '{' && !DFP_BASEURL_ATTRS.has(k)) dfpFail('baseurl-attr'); });
+      const t = dfpTrim(x.text || '');
+      if (!t) dfpFail('baseurl-empty');
+      return t;
+    });
+  }
+  // Basis einer Ebene: keine → äußere; eine → aufgelöst; mehrere → ohne Auswahl fatal, sonst die gewählte (null = unbestimmt)
+  function dfpBaseOf(outer, raw, key, sel) {
+    if (!raw.length) return outer;
+    if (raw.length === 1) return outer === null ? null : dfpResolve(outer, raw[0]);
+    if (!sel) dfpFail('baseurl-multiple');
+    const i = dfpChoose(sel, key, raw.length);
+    if (i < 0 || outer === null) return null;
+    return dfpResolve(outer, raw[i]);
+  }
+  // alle Kombinationen der Kette auflösen, begrenzt VOR dem Zusammenfassen; Ergebnis: Zahl verschiedener Basen
+  function dfpCombinations(doc, chain) {
+    let cur = [doc];
+    chain.forEach((raw) => {
+      if (!raw.length) return;
+      if (cur.length * raw.length > DFP_ALT.COMBINATIONS) dfpFail('baseurl-limits');
+      const next = [];
+      cur.forEach((b) => raw.forEach((t) => next.push(dfpResolve(b, t))));
+      cur = next;
+    });
+    return new Set(cur).size;
   }
   function dfpSegKinds(e) { if (DFP_SEG.reduce((n, k) => n + e.all(k).length, 0) > 1) dfpFail('addressing-multiple'); }
   const dfpSeg = (e) => e.kids.find((k) => DFP_SEG.indexOf(k.name) >= 0) || null;
@@ -397,25 +446,32 @@
   }
   function dfpCountAll(e, name) { let n = e.name === name ? 1 : 0; e.kids.forEach((k) => { n += dfpCountAll(k, name); }); return n; }
 
-  function dfpModel(root, documentUrl) {
+  function dfpModel(root, documentUrl, sel) {
     const h = documentUrl.indexOf('#');
     const doc = dfpCanonical(h >= 0 ? documentUrl.slice(0, h) : documentUrl);
     const ids = new Map();
     const ctx = { lists: new Map(), listResolved: 0, exps: new Map(), expanded: 0, id: (o) => { if (o === null || o === undefined) return '-'; if (!ids.has(o)) ids.set(o, ids.size); return String(ids.get(o)); } };
-    const m = { typeRaw: root.attr('type'), mpd: dfpOptDuration(root, 'mediaPresentationDuration'), base: dfpBaseOf(root, doc), periods: [], sets: [], reps: [] };
+    const mRaw = dfpRawBases(root);
+    const m = { typeRaw: root.attr('type'), mpd: dfpOptDuration(root, 'mediaPresentationDuration'), base: dfpBaseOf(doc, mRaw, 'm', sel), periods: [], sets: [], reps: [],
+      baseAlts: mRaw.length > 1 ? mRaw : null };
+    if (m.base === null) dfpFail('baseurl-undetermined');
     const pEls = root.all('Period');
     if (pEls.length > DFP.MAX_PERIODS) dfpFail('limits');
     pEls.forEach((pe) => {
-      const p = { index: m.periods.length, id: pe.attr('id'), start: dfpOptDuration(pe, 'start'), duration: dfpOptDuration(pe, 'duration'), base: dfpBaseOf(pe, m.base) };
+      const pRaw = dfpRawBases(pe);
+      const p = { index: m.periods.length, id: pe.attr('id'), start: dfpOptDuration(pe, 'start'), duration: dfpOptDuration(pe, 'duration'),
+        base: dfpBaseOf(m.base, pRaw, 'p' + m.periods.length, sel), baseAlts: pRaw.length > 1 ? pRaw : null };
+      if (p.base === null) dfpFail('baseurl-undetermined');
       m.periods.push(p);
       dfpSegKinds(pe);
       pe.all('AdaptationSet').forEach((ae) => {
         if (m.sets.length >= DFP.MAX_SETS) dfpFail('limits');
         const acp = dfpProps(ae, 'ContentProtection');
         const labels = ae.all('Label');
+        const aRaw = dfpRawBases(ae);
         const a = { index: m.sets.length, period: p.index, id: ae.attr('id'), group: ae.attr('group'), contentType: ae.attr('contentType'),
           mimeType: ae.attr('mimeType'), codecs: ae.attr('codecs'), lang: ae.attr('lang'), label: labels.length ? dfpTrim(labels[0].text || '') : null,
-          base: dfpBaseOf(ae, p.base), cp: acp, ess: dfpProps(ae, 'EssentialProperty'), sup: dfpProps(ae, 'SupplementalProperty'),
+          base: dfpBaseOf(p.base, aRaw, 's' + m.sets.length, sel), baseAlts: aRaw.length > 1 ? aRaw : null, cp: acp, ess: dfpProps(ae, 'EssentialProperty'), sup: dfpProps(ae, 'SupplementalProperty'),
           roles: dfpProps(ae, 'Role'), acc: dfpProps(ae, 'Accessibility'), ach: dfpProps(ae, 'AudioChannelConfiguration'), components: ae.all('ContentComponent').length };
         m.sets.push(a);
         dfpSegKinds(ae);
@@ -425,16 +481,20 @@
           const bwRaw = re.attr('bandwidth');
           const bw = bwRaw === null ? 0 : dfpU(bwRaw);
           if (bw > DFP.MAX_BANDWIDTH) dfpFail('number-range');
+          const rRaw = dfpRawBases(re);
           const r = { index: m.reps.length, set: a.index, period: p.index, id: re.attr('id'), bandwidth: bw,
             mimeType: re.attr('mimeType') !== null ? re.attr('mimeType') : a.mimeType, codecs: re.attr('codecs') !== null ? re.attr('codecs') : a.codecs,
             width: re.attr('width'), height: re.attr('height'), frameRate: re.attr('frameRate'), audioSamplingRate: re.attr('audioSamplingRate'),
-            base: dfpBaseOf(re, a.base), cp: rcp, ess: dfpProps(re, 'EssentialProperty'), sup: dfpProps(re, 'SupplementalProperty'),
+            base: a.base === null ? null : dfpBaseOf(a.base, rRaw, 'r' + m.reps.length, sel), baseAlts: rRaw.length > 1 ? rRaw : null, baseAlternatives: 1, cp: rcp, ess: dfpProps(re, 'EssentialProperty'), sup: dfpProps(re, 'SupplementalProperty'),
             ach: dfpProps(re, 'AudioChannelConfiguration'), subReps: re.all('SubRepresentation').length,
             segLevels: '', timescale: null, pto: null, startNumber: null, duration: null, mediaCanon: null, initUrl: null, initRange: null,
             templateExtra: [], tl: null, tlCount: 0, list: null, listRange: null, listRanges: false, excluded: null,
             addressing: 'NONE', media: null, first: 0, count: 0, covered: null, maxD: 0n, coverInfo: null };
+          if (a.base === null && rRaw.length > 1 && sel && !sel.first) dfpChoose(sel, 'r' + m.reps.length, rRaw.length);   // (Index prüfen)
+          if (sel && (mRaw.length > 1 || pRaw.length > 1 || aRaw.length > 1 || rRaw.length > 1)) r.baseAlternatives = dfpCombinations(doc, [mRaw, pRaw, aRaw, rRaw]);
           m.reps.push(r);
           dfpSegKinds(re);
+          if (r.base === null) { r.excluded = 'baseurl-undetermined'; return; }
           dfpAddressing(r, [re, ae, pe], ctx);
         });
       });
@@ -445,6 +505,7 @@
       direct += ae.all('ContentProtection').length;
       ae.all('Representation').forEach((re) => { direct += re.all('ContentProtection').length; });
     }));
+    if (sel && !sel.first && !Array.from(sel.pick.keys()).every((k) => sel.used.has(k))) dfpFail('alt-invalid');
     m.cpTop = root.all('ContentProtection').length; m.cpAll = all; m.cpNested = all - direct;
     m.ctx = ctx;
     return m;
@@ -464,20 +525,23 @@
     line('mpd.type', m.typeRaw);
     line('mpd.mediaPresentationDuration', dfpDurCanon(m.mpd));
     line('mpd.base', m.base);
+    // S4b-6: mehrere BaseURL – Zahl und Roh-Texte (nur wenn vorhanden; Abdrücke ohne Alternativen bleiben gleich)
+    const alts = (lv, xs) => { if (!xs) return; line(lv + '.baseAlternatives', String(xs.length)); xs.forEach((x) => line(lv + '.baseAlt', x)); };
+    alts('mpd', m.baseAlts);
     line('mpd.contentProtection', String(m.cpTop));
     if (m.cpNested > 0) line('mpd.contentProtectionNested', String(m.cpNested));
     m.periods.forEach((p) => {
-      line('period', String(p.index)); line('p.id', p.id); line('p.start', dfpDurCanon(p.start)); line('p.duration', dfpDurCanon(p.duration)); line('p.base', p.base);
+      line('period', String(p.index)); line('p.id', p.id); line('p.start', dfpDurCanon(p.start)); line('p.duration', dfpDurCanon(p.duration)); line('p.base', p.base); alts('p', p.baseAlts);
       m.sets.forEach((a) => {
         if (a.period !== p.index) return;
         line('set', String(a.index)); line('s.id', a.id); line('s.group', a.group); line('s.contentType', a.contentType); line('s.mimeType', a.mimeType);
-        line('s.codecs', a.codecs); line('s.lang', a.lang); line('s.label', a.label); line('s.base', a.base);
+        line('s.codecs', a.codecs); line('s.lang', a.lang); line('s.label', a.label); line('s.base', a.base); alts('s', a.baseAlts);
         props('s.contentProtection', a.cp); line('s.contentComponents', String(a.components)); props('s.essential', a.ess); props('s.supplemental', a.sup);
         props('s.role', a.roles); props('s.accessibility', a.acc); props('s.audioChannels', a.ach);
         m.reps.forEach((r) => {
           if (r.set !== a.index) return;
           line('rep', String(r.index)); line('r.id', r.id); line('r.bandwidth', String(r.bandwidth)); line('r.mimeType', r.mimeType); line('r.codecs', r.codecs);
-          line('r.width', r.width); line('r.height', r.height); line('r.frameRate', r.frameRate); line('r.audioSamplingRate', r.audioSamplingRate); line('r.base', r.base);
+          line('r.width', r.width); line('r.height', r.height); line('r.frameRate', r.frameRate); line('r.audioSamplingRate', r.audioSamplingRate); line('r.base', r.base); alts('r', r.baseAlts);
           props('r.contentProtection', r.cp); props('r.essential', r.ess); props('r.supplemental', r.sup); props('r.audioChannels', r.ach);
           line('r.subRepresentations', String(r.subReps)); line('r.segmentElements', r.segLevels);
           line('r.timescale', num(r.timescale)); line('r.presentationTimeOffset', num(r.pto)); line('r.startNumber', num(r.startNumber)); line('r.duration', num(r.duration));
@@ -737,7 +801,7 @@
     m.reps.forEach((r) => {
       const kind = dfpKind(m.sets[r.set], r.mimeType);
       if (kind !== 'video' && kind !== 'audio') return;
-      const base = { index: r.index, id: r.id, kind: kind, addressing: r.addressing };
+      const base = { index: r.index, id: r.id, kind: kind, addressing: r.addressing, alts: r.baseAlternatives || 1 };
       reps.push(Object.assign(base, r.excluded ? { excluded: r.excluded } : { count: r.count, covered: dfpSec9(r.covered) }));
     });
     const no = (code, reason, extra) => res(code, reason, Object.assign({ reps: reps }, extra || {}));
@@ -759,7 +823,8 @@
       if (why) { (kind === 'audio' ? aWhy : vWhy).push(why); (kind === 'audio' ? aEx : vEx).push(r); return; }
       (kind === 'video' ? video : audio).push(r);
     });
-    const cat = (whys) => (whys.some((w) => w === 'codec' || w === 'container' || w === 'muxed') ? 'dash-codec'
+    const cat = (whys) => (whys.length && whys.every((w) => w === 'baseurl-undetermined') ? 'dash-baseurl-undetermined'
+      : whys.some((w) => w === 'codec' || w === 'container' || w === 'muxed') ? 'dash-codec'
       : whys.some((w) => DFP_ADDRESSING.has(w)) ? 'dash-addressing' : 'dash-unsupported');
     const uniq = (a) => a.filter((x, i) => a.indexOf(x) === i).sort();
     // Anzeigegrund einer abgelehnten Spurart: Abdeckung/Zeitleiste konkret benennen, Ton-Codec eigens
@@ -817,13 +882,36 @@
       if (decl && decl[1].toLowerCase() !== 'utf-8') return { error: 'encoding' };
       dfpPrescan(t);
       const root = dfpTree(parsed.root.ownerDocument);
-      const m = dfpModel(root, documentUrl);
+      // S4b-6: Abdruck über das ganze MPD mit allen BaseURL-Alternativen (Projektion: jeweils die erste); multi: es gibt
+      // Alternativen – dann gilt für das Angebot die Vorprüfung der gebundenen Auswahl (dashGateFor), nicht diese
+      const m = dfpModel(root, documentUrl, DFP_FIRST);
       let lines = 0, txt = '';
       const sha = canonical ? null : dfpSha256();
       dfpWrite(m, (s) => { if (++lines > DFP.MAX_LINES) dfpFail('limits'); if (sha) sha.update(s); else txt += s; });
-      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m, m.ctx) };
+      const multi = !!(m.baseAlts || m.periods.some((x) => x.baseAlts) || m.sets.some((x) => x.baseAlts) || m.reps.some((x) => x.baseAlts));
+      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m, m.ctx), multi: multi };
     } catch (e) {
       return { error: e && e.dfp ? e.dfp : 'internal' };
+    }
+  }
+  // S4b-6: Vorprüfung der Projektion für eine Auswahl unter mehreren BaseURL (wie dashplan v2 des Helfers: dieselbe
+  // Prüfung der Auswahl am MPD). alt null: wie dashplan v1 (mehrere BaseURL fatal). Ergebnis wie dfpGate; ein fataler
+  // Grund als { ok: false, code: 'mpd-<grund>' }.
+  function dashGateFor(text, parsed, documentUrl, alt) {
+    const fatal = (c) => ({ ok: false, code: 'mpd-' + c, reason: c === 'baseurl-undetermined' ? 'dash-baseurl-undetermined' : c === 'baseurl-multiple' ? 'baseurl-multiple' : 'unchecked',
+      track: '', detail: [], coverage: null, reps: [], video: [], audio: [] });
+    try {
+      if (typeof text !== 'string' || !text || !parsed || !parsed.root || typeof documentUrl !== 'string' || text.length > 4e6) return fatal('input');
+      const t = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+      dfpPrescan(t);
+      const tree = dfpTree(parsed.root.ownerDocument);
+      if (alt === null || alt === undefined) { const m0 = dfpModel(tree, documentUrl, null); return dfpGate(m0, m0.ctx); }
+      // wie dashplan v2: erst das ganze MPD (alle Alternativen), dann die Projektion der Auswahl
+      dfpModel(tree, documentUrl, DFP_FIRST);
+      const m = dfpModel(tree, documentUrl, dfpSelection(alt));
+      return dfpGate(m, m.ctx);
+    } catch (e) {
+      return fatal(e && e.dfp ? e.dfp : 'internal');
     }
   }
   // =================================================

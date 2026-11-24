@@ -9,6 +9,7 @@
 //   inline         MPD-Text aus einer JSON-Antwort (kein .mpd-Abruf), Basis aus derselben Antwort
 //   S4b-4: preload n  Init + die ersten n Stücke VOR dem Anlegen der MediaSource laden (Vorladen)
 //          parallel   die ersten maxSegs Stücke gleichzeitig anfragen (verspätet eintreffende Antworten)
+//   S4b-6: switchAt k  ab dem k-ten Stück dieselbe Folge von der NÄCHSTEN BaseURL laden (CDN-Wechsel mitten in der Folge)
 //          zombie     nach einem neueren start() am selben Video weiter Stücke laden (ohne anzuhängen) – schlecht
 //                     aufgeräumter alter Lader; ohne zombie hört ein älterer Lauf dann auf
 // Nur die hier benutzte Fixture-Form: eine Periode, SegmentTemplate + SegmentTimeline, $Number[%0wd]$ oder $Time$.
@@ -72,6 +73,8 @@
         base = cfg.resolve === 'initial' ? new URL(cfg.mpd, location.href).href : (g.url || new URL(cfg.mpd, location.href).href);
       }
       const P = plan(text, base, cfg), v = cfg.video;
+      const P2 = cfg.switchAt ? plan(text, base, Object.assign({}, cfg, { base: (cfg.base || 0) + 1 })) : null;
+      const segUrl = (t, k) => (P2 && k >= cfg.switchAt ? P2.reps[t.id].segs[k].url : t.segs[k].url);
       const myGen = (v.__s4aGen = (v.__s4aGen || 0) + 1), gone = () => v.__s4aGen !== myGen;
       const tracks = [P.reps[cfg.vid || '1'], P.reps[cfg.aid || '2']].filter(Boolean);
       const max = cfg.maxSegs || Infinity;
@@ -104,7 +107,7 @@
             if (!cfg.zombie) break;
             await getBuf(t.segs[k].url, cfg); k++; await new Promise((res) => setTimeout(res, 300)); continue;   // lädt weiter, hängt nichts mehr an
           }
-          if (t.segs[k].t0 < v.currentTime + AHEAD || cfg.burst) { await app(sbs[i], await getBuf(t.segs[k].url, cfg)); k++; if (i === 0) st.segs = k; }
+          if (t.segs[k].t0 < v.currentTime + AHEAD || cfg.burst) { await app(sbs[i], await getBuf(segUrl(t, k), cfg)); k++; if (i === 0) st.segs = k; }
           else await new Promise((res) => setTimeout(res, 250));
           if (i === 0 && k === 1) v.play().catch(() => {});
         }
