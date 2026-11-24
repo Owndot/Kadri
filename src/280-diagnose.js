@@ -118,32 +118,28 @@
       // dieselbe Auswertung wie beim Tipp auf ⬇ (ohne Abruf). S3g: mit den zuletzt tatsächlich gemeldeten Fähigkeiten der
       // Helfer-App (hdlCapsSeen, src/080); noch nie abgefragt: MP4/HLS wie bisher angenommen, DASH ausdrücklich „unbekannt“
       const hc = typeof hdlCapsSeen !== 'undefined' ? hdlCapsSeen : null;
-      const known = !!(hc && hc.reachable && hc.supported);
-      const caps = known ? { reachable: true, supported: true, hls: hc.hls, dash: hc.dash } : { supported: true, hls: true };
+      const caps = hc && hc.reachable && hc.supported ? { reachable: true, supported: true, hls: hc.hls, dash: hc.dash } : { supported: true, hls: true };
       const yn = (b) => (b ? 'ja' : 'nein');
       L.push('Helfer-Fähigkeiten: ' + (!hc ? 'noch nicht abgefragt (⬇ antippen fragt ab)'
         : (!hc.reachable ? 'nicht erreichbar' + (hc.error ? ' (' + hc.error + ')' : '') : !hc.supported ? 'keine direkten Downloads'
           : 'MP4 ja · HLS ' + yn(hc.hls) + ' · DASH ' + yn(hc.dash)) + ' · abgefragt vor ' + Math.max(0, Math.round((Date.now() - hc.at) / 1000)) + ' s'));
-      let o = null, pre = null;
+      let o = null;
       try { o = pageDlOptions(v, caps); } catch (e) {}
-      // Kadris Vorprüfung des gebundenen MPD unabhängig von der Helfer-Fähigkeit (wie dashOfferFor mit DASH-Fähigkeit)
-      try { pre = pageDlOptions(v, Object.assign({}, caps, { dash: true })).dashOffer; } catch (e) {}
       let snap = [];
       try { const c = mediaRegistry.contextFor(v); if (c) snap = mediaRegistry.snapshot(c); } catch (e) {}
       L.push('Quellen am Video (' + snap.length + '):');
       anonSnapLines(L, snap);
       if (o) {
-        const dashOk = !!(o.dashOffer && o.dashOffer.offer);
-        const preOk = !!(pre && pre.offer);
-        const hint = o.mp4.length + o.hls.length || dashOk ? ''
-          : !known && preOk ? 'abhängig von der Helfer-Fähigkeit (noch nicht abgefragt)'
-            : pageDlReason(o, caps) + (pageDlReasonSub(o) ? ' – ' + pageDlReasonSub(o) : '');
+        const hint = o.mp4.length + o.hls.length ? '' : pageDlReason(o, caps) + (pageDlReasonSub(o) ? ' – ' + pageDlReasonSub(o) : '');
         L.push('Auswahl MP4: ' + anonPick(o.all) + ' · Auswahl Stream: ' + anonPick(o.allS) + (hint ? ' · Hinweis im Menü: ' + hint : ''));
-        L.push('Auswahl DASH: Manifest ' + (o.dash === 'bound' ? 'gebunden' : o.dash === 'suspected' ? 'nur vermutet (nicht gebunden)' : 'keines gebunden') +
-          (o.dash === 'bound' ? ' · Kadri-Vorprüfung ' + (preOk ? 'bestanden' : 'abgelehnt (' + ((pre && pre.code) || 'unbekannt') + ')') +
-            ' · Angebot ' + (dashOk ? 'ja' : !preOk ? 'nein' : known ? 'nein (helper-no-dash)' : 'abhängig von der Helfer-Fähigkeit') : ''));
-        // S4b: dieselben Ebenen wie Menü und Player (src/046), mit der zuletzt gemeldeten Helfer-Fähigkeit
-        try { const lv = dashLevelsFor(v, [snap], dashCapsOf(hc), o.dashOffer); if (lv) L.push(dashLevelsLine(lv)); } catch (e) {}
+        // E1 (Manifest), E2 (Elementbezug), E3 (Format) und E4 (Helfer) sind voneinander unabhängig.
+        try {
+          const lv = dashLevelsFor(v, [snap], dashCapsOf(hc), o.dashOffer);
+          if (lv) {
+            L.push('Auswahl DASH: Manifest ' + (lv.e1.ok ? 'gelesen · Kandidat' : 'nicht gelesen') + ' · Angebot nein');
+            L.push(dashLevelsLine(lv));
+          }
+        } catch (e) {}
       }
       // DASH (S2): Stückprüfung je gelesenem MPD – nur Zählungen und Grund
       try {
@@ -154,7 +150,7 @@
           const r = b.res[e.key] || {};
           L.push('DASH-Stückprüfung ' + (i + 1) + '/' + b.list.length + ': Treffer ' + (r.hits || 0) + ' · Darstellungen mit Treffern ' + (r.reps || 0) +
             ' · längste Folge ' + (r.run || 0) + ' · Init-Abrufe ' + (e.p.dashInit || 0) + ' · prüfbare Darstellungen ' + (e.p.dashIdx ? e.p.dashIdx.reps.length : 0) +
-            ' · Ergebnis ' + (r.state || '?') + ' (' + (r.reason || '?') + ')' +
+            ' · Ergebnis ' + (r.state === 'bound' ? 'Netzfolge passt' : r.state || '?') + ' (' + (r.reason || '?') + ')' +
             (r.unknownStart ? ' · Anfragebeginn unbekannt ' + r.unknownStart + ' (start-unknown, nicht gezählt)' : '') +
             // S3g: S3-Vorprüfung dieses MPD (am gelesenen Text, src/039) – fester Code, auch wenn es (noch) nicht gebunden ist
             ' · Vorprüfung ' + (!e.p.dashFp || e.p.dashFp.error ? 'nicht prüfbar' + (e.p.dashFp && /^[a-z0-9-]{1,40}$/.test(e.p.dashFp.error || '') ? ' (' + e.p.dashFp.error + ')' : '')
@@ -164,7 +160,7 @@
                   + (e.p.dashFp.gate.track ? ' · ' + e.p.dashFp.gate.track + ': ' + (e.p.dashFp.gate.detail || []).filter((x) => /^[a-z-]{1,30}$/.test(x)).join(',') : '') + ')' : '')));
         });
         // Stufe-1-Diagnose: jeder vom Beobachter seit dem Videostart gemeldete Abruf stufenweise gegen dieses MPD
-        // (src/038 dashDiagClassify). Nur Zählungen; nur „exakt“ ist Bindungsevidenz, die übrigen Stufen sind rein diagnostisch.
+        // (src/038 dashDiagClassify). Nur Zählungen; nur „exakt“ zählt für die Netzfolge.
         const from = dashFromOf(v);
         b.list.forEach((e, i) => {
           const c = { exact: 0, query: 0, host: 0, number: 0, none: 0, init: 0, 'init-query': 0, 'init-host': 0 };
@@ -183,7 +179,7 @@
             (recentRes.length >= 800 && resAt(recentRes[0]) > from ? ', ältere nicht mehr gespeichert' : '') + '): Stücke exakt ' + c.exact +
             ' · nur Query abweichend ' + c.query + ' · gleicher Pfad, anderer Host ' + c.host + ' · Muster passt, Nummer/Zeitleiste abweichend ' + c.number +
             ' · kein struktureller Treffer ' + c.none + ' (davon xhr/fetch/other/Medien ' + noneMedia + ') · Init exakt ' + c.init +
-            ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Bindung zählt nur exakt' + (unk ? ' · Anfragebeginn unbekannt ' + unk + ' (start-unknown, nicht gezählt)' : ''));
+            ' · Init nur Query abweichend ' + c['init-query'] + ' · Init anderer Host ' + c['init-host'] + ' · für die Netzfolge zählt nur exakt' + (unk ? ' · Anfragebeginn unbekannt ' + unk + ' (start-unknown, nicht gezählt)' : ''));
         });
       } catch (e) {}
     } else L.push('Video-Element: keines');
@@ -237,7 +233,7 @@
         anonSnapLines(L, snap);
         // was der eigene Player selbst belegt hat, aber die Auswahl am schwebenden Knopf (Originalvideo) nicht sieht
         try { L.push('  Auswahl MP4: ' + anonPick(selectDownloads(snap, { supported: true })) + ' · Stream: ' + anonPick(selectStreams(snap, { hls: true })) +
-          ' · DASH: ' + anonPick(selectDashStreams(snap, { dash: !!(p.hdl && p.hdl.dash) }))); } catch (e) {}   // S3g: DASH mit der Fähigkeit dieses Players
+          ' · DASH: ' + anonPick(selectDashStreams(snap))); } catch (e) {}
       });
     } else L.push('Player: geschlossen');
     // Netzwerk: Art und Rolle der beobachteten Adressen (Rolle aus gelesenen Listen, sonst eindeutige Muster) – nur Zählungen

@@ -1,16 +1,6 @@
-# S3c DASH speichern – Ende zu Ende im echten Chromium mit der Erweiterung und dem echten Kanal-Helfer (ChannelServer +
-# DashEngine der Helper-App mit SafeHttpClient, Fingerabdruck, S3-Profil, Plan, Sitzungsbindung, Fmp4Inspect, Journal,
-# Dauerprüfung; nur der Remux ist im Desktop-Harness nachgebildet – Verkettung). Quelle: selbst erzeugt
-# (tests/make_dash_source.sh: fMP4, H.264 180p/360p + AAC-LC, 20 s). Die Seite lädt das MPD und die Stücke der 360p-
-# Darstellung und des Tons in Folge (so bindet Kadri: nur über beobachtete Stückfolgen) und zeigt daneben ein Video per MSE.
-# Geprüft:
-#  - Angebot nur bei bound + dash-segments + S3-Vorprüfung + Fähigkeit "dashdl" – im schwebenden Menü und im eigenen Player
-#  - dashplan über den verschlüsselten Kanal mit Kadris Fingerabdruck; Auswahl Qualität × Ton (Ton immer benannt, die gerade
-#    gespielte Kombination markiert); dashstart; der Helfer lädt genau die gewählten Darstellungen (ohne Cookies) und
-#    veröffentlicht die Datei
-#  - kein Angebot: HE-AAC im MPD, ContentProtection, nur zeitlich vermutet (keine Stücke), zwei konkurrierende MPDs
-#  - abweichendes MPD beim Helfer (anderer Fingerabdruck): manifest_mismatch, kein Auftrag
-#   HELPER_HOST_DIR=<Helper-Repository: tests/java/channel/build.sh OUT>   (vorher: node tools/build.js --test)
+# DASH-Produktabnahme nach P0-A: beide Menüs zeigen die fehlende Elementzuordnung.
+# Der gepaarte Desktop-Helfer ist verfügbar, erhält aber keine Planung und keinen Start.
+# Die positive Protokoll-/Engine-Abnahme läuft in tests/channel/dash_integration_check.js.
 import os, re, time, json, threading, http.server, urllib.parse, subprocess, tempfile
 from common import *   # noqa: E402
 
@@ -33,18 +23,8 @@ CASES = {
     'langs':    {'mpd': ['/d/ml/manifest.mpd'], 'segs': '/d/ml/'},
     'nolang':   {'mpd': ['/d/mn/manifest.mpd'], 'segs': '/d/mn/'},
     'same':     {'mpd': ['/d/ms/manifest.mpd'], 'segs': '/d/ms/'},
-    # S3c-Fix: Quelle wechselt zwischen Plan und Start (Seite und eigener Player) – sl/ps: Plan beim Helfer verzögert
-    'slow':     {'mpd': ['/d/sl/manifest.mpd'], 'segs': '/d/sl/'},
     'swo':      {'mpd': ['/d/so/manifest.mpd'], 'segs': '/d/so/'},
-    'cmp':      {'mpd': ['/d/cp/manifest.mpd'], 'segs': '/d/cp/'},
-    'pslow':    {'mpd': ['/d/ps/manifest.mpd'], 'segs': '/d/ps/'},
-    'pswo':     {'mpd': ['/d/po/manifest.mpd'], 'segs': '/d/po/'},
-    'pcmp':     {'mpd': ['/d/pc/manifest.mpd'], 'segs': '/d/pc/'},
-    'pok':      {'mpd': ['/d/pk/manifest.mpd'], 'segs': '/d/pk/'},
 }
-SLOW = {'s': 4.0}
-# konkurrierende MPDs (später geladen): beschreiben genau die schon geladenen Stücke der Fälle cmp bzw. pcmp
-COMPETE = {'/d/k9/': '/d/cp/', '/d/k8/': '/d/pc/'}
 AUDIO = re.search(r'<AdaptationSet id="1" contentType="audio".*?</AdaptationSet>', MPD0, re.S).group(0)
 def second_audio(m, lang1, lang2, bw2):
     a2 = AUDIO.replace('id="1"', 'id="2"', 1).replace('<Representation id="2"', '<Representation id="3"').replace('bandwidth="48000"', 'bandwidth="%d"' % bw2)
@@ -57,8 +37,6 @@ def mpd_for(path, browser):
     if path.startswith('/d/he/'): m = m.replace('codecs="mp4a.40.2"', 'codecs="mp4a.40.5"')
     if path.startswith('/d/drm/'): m = m.replace('<AdaptationSet id="0"', '<AdaptationSet id="0"><ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"/></AdaptationSet><AdaptationSet id="9"', 1)
     if path.startswith('/d/k1/') or path.startswith('/d/k2/'): m = m.replace('<Period id="0" start="PT0.0S">', '<Period id="0" start="PT0.0S"><BaseURL>/d/src/</BaseURL>', 1)
-    for k, base in COMPETE.items():
-        if path.startswith(k): m = m.replace('<Period id="0" start="PT0.0S">', '<Period id="0" start="PT0.0S"><BaseURL>%s</BaseURL>' % base, 1)
     if path.startswith('/d/mm/') and not browser: m = m.replace('bandwidth="322838"', 'bandwidth="322839"')   # nur der Helfer sieht ein anderes MPD
     if path.startswith('/d/ml/'): m = second_audio(m, 'de', 'en', 96000)
     if path.startswith('/d/mn/'): m = second_audio(m, '', '', 96000)
@@ -110,7 +88,6 @@ class M(http.server.BaseHTTPRequestHandler):
         body, ctype = None, ''
         if u.path == '/d/page.html': body, ctype = (PAGE % json.dumps(CASES[q['m']])).encode(), 'text/html; charset=utf-8'
         elif u.path.endswith('/manifest.mpd'):
-            if not browser and (u.path.startswith('/d/sl/') or u.path.startswith('/d/ps/')): time.sleep(SLOW['s'])   # Plan beim Helfer dauert
             body, ctype = mpd_for(u.path, browser), 'application/dash+xml'
         elif re.match(r'^/p/(init\.mp4|seg\d{3}\.m4s)$', u.path): body, ctype = open(os.path.join(HLSDIR, u.path[3:]), 'rb').read(), 'video/mp4'
         else:
@@ -137,7 +114,7 @@ def wait(pred, secs=10):
 UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot; })()'
 def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
 ITEMS = 'return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => [b.firstChild.textContent, b.querySelector("small") ? b.querySelector("small").textContent : ""]);'
-DB = 'DASH-Stream erkannt – derzeit nicht unterstützt'
+BLOCKED = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 OFFER = 'DASH-Stream mit Helper herunterladen …'
 helper_hits = lambda: [x for x in HITS if not x['browser']]
 
@@ -178,207 +155,45 @@ with sync_playwright() as p:
         return it
     def close_sheet():
         pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;')); time.sleep(0.3)
-    def tap(label):
-        return pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); if (!b) return false; b.click(); return true;' % json.dumps(label)))
-    def toast_text():
-        got = ['']
-        wait(lambda: got.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or bool(got[0]), 8)
-        return got[0]
-    labels = lambda it: [x[0] for x in it]
+    def player_menu():
+        pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\"Im Videoplayer öffnen\"]").click(); return true;'))
+        pg.wait_for_function(js('return !!r.querySelector("button[aria-label^=Herunterladen]");'))
+        pg.evaluate(js('r.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", {bubbles: true})); return true;'))
+        return pg.evaluate(js('return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map(b => b.firstChild.textContent);')) or []
 
-    # ---------- Gutfall: Angebot → Plan → Auswahl → Start → Datei beim Helfer ----------
-    open_case('ok')
-    it = sheet(keep=True)
-    check('gebunden (Stücke in Folge), Profil passt, Helfer meldet dashdl: Angebot „%s“ im schwebenden Menü' % OFFER, OFFER in labels(it) and DB not in labels(it), it)
-    close_sheet(); dg = diag()
-    check('S3g G1: Diagnose zeigt die tatsächlichen Helfer-Fähigkeiten (MP4 ja · HLS ja · DASH ja)',
-          dline(dg, 'Helfer-Fähigkeiten: ').startswith('Helfer-Fähigkeiten: MP4 ja · HLS ja · DASH ja · abgefragt vor '), dline(dg, 'Helfer-Fähigkeiten'))
-    check('S3g G1: „Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung bestanden · Angebot ja“, kein falscher Hinweis „nicht unterstützt“',
-          dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung bestanden · Angebot ja' and 'Hinweis im Menü' not in dg and DB not in dg,
-          [dline(dg, 'Auswahl')] + [dline(dg, 'Auswahl DASH')])
-    check('S3g G1: Stückprüfung nennt die Vorprüfung des MPD („Vorprüfung bestanden“); Diagnose anonym',
-          re.search(r'^DASH-Stückprüfung 1/1: .* Ergebnis bound \(stueckfolge\) · Vorprüfung bestanden$', dg, re.M) and danon(dg), dline(dg, 'DASH-Stückprüfung'))
-    it = sheet(keep=True)
-    n0 = len(helper_hits())
-    check('Menü öffnen fragt den Helfer nichts zum Stream (kein Abruf des MPD)', not any(x['path'].endswith('.mpd') for x in helper_hits()), helper_hits())
-    tap(OFFER)
-    wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h && h.textContent === "DASH-Stream speichern";')), 30)
-    opts = pg.evaluate(js(ITEMS)) or []
-    o = [x for x in opts if x[0] != 'Schließen']
-    check('Plan beim Helfer (MPD selbst geladen, Fingerabdruck gleich): Auswahl 360p und 180p, Ton benannt, die gespielte Kombination zuerst und markiert',
-          [x[0] for x in o] == ['360p · Ton: Sprache nicht angegeben', '180p · Ton: Sprache nicht angegeben'] and 'läuft gerade' in o[0][1] and 'läuft gerade' not in o[1][1]
-          and all('H.264 + AAC' in x[1] for x in o), opts)
-    mpd_hits = [x for x in helper_hits()[n0:] if x['path'].endswith('.mpd')]
-    check('… der Helfer hat das MPD genau einmal selbst geladen (Plan), ohne Cookie/Authorization', len(mpd_hits) == 1 and mpd_hits[0]['path'] == '/d/ok/manifest.mpd'
-          and not mpd_hits[0]['cookie'] and not mpd_hits[0]['auth'], mpd_hits)
-    tap(o[0][0])
-    t = ['']
-    wait(lambda: t.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or t[0].startswith('Helfer-App lädt'), 20)
-    check('Start per Tipp: Rückmeldung „Helfer-App lädt …“ (nach „startet …“)', t[0].startswith('Helfer-App lädt'), t[0])
-    want = sum(os.path.getsize(os.path.join(SRCDIR, f)) for f in ['init-1.m4s'] + ['chunk-1-%05d.m4s' % i for i in range(1, 6)] + ['init-2.m4s'] + ['chunk-2-%05d.m4s' % i for i in range(1, 7)])
-    files = ['']
-    wait(lambda: files.__setitem__(0, helper.cmd('dl-files')) or ':%d' % want in files[0], 40)
-    check('Helfer hat die Datei veröffentlicht (Init + 5 Video- und 6 Tonstücke der gewählten Darstellungen, %d Bytes)' % want, re.search(r'DASH_Test\.mp4:%d\b' % want, files[0]), files[0])
-    dg = diag(); hd = next((l for l in dg.split('\n') if l.startswith(' 1. Typ ')), '')
-    check('S3g G2: Helfer-Download erscheint als „Typ dash“ mit Aufruf dashstart, Planung (gewählte Option) und Ressourcen; nicht als HLS',
-          hd.startswith(' 1. Typ dash · Zustand ') and 'Aufruf dashstart' in hd and 'Planung erfolgreich (gewählte Option)' in hd and re.search(r'Ressourcen \d+/\d+ \(inkl\. Init\)', hd)
-          and 'erste Option' not in hd and 'Quelle dash/manifest' in hd and danon(dg), hd)
-    got = [x['path'] for x in helper_hits()[n0:]]
-    check('… geladen wurden nur die gewählten Darstellungen (keine Stücke der 180p-Darstellung), nie mit Cookie/Authorization',
-          any('chunk-1-00005' in x for x in got) and any('chunk-2-00006' in x for x in got) and not any('chunk-0-' in x or 'init-0' in x for x in got)
-          and not any(x['cookie'] or x['auth'] for x in helper_hits()[n0:]), got)
-    check('… Referer beim Helfer höchstens die Herkunft der Seite (kein Pfad, keine Query)', all(x['referer'] in ('', VID + '/') for x in helper_hits()[n0:]),
-          sorted(set(x['referer'] for x in helper_hits()[n0:])))
-    it = sheet()
-    check('dieselbe Seite erneut: Angebot bleibt (fertiger Auftrag blockiert keinen neuen Start)', OFFER in labels(it), it)
-
-    # ---------- eigener Player: dasselbe Angebot im Download-Menü ----------
-    pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Im Videoplayer öffnen\\"]").click(); return true;'))
-    wait(lambda: pg.evaluate(js('return !!r.querySelector("button[aria-label^=Herunterladen]");')), 20); time.sleep(1.0)
-    pitems = []
-    end = time.time() + 15
-    while time.time() < end:
-        pg.evaluate(js('r.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })); return true;')); time.sleep(0.6)
-        pitems = pg.evaluate(js('return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((b) => b.firstChild.textContent);')) or []
-        if OFFER in pitems: break
-        pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.6)
-    check('eigener Player: dasselbe Angebot „%s“ im Download-Menü' % OFFER, OFFER in pitems, pitems)
-    pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.4)
-    dg = diag()
-    check('S3g G3: Diagnose im geöffneten Player nennt DASH-Fähigkeit und DASH-Auswahl (Angebot attemptable)',
-          re.search(r'^Player: offen .* Helfer-Downloads unterstützt \(HLS ja, DASH ja\)$', dg, re.M) and re.search(r'^  Auswahl MP4: .* · Stream: .* · DASH: attemptable ×1$', dg, re.M),
-          [l for l in dg.split('\n') if l.startswith('Player:') or l.startswith('  Auswahl')])
-
-    # ---------- Tonauswahl im Sheet: immer benannt, nie stillschweigend ----------
-    def plan_items(m):
-        open_case(m); sheet(keep=True); tap(OFFER)
-        wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h && h.textContent === "DASH-Stream speichern";')), 30)
-        its = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
-        close_sheet()
-        return its
-    its = plan_items('langs')
-    check('zwei Tonsprachen: alle Kombinationen Qualität × Ton, Sprache benannt, gespielte Kombination (360p · Deutsch) zuerst',
-          [x[0] for x in its] == ['360p · Ton: Deutsch', '360p · Ton: Englisch', '180p · Ton: Deutsch', '180p · Ton: Englisch'] and 'läuft gerade' in its[0][1]
-          and not any('läuft gerade' in x[1] for x in its[1:]), its)
-    its = plan_items('nolang')
-    check('zwei Tonspuren ohne Sprachangabe: als „Tonspur 1/2 (Sprache nicht angegeben)“ unterscheidbar wählbar',
-          [x[0] for x in its] == ['360p · Ton: Tonspur 1 (Sprache nicht angegeben)', '360p · Ton: Tonspur 2 (Sprache nicht angegeben)',
-                                  '180p · Ton: Tonspur 1 (Sprache nicht angegeben)', '180p · Ton: Tonspur 2 (Sprache nicht angegeben)'], its)
-    open_case('same'); sheet(keep=True); tap(OFFER)
-    t = ['']
-    wait(lambda: t.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or 'eindeutig' in t[0], 30)
-    check('zwei nicht unterscheidbare Tonspuren (gleiche Rate, keine Sprache): keine Auswahl angeboten („nicht eindeutig zuordenbar“)',
-          'Auswahl nicht eindeutig zuordenbar – nicht angeboten' in t[0] and not pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === "DASH-Stream speichern");')), t[0])
-
-    # ---------- S3c-Fix: Quelle wechselt zwischen dashplan und dashstart → keine Auswahl bzw. kein Start ----------
-    CHANGED = 'Quelle hat sich geändert – erneut auswählen'
-    def toast_has(sub, secs=20):
-        t = ['']
-        wait(lambda: t.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or sub in t[0], secs)
-        return t[0]
-    segs_since = lambda n: [x['path'] for x in helper_hits()[n:] if '/init-' in x['path'] or '/chunk-' in x['path']]
-    title_is = lambda t: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === %s);' % json.dumps(t)))
-    # Webseitenknopf
-    open_case('slow'); sheet(keep=True); n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    tap(OFFER); time.sleep(1.0)
+    journal = lambda: sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"] || []')
+    old_files, old_jobs, old_hits = helper.cmd('dl-files'), journal(), len(helper_hits())
+    caps = 'MP4 ja · HLS ja · DASH ja'
+    for case in ('ok', 'langs', 'nolang', 'same', 'heaac', 'drm', 'unbound', 'two', 'mismatch'):
+        open_case(case)
+        items = sheet()
+        dg = diag()
+        labels = [x[0] for x in items]
+        check(case + ': E1 erkannt, E2 blockiert, keine auswählbare DASH-Aktion', BLOCKED in labels and OFFER not in labels
+              and 'DASH-Ebenen: E1 read · E2 ' in dg and ' · Angebot nein' in dg, (items, dline(dg, 'DASH-Ebenen:')))
+        check(case + ': Fähigkeiten bleiben sichtbar und Diagnose anonym', caps in dg and danon(dg))
+        if case == 'heaac':
+            check('E3 weist HE-AAC weiterhin aus', ' · E3 audio-he-aac · ' in dg)
+        elif case == 'drm':
+            check('E3 weist DRM weiterhin aus', ' · E3 protected · ' in dg)
+        elif case in ('ok', 'mismatch'):
+            check(case + ': Netzfolge und Gate diagnostisch positiv', 'Ergebnis Netzfolge passt (stueckfolge)' in dg
+                  and 'Vorprüfung bestanden' in dg, dline(dg, 'DASH-Stückprüfung'))
+        elif case == 'two':
+            check('Zwei konkurrierende MPDs bleiben unterscheidbar', dg.count('Ergebnis ambiguous (konkurrenz)') == 2)
+        if case == 'ok':
+            pitems = player_menu()
+            check('Player zeigt denselben E2-Hinweis ohne DASH-Aktion', BLOCKED in pitems and OFFER not in pitems, pitems)
+    open_case('swo')
+    sheet(keep=True)
     pg.evaluate('() => window.__switch()')
-    t = toast_has(CHANGED, 25)
-    check('Seite: Quelle wechselt, während der Plan beim Helfer läuft → keine Auswahl, Meldung „%s“' % CHANGED,
-          CHANGED in t and not title_is('DASH-Stream speichern') and not segs_since(n) and helper.cmd('dl-files') == files0, (t, segs_since(n)))
-    open_case('swo'); sheet(keep=True); tap(OFFER)
-    wait(lambda: title_is('DASH-Stream speichern'), 30)
-    o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
-    n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    pg.evaluate('() => window.__switch()'); time.sleep(1.0)
-    tap(o[0][0]); t = toast_has(CHANGED); time.sleep(1.5)
-    check('Seite: Quelle wechselt bei offener Auswahl → kein dashstart (kein Abruf beim Helfer, keine Datei), Meldung', bool(o) and CHANGED in t
-          and not segs_since(n) and helper.cmd('dl-files') == files0, (o, t, segs_since(n)))
-    open_case('cmp'); sheet(keep=True); tap(OFFER)
-    wait(lambda: title_is('DASH-Stream speichern'), 30)
-    o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
-    n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    pg.evaluate('() => window.__compete("/d/k9/manifest.mpd")'); time.sleep(1.0)
-    tap(o[0][0]); t = toast_has(CHANGED); time.sleep(1.5)
-    check('Seite: zweites MPD beschreibt dieselben Stücke (Konkurrenz) bei offener Auswahl → kein Start, Meldung', bool(o) and CHANGED in t
-          and not segs_since(n) and helper.cmd('dl-files') == files0, (o, t, segs_since(n)))
-    # eigener Player
-    PI = 'return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((b) => b.firstChild.textContent);'
-    def player_offer():
-        pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Im Videoplayer öffnen\\"]").click(); return true;'))
-        wait(lambda: pg.evaluate(js('return !!r.querySelector("button[aria-label^=Herunterladen]");')), 20); time.sleep(1.0)
-        end = time.time() + 15
-        while time.time() < end:
-            pg.evaluate(js('r.querySelector("button[aria-label^=Herunterladen]").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })); return true;')); time.sleep(0.6)
-            if OFFER in (pg.evaluate(js(PI)) or []): return True
-            pg.evaluate(js('r.querySelector(".vmenu").classList.remove("on"); r.querySelector(".vp").classList.remove("menu"); return true;')); time.sleep(0.6)
-        return False
-    ptap = lambda label: pg.evaluate(js('const b = Array.from(r.querySelectorAll(".vmenu.on .vmi")).find((x) => x.firstChild.textContent === %s); if (!b) return false; b.click(); return true;' % json.dumps(label)))
-    def player_options():
-        wait(lambda: any('· Ton:' in x for x in (pg.evaluate(js(PI)) or [])), 30)
-        return [x for x in (pg.evaluate(js(PI)) or []) if '· Ton:' in x]
-    open_case('pslow'); ok_offer = player_offer(); n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    ptap(OFFER); time.sleep(1.0)
-    pg.evaluate('() => window.__switch()')
-    t = toast_has(CHANGED, 25); time.sleep(0.5)
-    check('Player: Quelle wechselt, während der Plan läuft → keine Auswahl, Meldung', ok_offer and CHANGED in t
-          and not any('· Ton:' in x for x in (pg.evaluate(js(PI)) or [])) and not segs_since(n) and helper.cmd('dl-files') == files0, (t, segs_since(n)))
-    open_case('pswo'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
-    n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    pg.evaluate('() => window.__switch()'); time.sleep(1.0)
-    ptap(po[0] if po else ''); t = toast_has(CHANGED); time.sleep(1.5)
-    check('Player: Quelle wechselt bei offener Auswahl → kein Start, Meldung', ok_offer and bool(po) and CHANGED in t and not segs_since(n)
-          and helper.cmd('dl-files') == files0, (po, t, segs_since(n)))
-    open_case('pcmp'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
-    n = len(helper_hits()); files0 = helper.cmd('dl-files')
-    pg.evaluate('() => window.__compete("/d/k8/manifest.mpd")'); time.sleep(1.0)
-    ptap(po[0] if po else ''); t = toast_has(CHANGED); time.sleep(1.5)
-    check('Player: konkurrierendes MPD bei offener Auswahl → kein Start, Meldung', ok_offer and bool(po) and CHANGED in t and not segs_since(n)
-          and helper.cmd('dl-files') == files0, (po, t, segs_since(n)))
-    open_case('pok'); ok_offer = player_offer(); ptap(OFFER); po = player_options()
-    files0 = helper.cmd('dl-files')
-    ptap(po[0] if po else '')
-    files = ['']
-    wait(lambda: files.__setitem__(0, helper.cmd('dl-files')) or files[0].count(':%d' % want) > files0.count(':%d' % want), 40)
-    check('Player: unveränderter Player und unveränderte Bindung → normaler Download bis zur Datei beim Helfer', ok_offer and po and po[0].startswith('360p')
-          and files[0].count(':%d' % want) == files0.count(':%d' % want) + 1, (po, files0, files[0]))
-
-    # ---------- kein Angebot ----------
-    n1 = len(helper_hits())
-    open_case('heaac'); it = sheet()
-    HE = ['DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', 'Ton HE-AAC – gespeichert wird bisher nur AAC-LC']
-    check('S4b: MPD nur mit HE-AAC (mp4a.40.5): kein Angebot, HE-AAC ausdrücklich benannt (nicht „derzeit nicht unterstützt“)',
-          OFFER not in labels(it) and HE in it and not any('derzeit nicht unterstützt' in x[0] for x in it), it)
-    dg = diag()
-    check('S3g G1: HE-AAC – Diagnose nennt den Ablehnungsgrund der Vorprüfung (dash-audio-codec) und denselben Hinweis wie das Menü',
-          dline(dg, 'Auswahl DASH: ') == 'Auswahl DASH: Manifest gebunden · Kadri-Vorprüfung abgelehnt (dash-audio-codec) · Angebot nein'
-          and ('Hinweis im Menü: %s – %s' % (HE[0], HE[1])) in dg and dline(dg, 'DASH-Stückprüfung').endswith('· Vorprüfung dash-audio-codec (Helfer audio_codec)') and danon(dg)
-          and 'erste blockierende Ebene E3 (E3/audio-he-aac)' in dline(dg, 'DASH-Ebenen'),
-          [dline(dg, 'Auswahl'), dline(dg, 'Auswahl DASH'), dline(dg, 'DASH-Stückprüfung')])
-    open_case('drm'); it = sheet()
-    check('S4b: MPD mit ContentProtection: kein Angebot, DRM ausdrücklich benannt', OFFER not in labels(it)
-          and ['DASH-Stream – nicht speicherbar', 'Geschützt (DRM)'] in it, it)
-    open_case('unbound'); it = sheet()
-    check('MPD geladen, aber keine seiner Stücke (nur zeitliche Nähe): kein Angebot, kein „erkannt“', OFFER not in labels(it) and DB not in labels(it), it)
-    open_case('two'); it = sheet()
-    check('zwei MPDs beschreiben dieselben geladenen Stücke (nicht eindeutig zuordenbar): kein Angebot', OFFER not in labels(it) and DB not in labels(it), it)
-    check('in keinem dieser Fälle etwas beim Helfer angefragt (kein Plan, kein Abruf)', len(helper_hits()) == n1, helper_hits()[n1:])
-
-    # ---------- abweichendes MPD beim Helfer ----------
-    open_case('mismatch'); it = sheet(keep=True)
-    check('MPD, das der Helfer anders bekommt: Angebot (Kadris Prüfung besteht)', OFFER in labels(it), it)
-    before = helper.cmd('dl-files')
-    tap(OFFER)
-    t = toast_text()
-    t2 = ['']
-    wait(lambda: t2.__setitem__(0, pg.evaluate(js('const t = r.querySelector(".toast.on"); return t ? t.textContent : "";')) or '') or 'weicht' in t2[0], 30)
-    check('… Plan abgelehnt: „Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert“, keine Auswahl, kein Auftrag',
-          'Das Manifest beim Helfer weicht vom gespielten ab – nicht gespeichert' in t2[0] and helper.cmd('dl-files') == before
-          and not pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!(h && h.textContent === "DASH-Stream speichern");')), (t, t2[0]))
-    dg = diag(); hd = next((l for l in dg.split('\n') if l.startswith(' 1. Typ ')), '')
-    check('S3g G2: abgelehnter Plan erscheint als „Typ dash · Zustand rejected · Grund manifest_mismatch … Phase dashplan · Aufruf dashplan · Planung abgelehnt“',
-          hd.startswith(' 1. Typ dash · Zustand rejected · Grund manifest_mismatch') and 'Phase dashplan' in hd and 'Aufruf dashplan' in hd and 'Planung abgelehnt' in hd
-          and 'Ressourcen' not in hd and danon(dg), hd)
-    check('keine Seitenfehler', not errs, errs)
+    pg.wait_for_function('() => document.getElementById("v").currentTime > 0.5')
+    check('Nach Medienwechsel und erneutem Öffnen bleibt DASH gesperrt', OFFER not in [x[0] for x in sheet(keep=True)])
+    check('Kein DASH-Abruf beim Helfer, kein neuer Job, keine Datei',
+          helper_hits()[old_hits:] == [] and journal() == old_jobs and helper.cmd('dl-files') == old_files, helper_hits()[old_hits:])
+    check('Keine Seitenfehler', not errs, errs)
     ctx.close()
 helper.stop()
+srv.shutdown()
+shutdown()
 done()

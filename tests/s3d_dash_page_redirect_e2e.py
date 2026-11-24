@@ -2,8 +2,8 @@
 # (.mpd/.m4s) werden per 301 auf einen ANDEREN Host mit demselben Pfad umgeleitet (dort 200, ACAO *).
 #  1. Gegenprobe: Seitenvariante mit dem früheren Fehler (Stücke relativ zur ANGEFRAGTEN MPD-Adresse) → genau der
 #     Samsung-Befund: Stücke exakt 0, „gleicher Pfad, anderer Host“, Init anderer Host, ambiguous (keine-treffer), kein Angebot.
-#  2. Unveränderte Seite tests/web/public/s3d-dash.html (Stücke relativ zur ENDGÜLTIGEN Adresse, Response.url) → bound
-#     (dash-segments), Angebot, dashplan, dashstart, Datei beim Helfer; Kadris strenger Hostvergleich bleibt unverändert.
+#  2. Unveränderte Seite tests/web/public/s3d-dash.html (Stücke relativ zur ENDGÜLTIGEN Adresse, Response.url):
+#     passende Netzfolge und gültige Vorprüfung, aber keine Elementfreigabe (P0-A).
 #   node tools/build.js --test; HELPER_HOST_DIR=<Helper 3887569: tests/java/channel/build.sh OUT> xvfb-run -a python3 tests/s3d_dash_page_redirect_e2e.py
 import os, re, sys, time, json, threading, http.server, urllib.parse
 KADRI = os.path.realpath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')); sys.path.insert(0, os.path.join(KADRI, 'tests'))
@@ -107,31 +107,20 @@ with sync_playwright() as p:
     dg = diag(); ab = dline(dg, 'DASH-Abgleich 1/1')
     print('  ' + dline(dg, 'DASH-Stückprüfung') + '\n  ' + ab)
     check('Diagnose: Stücke exakt ≥ 6, Init exakt 2, kein „anderer Host“', num(ab, 'Stücke exakt') >= 6 and num(ab, 'Init exakt') >= 2 and num(ab, 'gleicher Pfad, anderer Host') == 0 and num(ab, 'Init anderer Host') == 0, ab)
-    check('Diagnose: bound über dash-segments, Ergebnis bound (stueckfolge), Vorprüfung bestanden',
-          re.search(r'Bindung bound\([^)]*dash-segments', dg) and 'Ergebnis bound (stueckfolge) · Vorprüfung bestanden' in dg, dline(dg, 'DASH-Stückprüfung'))
+    check('Diagnose: Netzfolge, Vorprüfung und fehlende Downloadfreigabe',
+          'Ergebnis Netzfolge passt (stueckfolge)' in dg and 'Vorprüfung bestanden' in dg and 'Angebot nein' in dg
+          and re.search(r'dash:manifest · Bindung ambiguous\([^)]*dash-segments', dg), dline(dg, 'DASH-Stückprüfung'))
     check('Diagnose anonym', not re.search(r'://|127\.0\.0|example\.org|s3d-dash|manifest\.mpd|chunk-|init-\d', dg))
+    n1, files = len(HITS), helper.cmd('dl-files')
     it = menu()
-    check('Angebot „%s“' % OFFER, OFFER in [x[0] for x in it], it)
-    n1 = len(HITS)
-    pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(OFFER)))
-    wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h && h.textContent === "DASH-Stream speichern";')), 30)
-    o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
-    if not o:   # Diagnose bei Fehlschlag: Rückmeldung und Eintrag „Helfer-Downloads“ (anonym)
-        print('  DIAG toast=%r' % pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";')))
-        print('  DIAG ' + next((l for l in diag().split('\n') if l.startswith(' 1. Typ ')), '(kein Eintrag)'))
-    check('dashplan: 360p (läuft gerade) und 180p, H.264 + AAC', [x[0] for x in o] == ['360p · Ton: Sprache nicht angegeben', '180p · Ton: Sprache nicht angegeben'] and 'läuft gerade' in o[0][1], o)
-    mh = [x for x in HITS[n1:] if x['path'].endswith('.mpd')]   # nach dem Tipp lädt nur noch der Helfer das MPD
-    check('… Helfer lud das MPD selbst von der endgültigen Adresse (Ziel-Host), ohne Cookie/Authorization', len(mh) == 1 and mh[0]['host'] == TARGET and not mh[0]['cookie'] and not mh[0]['auth'], mh)
-    if o:
-        pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(o[0][0])))
-    want = sum(os.path.getsize(os.path.join(FIX, f)) for f in ['init-1.m4s'] + ['chunk-1-%05d.m4s' % i for i in range(1, 6)] + ['init-2.m4s'] + ['chunk-2-%05d.m4s' % i for i in range(1, 7)])
-    files = ['']
-    wait(lambda: files.__setitem__(0, helper.cmd('dl-files')) or (':%d' % want) in files[0], 40)
-    check('dashstart → Datei beim Helfer (%d Bytes = Init + 5 Video- + 6 Tonstücke)' % want, (':%d' % want) in files[0], files[0])
-    hs = [x for x in HITS[n1:] if x['path'].endswith(('.mpd', '.m4s'))]   # Seite hat längst alles geladen; ab hier nur der Helfer
-    check('… Helfer: nur Ziel-Host, nur 360p + Ton, nie Cookie/Authorization', hs and all(x['host'] == TARGET for x in hs) and not any('chunk-0-' in x['path'] for x in hs)
-          and not any(x['cookie'] or x['auth'] for x in hs), sorted(set((x['host'], x['path'].rsplit('/', 1)[-1]) for x in hs))[:6])
+    check('E2 im Menü, kein DASH-Angebot', OFFER not in [x[0] for x in it] and
+          any('Zuordnung zum Video nicht nachgewiesen' in x[0] for x in it), it)
+    hs = [x for x in HITS[n1:] if x['path'].endswith(('.mpd', '.m4s'))]
+    check('Kein weiterer MPD-/Stückabruf, kein Job, keine Datei', not hs and helper.cmd('dl-files') == files and
+          sw.evaluate('async () => !((await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"] || []).length'))
     check('keine Seitenfehler', not errs, errs)
     ctx.close()
-helper.stop() if hasattr(helper, 'stop') else None
+helper.stop()
+srv.shutdown()
+shutdown()
 done()

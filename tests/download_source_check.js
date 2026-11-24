@@ -3,6 +3,7 @@
 const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 const path = require('path');
 const source = fs.readFileSync(process.argv[2] && process.argv[2] !== '--mutations' ? process.argv[2] : path.join(__dirname, '../src/180-player-bedienung.js'), 'utf8');
+const model = fs.readFileSync(path.join(__dirname, '../src/045-media-source.js'), 'utf8');
 const url = 'https://media.example/file.mp4?validfrom=1&validto=2&hash=a%2Fb+Z&x=1&x=2';
 function run(text, change = {}) {
   const direct = text.match(/    const directUrl = [^\n]+;/)[0];
@@ -10,7 +11,7 @@ function run(text, change = {}) {
   assert.ok(start >= 0 && end > start, 'source selector boundaries');
   const st = Object.assign({ mode: 'own', hls: null, cur: url }, change.st);
   const vid = Object.assign({ currentSrc: url, readyState: 2, error: null, srcObject: null }, change.vid);
-  return vm.runInNewContext(direct + '\n' + text.slice(start, end) + '\nhdlUrl()', { st, vid, URL, PLAYLIST_RE: /\.(m3u8|mpd)(\?|#|$)/i });
+  return vm.runInNewContext(model + '\n' + direct + '\n' + text.slice(start, end) + '\nhdlUrl()', { st, vid, URL, dashSummaryOf: (u) => u === 'https://media.example/extensionless', PLAYLIST_RE: /\.(m3u8|mpd)(\?|#|$)/i });
 }
 function verify(text) {
   assert.equal(run(text, { vid: { readyState: 0 } }), '', 'unloaded MP4 candidate must not be offered');
@@ -21,7 +22,7 @@ function verify(text) {
   assert.equal(run(text, { vid: { currentSrc: '' } }), '', 'empty currentSrc cannot validate a candidate');
   assert.equal(run(text, { st: { mode: 'capture' } }), '', 'capture mode excluded');
   assert.equal(run(text, { st: { hls: {} } }), '', 'hls.js source excluded');
-  for (const candidate of ['https://media.example/720.mp4:hls:manifest.m3u8', 'https://media.example/live.mpd', 'blob:https://media.example/id', 'https://media.example/clip.webm']) {
+  for (const candidate of ['https://media.example/720.mp4:hls:manifest.m3u8', 'https://media.example/live.mpd', 'https://media.example/extensionless', 'blob:https://media.example/id', 'https://media.example/clip.webm']) {
     assert.equal(run(text, { st: { cur: candidate }, vid: { currentSrc: candidate } }), '', 'unsupported source: ' + candidate);
   }
   assert.equal(run(text), url, 'loaded MP4 keeps signed query bytes and duplicate parameters');

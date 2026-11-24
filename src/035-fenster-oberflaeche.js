@@ -141,7 +141,7 @@
     if (!it || it.info || typeof it.fn !== 'function') return { ok: false };
     fui.menu = null;
     fui.relayUntil = Date.now() + 60000;
-    if (it.ext) return { ok: true, ext: it.ext };
+    if (it.ext) return it.ext.u && mediaIsDashManifest(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
     try { it.fn(); } catch (e) {}
     return { ok: true };
   }

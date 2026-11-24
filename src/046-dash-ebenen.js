@@ -45,7 +45,7 @@
     return out;
   }
 
-  const DASH_LV_E2 = { 'keine-treffer': 'none', 'zu-wenig-folge': 'few', 'nicht-aktiv': 'stale', 'mehrere-videos': 'multi-video',
+  const DASH_LV_E2 = { stueckfolge: 'element-unproven', 'keine-treffer': 'none', 'zu-wenig-folge': 'few', 'nicht-aktiv': 'stale', 'mehrere-videos': 'multi-video',
     konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable', 'start-unknown': 'start-unknown',
     // S4b-6: mehrere BaseURL – Wechsel der Alternative innerhalb einer Folge bzw. widersprüchliche Alternativen
     'alt-mixed': 'alt-mixed', 'alt-competing': 'alt-competing',
@@ -73,7 +73,7 @@
     // E2 (nur mit gelesenem MPD prüfbar)
     if (!L.e1.ok) L.e2 = { ok: false, code: 'n/a' };
     else if (inp.changed) L.e2 = { ok: false, code: 'changed' };
-    else if (!inp.bound) {
+    else if (!inp.bound || inp.bindReason === 'stueckfolge') {
       let c = DASH_LV_E2[inp.bindReason] || 'none';
       if (c === 'none') { const k = inp.cls || {}; c = k.host > 0 ? 'host' : k.query > 0 ? 'query' : k.number > 0 ? 'number' : inp.invisible ? 'invisible' : 'none'; }
       // S4b-4: Beginn des Mediums nicht gesehen (nur ab Beobachtung gezählt) und zu wenig gesehen: das konkret sagen
@@ -127,6 +127,7 @@
       'E1/unread-invisible': ['DASH vermutet – Manifest nicht lesbar', 'Die Seite lädt den Stream verdeckt (Hintergrund-Thread oder eingebettetes Dokument) – kein sicherer Nachweis möglich'],
       'E1/invalid': ['DASH vermutet – Manifest nicht auswertbar', 'Inhalt ist kein gültiges, lesbares MPD'],
       'E1/gone': ['DASH-Stream erkannt – Manifest nicht mehr verfügbar', 'Video kurz abspielen und erneut tippen'],
+      'E2/element-unproven': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Passende Stücke im Netzwerk gesehen – DASH-Download gesperrt'],
       'E2/host': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Stücke kommen von einem anderen Server als im Manifest angegeben'],
       'E2/query': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Stück-Adressen tragen Zusatzparameter, die das Manifest nicht nennt'],
       'E2/number': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Geladene Stücke passen nicht zur Zeitleiste des Manifests'],
@@ -193,10 +194,10 @@
   function dashLevelsFor(v, snaps, caps, offer) {
     const ents = [];
     (snaps || []).forEach((sn) => (sn || []).forEach((s) => { if (s && s.kind === 'dash' && (s.role === 'manifest' || s.role === 'unknown')) ents.push(s); }));
-    if (!ents.length) return null;
     let b = { list: [], res: {} };
     try { if (v) b = dashBindingFor(v); } catch (e) {}
-    // Kandidat: das gebundene MPD, sonst das mit den meisten Treffern bzw. der längsten Folge
+    if (!ents.length && !b.list.length) return null;
+    // Bevorzugt wird ein MPD mit passender Netzfolge, danach Trefferzahl und Länge der Folge.
     let cand = null, best = -1;
     b.list.forEach((e) => { const r = b.res[e.key] || {}; const sc = (r.state === 'bound' ? 1e9 : 0) + (r.hits || 0) * 1000 + (r.run || 0); if (sc > best) { best = sc; cand = e; } });
     const r = cand ? (b.res[cand.key] || {}) : {};
@@ -217,13 +218,13 @@
     const fp = cand ? cand.p.dashFp : null, oc = offer && offer.code ? offer.code : '';
     // S4b-6: mehrere BaseURL – Auswahl und Vorprüfung aus der Bindung, auch wenn (noch) kein Angebot besteht (Helfer unbekannt)
     let multiOffer = null;
-    try { if (fp && fp.multi && !fp.error) multiOffer = (offer && offer.offer) || dashOfferOf(fp.url, v ? dashFromOf(v) : 0); } catch (e) { multiOffer = null; }
+    try { if (fp && fp.multi && !fp.error) multiOffer = dashOfferOf(fp.url, v ? dashFromOf(v) : 0); } catch (e) { multiOffer = null; }
     let job = null;
     try { job = hdlDiags.find((d) => d.dash === true || d.type === 'dash') || null; } catch (e) {}
     const lv = dashLevels({
       read: b.list.length > 0, invalid: !b.list.length && Object.keys(dashRejected).length > 0, invisible: mse && media === 0,
       gone: oc === 'manifest-gone', changed: oc === 'source-changed',
-      bound: mediaDashState(snaps) === 'bound', bindReason: r.reason || '', cls: cls,
+      bindReason: r.reason || '', cls: cls,
       epochLate: (() => { try { const ep = v ? dashEpochOf(v) : null; return !!ep && (ep.by === 'beobachtet' || ep.by === 'quellwechsel') && Date.now() - ep.at < 30000; } catch (e) { return false; } })(),
       protectedSource: oc === 'protected' || ents.some((s) => s.protection === 'encrypted' || s.protection === 'drm'),
       // S4b-6: mehrere BaseURL – Vorprüfung der Projektion der gebundenen Auswahl (dashOfferOf), nicht die der ersten Alternative
@@ -234,7 +235,7 @@
       urlqCode: oc === 'helper-no-urlq' || (fp && !fp.error && fp.urlq && caps && caps.known && caps.dash && !caps.urlq) ? 'helper-no-urlq' : '',
       fmt: (cand && cand.p.dashFmt) || { video: [], audio: [], container: [] },
       caps: caps || { known: false }, job: job }, typeof tr === 'function' ? tr : null);
-    lv.offer = !!(offer && offer.offer);
+    lv.offer = lv.e2.ok && !!(offer && offer.offer);
     return lv;
   }
   // Fähigkeit der Helfer-App für dashLevels aus einer caps-Antwort ({ reachable, supported, dash, error }) bzw. null

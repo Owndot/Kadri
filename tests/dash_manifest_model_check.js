@@ -75,7 +75,7 @@ reg2.observe(c2, obs('https://cdn.example/w/manifest.mpd', { role: 'manifest', m
 const snap2 = reg2.snapshot(c2);
 check('Manifest (auch gebunden): Downloadstatus unavailable(stream-not-supported)', snap2[0].download.state === 'unavailable' && snap2[0].download.reason === 'stream-not-supported', snap2[0].download);
 check('… weder in der MP4- noch in der Stream-Auswahl (kein neues Angebot)', A.selectDownloads(snap2, { supported: true }).length === 0 && A.selectStreams(snap2, { hls: true }).length === 0);
-check('… DASH-Hinweis „gebunden“', A.mediaDashState([snap2]) === 'bound');
+check('… DASH-Hinweis meldet einen Kandidaten, auch bei altem bound-Eintrag', A.mediaDashState([snap2]) === 'suspected', A.mediaDashState([snap2]));
 check('Stück mit Art dash (ehemals Manifest, jetzt Rolle segment): kein DASH-Hinweis', A.mediaDashState([reg.snapshot(c)]) === '');
 
 // ---------- Korrektur: Inhalt (gültiges MPD) überstimmt eine aus der Adresse geratene HLS-Einstufung ----------
@@ -121,4 +121,19 @@ check('HLS-Hauptliste und MP4 wie bisher: Rollen, keine Manifest-Daten, beide au
   snap3[0].role === 'master' && snap3[0].manifest === null && snap3[1].manifest === null &&
   A.selectStreams(snap3, { hls: true }).filter((x) => x.state === 'attemptable').length === 1 &&
   A.selectDownloads(snap3, { supported: true }).filter((x) => x.state === 'attemptable').length === 1 && A.mediaDashState([snap3]) === '', snap3);
+// Alte MP4-/HLS-Auswahlen: sobald der Inhalt als MPD erkannt ist, darf auch eine unveränderte Revision nicht weitergehen.
+{
+  const legacy = A.createMediaRegistry({ random: () => 'yd' + (++n).toString(16).padStart(6, '0'), docKey: () => 'doc5' });
+  const context = legacy.contextFor({ addEventListener() {} });
+  const mp4Url = 'https://cdn.example/mux.mp4', hlsUrl = 'https://cdn.example/stream.m3u8';
+  const observe = (url, role) => legacy.observe(context, obs(url, {
+    role, association: { state: 'bound', evidence: ['element-src'] },
+  }));
+  const mp4 = observe(mp4Url, 'standalone'), hls = observe(hlsUrl, 'master');
+  const file = () => legacy.resolveSelection(context, mp4.sourceId, mp4.revision);
+  const stream = () => legacy.resolveStream(context, hls.sourceId, hls.revision);
+  check('Frühere direkte Datei und HLS-Liste bleiben mit gültigen Belegen auswählbar', file().ok && stream().ok);
+  ctx.dashSummaryOf = (url) => [mp4Url, hlsUrl].includes(url) ? sum() : null;
+  check('Nach Erkennung als MPD sind alte MP4- und HLS-Auswahlen lokal gesperrt', !file().ok && !stream().ok, [file().reason, stream().reason]);
+}
 console.log('RESULT dash-manifest-model PASS ' + passed + '/' + passed);

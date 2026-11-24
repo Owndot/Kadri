@@ -1,11 +1,7 @@
-# S4a – DASH-Player-Matrix (lokaler Prüfstand, nicht in CI). Misst für verschiedene Player-ARCHITEKTUREN und
-# Adressierungsformen, was Kadri (echte Erweiterung, Testbuild) heute auf jeder Ebene feststellt:
-#   Manifest gelesen? · an das laufende Video gebunden? (Ergebnis + Grund) · Kadri-Vorprüfung (Format/Codec) ·
-#   Angebot im Menü (bzw. welcher Text statt dessen) · Helfer-Planung (dashplan) · optional Helfer-Download (dashstart).
+# DASH-Player-Matrix in der ungepackten Test-Erweiterung mit echtem Desktop-Helfer.
+# P0-A: keine Elementfreigabe. Die Netzqualifikation und die getrennten E1-/E3-/E4-Befunde bleiben prüfbar.
 # Keine Domain-Sonderregeln: alle Szenarien laufen auf zwei neutralen lokalen Hosts (Seite 127.0.0.1, „CDN“ cdn.example.org,
 # im Browser per --host-resolver-rules auf 127.0.0.1). Medien: S3d-Fixture (H.264 + AAC-LC) und tests/make_s4a_fixtures.sh.
-# Geprüft (hart) werden nur SICHERHEITS-Erwartungen: Szenarien, in denen eine Bindung falsch wäre, dürfen nie binden, und
-# eine Bindung muss immer das richtige Manifest treffen. Alles andere wird gemessen und als Tabelle/JSON ausgegeben.
 #   node tools/build.js --test
 #   tests/make_s4a_fixtures.sh /tmp/s4a-fx
 #   S4A_FIXTURES=/tmp/s4a-fx S4A_PLAYERS=<Ordner mit dashjs-4.7.4/, dashjs-5.2.1/ (S4b-8) und shaka-player-4.11.7/ (npm pack, entpackt)> \
@@ -49,8 +45,6 @@ def fx(name):
 M = {}
 def mk(key, text, d=H264, **kw): M[key] = dict(dir=d, mpd=text, **kw)
 for k in ('a1', 'a2', 'a3', 'b1', 'b2', 'c1', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w', 'c2', 'c3', 'f1', 'f2a', 'f2b', 'd4'): mk(k, BASE_MPD)
-FAILMPD = set()   # S4b: MPD-Abruf nach der Verzögerung mit 404 beantworten (Planung scheitert spät)
-DELAY = {}   # S4b-3: Verzögerung (s) für MPD-Abrufe je Szenario – ab dem Tipp lädt nur noch der Helfer (langsame Planung)
 mk('a4', mpd_dur(BASE_MPD)); mk('a5', BASE_MPD.replace('$Number%05d$', '$Time$'), time=True)
 mk('d1', BASE_MPD, redir='mpd'); mk('d2', BASE_MPD, redir='mpd'); mk('d3', BASE_MPD, redir='seg-signed')
 mk('d5', mpd_base(BASE_MPD, 'http://%s/m/d5/' % FRONT, 'http://%s/m/d5/' % OTHER)); mk('d6', mpd_base(BASE_MPD, 'http://%s/m/d6/' % OTHER))
@@ -125,98 +119,70 @@ PAGES = {
     'g1': own(dict(inline='/api/g1.json', mode='main')),
     'h1': dashjs(mp('h1')), 'h2': dashjs(mp('h2')), 'h3': own(dict(mpd=mp('h3'), mode='main')),
 }
-# Szenarien: (Kennung, Gruppe, Beschreibung, Sicherheits-Erwartung: 'nie' = darf nicht binden | 'richtig' = wenn gebunden, dann
-# mit den Optionen des laufenden Manifests | None, Planung versuchen, Download versuchen, erwartete Plan-Optionen)
-OPT2 = ['360p · Ton: Sprache nicht angegeben', '180p · Ton: Sprache nicht angegeben']
+# Szenarien (Kennung, Gruppe, Beschreibung).
 SCN = [
-    ('a1', 'A Player', 'eigener Player, Hauptthread, fetch · Timeline + $Number$', 'richtig', True, False),
-    ('a2', 'A Player', 'dash.js 4.7.4, Hauptthread, XHR · Timeline + $Number$', 'richtig', True, False),
-    ('a3', 'A Player', 'Shaka 4.11.7, Hauptthread, fetch · Timeline + $Number$', 'richtig', True, False),
-    ('a4', 'A Adressierung', 'dash.js · SegmentTemplate $Number$ mit fester Dauer (ohne Timeline)', 'richtig', True, False),
-    ('a5', 'A Adressierung', 'dash.js · SegmentTemplate $Time$ + Timeline', 'richtig', True, True),
-    ('b1', 'B Worker', 'eigener Player · MPD und Stücke per fetch im Dedicated Worker, MSE im Hauptthread', 'richtig', True, False),
-    ('b2', 'B Worker', 'eigener Player · MediaSource im Dedicated Worker (MediaSourceHandle)', 'richtig', True, False),
-    ('c1', 'C Fenster', 'dash.js in fremd-originigem iframe (CDN-Host)', 'richtig', True, True),
-    ('c1n', 'C Fenster', 'wie c1, Planung langsam (6 s); währenddessen neuer Tipp auf ⬇ – die späte Planantwort ist veraltet', 'richtig', True, False),
-    ('c1w', 'C Fenster', 'S4b: wie c1, Planung langsam (6 s); Warteblatt währenddessen bewusst geschlossen', 'richtig', True, False),
-    ('a2w', 'A Player', 'S4b: wie a2 (Hauptfenster), Planung langsam (6 s); Warteblatt währenddessen bewusst geschlossen', 'richtig', True, False),
-    ('c1t', 'C Fenster', 'S4b: wie c1, Planung scheitert spät (6 s, 404); währenddessen neuer Tipp ⬇ – später Fehler-Hinweis ist veraltet', 'richtig', True, False),
-    ('c1x', 'C Fenster', 'S4b: wie c1, Helfer-Abruf des MPD verzögert um 50 s (Planung über 45 s, echte Zeit)', 'richtig', True, False),
-    ('c2', 'C Fenster', 'eigener Player in srcdoc-iframe', 'richtig', True, False),
-    ('c3', 'C Fenster', 'dash.js zweifach verschachtelt (Seite → fremd → Seite)', 'richtig', True, True),
-    ('d1', 'D Adressen', 'dash.js · MPD + Stücke 301 auf CDN-Host (wie githack), Auflösung gegen endgültige Adresse', 'richtig', True, False),
-    ('d2', 'D Adressen', 'eigener Player · wie d1, aber Auflösung gegen ANGEFRAGTE Adresse (Gegenprobe, Fehler S3h)', 'nie', False, False),
-    ('d3', 'D Adressen', 'dash.js · jedes Stück 302 auf signierte CDN-Adresse (?exp&sig)', 'richtig', True, True),
-    ('d4', 'D Adressen', 'eigener Player · MPD mit ?tok=…, Token an jedes Stück angehängt (MPD nennt es nicht)', 'nie', False, False),
-    ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN) – S4b-6: gebunden, Download über die zweite', 'richtig', True, True),
-    ('d8', 'D Adressen', 'eigener Player · zwei BaseURL, CDN-Wechsel mitten in der Folge (S4b-6: nie still akzeptiert)', 'nie', False, False),
-    ('d6', 'D Adressen', 'dash.js · absolute BaseURL auf CDN-Host', 'richtig', True, False),
-    ('u1', 'U Annex I', 'eigener Player · MPD ?tok=…, UrlQueryInfo (MPD-Ebene), Player hängt den Token an Init/Stücke; Server verlangt ihn', 'richtig', True, True),
-    ('u2', 'U Annex I', 'dash.js 5.2.1 (Referenzplayer mit Annex I) · UrlQueryInfo, Server verlangt den Token', 'richtig', True, True),
-    ('u3', 'U Annex I', 'dash.js 5.2.1 · MPD-Abruf 302 von ?tok=A auf ?tok=B – Query der endgültigen Adresse', 'richtig', True, True),
-    ('u4', 'U Annex I', 'eigener Player · zwei BaseURL + UrlQueryInfo, Player nimmt die zweite (Token an den gewählten CDN)', 'richtig', True, True),
-    ('u5', 'U Annex I', 'eigener Player · UrlQueryInfo im MPD, Player hängt den Token NICHT an', 'nie', False, False),
-    ('u6', 'U Annex I', 'dash.js 5.2.1 · ExtUrlQueryInfo (2016; dash.js wendet sie an) – von Kadri nicht gedeutet', 'nie', False, False),
-    ('e1', 'E Form', 'dash.js · Einzeldatei je Darstellung, SegmentList mit mediaRange (Byte-Bereiche)', 'nie', False, False),
-    ('e2', 'E Form', 'Shaka · SegmentList + SegmentTimeline mit einzeln signierten SegmentURL', 'richtig', True, True),
-    ('e3', 'E Form', 'dash.js · SegmentList mit fester Dauer, Ton-Abdeckung im MPD falsch (24 s statt 20 s) – Vorprüfungs-Gegenprobe', 'richtig', True, False),
-    ('f1', 'F Mehrere', 'eigener Player · erst Vorspann-MPD (nur 180p, 3 Stücke), dann Haupt-MPD im selben Video', 'richtig', True, False),
-    ('f1b', 'F Mehrere', 'eigener Player · wie f1, aber Haupt-MPD startet 2,5 s nach dem Laden des Vorspanns (Vorspann vorgeladen)', 'richtig', True, False),
-    ('f1c', 'F Mehrere', 'S4b-4: Vorspann (3 Stücke gleichzeitig angefragt, Antworten 3 s verspätet); Haupt-MPD startet 1 s nach dem Vorspann', 'richtig', True, False),
-    ('p1', 'F Epoche', 'S4b-4: Init + 2 Stücke VOR dem Anlegen der MediaSource geladen (Vorladen), danach angehängt', 'richtig', True, False),
-    ('r1', 'F Epoche', 'S4b-4: schneller Wechsel im selben Video nach 1,2 s (neue MediaSource), alter Lader hört auf', 'richtig', True, False),
-    ('r2', 'F Epoche', 'S4b-4: schneller Wechsel, alter Lader lädt weiter Stücke des alten MPD (schlecht aufgeräumt)', None, True, False),
-    ('s1', 'F Epoche', 'S4b-4: dash.js-Video in Shadow-DOM (loadstart für das Dokument unsichtbar)', None, True, False),
-    ('f2', 'F Mehrere', 'eigener Player · zwei Videos gleichzeitig, zwei MPDs', None, True, False),
-    ('g1', 'G Quelle', 'eigener Player · MPD-Text aus API-JSON (kein .mpd-Abruf)', 'nie', False, False),
-    ('h1', 'H Codec', 'dash.js · VP9 + Opus in WebM', 'richtig', True, False),
-    ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4', 'richtig', True, False),
-    ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
+    ('a1', 'A Player', 'eigener Player, Hauptthread, fetch · Timeline + $Number$'),
+    ('a2', 'A Player', 'dash.js 4.7.4, Hauptthread, XHR · Timeline + $Number$'),
+    ('a3', 'A Player', 'Shaka 4.11.7, Hauptthread, fetch · Timeline + $Number$'),
+    ('a4', 'A Adressierung', 'dash.js · SegmentTemplate $Number$ mit fester Dauer (ohne Timeline)'),
+    ('a5', 'A Adressierung', 'dash.js · SegmentTemplate $Time$ + Timeline'),
+    ('b1', 'B Worker', 'eigener Player · MPD und Stücke per fetch im Dedicated Worker, MSE im Hauptthread'),
+    ('b2', 'B Worker', 'eigener Player · MediaSource im Dedicated Worker (MediaSourceHandle)'),
+    ('c1', 'C Fenster', 'dash.js in fremd-originigem iframe (CDN-Host)'),
+    ('c1n', 'C Fenster', 'wie c1, bisheriger Fall: neuer Tipp während langsamer Planung'),
+    ('c1w', 'C Fenster', 'wie c1, bisheriger Fall: Warteblatt während langsamer Planung geschlossen'),
+    ('a2w', 'A Player', 'wie a2, bisheriger Fall: Warteblatt während langsamer Planung geschlossen'),
+    ('c1t', 'C Fenster', 'wie c1, bisheriger Fall: neuer Tipp vor verspätetem Planungsfehler'),
+    ('c1x', 'C Fenster', 'wie c1, bisheriger Fall: Zeitlimit der Planung'),
+    ('c2', 'C Fenster', 'eigener Player in srcdoc-iframe'),
+    ('c3', 'C Fenster', 'dash.js zweifach verschachtelt (Seite → fremd → Seite)'),
+    ('d1', 'D Adressen', 'dash.js · MPD + Stücke 301 auf CDN-Host (wie githack), Auflösung gegen endgültige Adresse'),
+    ('d2', 'D Adressen', 'eigener Player · wie d1, aber Auflösung gegen ANGEFRAGTE Adresse (Gegenprobe, Fehler S3h)'),
+    ('d3', 'D Adressen', 'dash.js · jedes Stück 302 auf signierte CDN-Adresse (?exp&sig)'),
+    ('d4', 'D Adressen', 'eigener Player · MPD mit ?tok=…, Token an jedes Stück angehängt (MPD nennt es nicht)'),
+    ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN) – Stückfolge über die zweite BaseURL'),
+    ('d8', 'D Adressen', 'eigener Player · zwei BaseURL, CDN-Wechsel mitten in der Folge (S4b-6: nie still akzeptiert)'),
+    ('d6', 'D Adressen', 'dash.js · absolute BaseURL auf CDN-Host'),
+    ('u1', 'U Annex I', 'eigener Player · MPD ?tok=…, UrlQueryInfo (MPD-Ebene), Player hängt den Token an Init/Stücke; Server verlangt ihn'),
+    ('u2', 'U Annex I', 'dash.js 5.2.1 (Referenzplayer mit Annex I) · UrlQueryInfo, Server verlangt den Token'),
+    ('u3', 'U Annex I', 'dash.js 5.2.1 · MPD-Abruf 302 von ?tok=A auf ?tok=B – Query der endgültigen Adresse'),
+    ('u4', 'U Annex I', 'eigener Player · zwei BaseURL + UrlQueryInfo, Player nimmt die zweite (Token an den gewählten CDN)'),
+    ('u5', 'U Annex I', 'eigener Player · UrlQueryInfo im MPD, Player hängt den Token NICHT an'),
+    ('u6', 'U Annex I', 'dash.js 5.2.1 · ExtUrlQueryInfo (2016; dash.js wendet sie an) – von Kadri nicht gedeutet'),
+    ('e1', 'E Form', 'dash.js · Einzeldatei je Darstellung, SegmentList mit mediaRange (Byte-Bereiche)'),
+    ('e2', 'E Form', 'Shaka · SegmentList + SegmentTimeline mit einzeln signierten SegmentURL'),
+    ('e3', 'E Form', 'dash.js · SegmentList mit fester Dauer, Ton-Abdeckung im MPD falsch (24 s statt 20 s) – Vorprüfungs-Gegenprobe'),
+    ('f1', 'F Mehrere', 'eigener Player · erst Vorspann-MPD (nur 180p, 3 Stücke), dann Haupt-MPD im selben Video'),
+    ('f1b', 'F Mehrere', 'eigener Player · wie f1, aber Haupt-MPD startet 2,5 s nach dem Laden des Vorspanns (Vorspann vorgeladen)'),
+    ('f1c', 'F Mehrere', 'S4b-4: Vorspann (3 Stücke gleichzeitig angefragt, Antworten 3 s verspätet); Haupt-MPD startet 1 s nach dem Vorspann'),
+    ('p1', 'F Epoche', 'S4b-4: Init + 2 Stücke VOR dem Anlegen der MediaSource geladen (Vorladen), danach angehängt'),
+    ('r1', 'F Epoche', 'S4b-4: schneller Wechsel im selben Video nach 1,2 s (neue MediaSource), alter Lader hört auf'),
+    ('r2', 'F Epoche', 'S4b-4: schneller Wechsel, alter Lader lädt weiter Stücke des alten MPD (schlecht aufgeräumt)'),
+    ('s1', 'F Epoche', 'S4b-4: dash.js-Video in Shadow-DOM (loadstart für das Dokument unsichtbar)'),
+    ('f2', 'F Mehrere', 'eigener Player · zwei Videos gleichzeitig, zwei MPDs'),
+    ('g1', 'G Quelle', 'eigener Player · MPD-Text aus API-JSON (kein .mpd-Abruf)'),
+    ('h1', 'H Codec', 'dash.js · VP9 + Opus in WebM'),
+    ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4'),
+    ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet'),
 ]
-WANT_OPTS = {'u1': OPT2, 'u2': OPT2, 'u3': OPT2, 'u4': OPT2, 'd5': OPT2, 'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
-# S4b: harte FUNKTIONS-Erwartungen je Szenario (heutiger Soll-Stand; jede S4b-Stufe ändert hier nur, was sie ausdrücklich
-# liefert). bound/offer: Bindung und Angebot; plan: erwartete Optionen ('rejected' = Helfer lehnt beim Plan ab);
-# file: vollständige Datei beim Helfer (Größe = Init + alle Stücke der gewählten Darstellung + Ton).
-FX_SIZE = lambda v: sum(os.path.getsize(os.path.join(H264, f)) for f in os.listdir(H264) if re.match(r'(init|chunk)-(%s|2)(-\d+)?\.m4s$' % v, f))
-FILE_OK = {FX_SIZE('1'), FX_SIZE('0')}   # 360p bzw. 180p (je nach dem, was der Player gerade spielte)
-EXPECT = {}
-for k in ('a1', 'a2', 'a3', 'a4', 'd1', 'd6', 'f1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
-for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
-for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd8', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
-# S4b-6: mehrere BaseURL – an die beobachtete zweite Alternative gebunden, Helfer prüft die Auswahl und lädt vollständig über sie
-EXPECT['d5'] = dict(bound=True, offer=True, plan=OPT2, file=True)
-# S4b-8: Annex I – gebunden, Helfer bildet dieselben Adressen (Token) und lädt vollständig; ohne Anhängen / 2016: nie
-for k in ('u1', 'u2', 'u3', 'u4'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
-for k in ('u5', 'u6'): EXPECT[k] = dict(bound=False, offer=False)
-# S4b-4: Medien-Epoche – der Vorspann gehört zur vorigen MediaSource: das Haupt-MPD (360p + 180p) wird gebunden
-for k in ('f1b', 'f1c', 'p1', 'r1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
-# S4b-5: Vorprüfung im Gleichlauf mit dem Helfer – e3 (Ton-Abdeckung 24 s statt 20 s) wird schon von Kadri erkannt: kein Angebot,
-# kein dashplan (der Helfer lädt das MPD nicht), Bindung unverändert
-EXPECT['e3'] = dict(bound=True, offer=False, noplan=True)
-for k in ('h1', 'h2', 'h3'): EXPECT[k] = dict(bound=True, offer=False)
-for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer=True)
-# S4b: Ebenen (src/046) – erste blockierende Ebene (Diagnose „DASH-Ebenen“), Hauptzeile und Unterzeile im Menü.
-# '-' = keine blockierende Ebene (Angebot); None = kein DASH an diesem Video (keine Ebenen-Zeile).
+# Die am Auditstand positiven Bindungsfälle bleiben positive Kandidatenfälle.
+MATCH = {'a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd5', 'd6', 'e2', 'e3', 'f1', 'f1b', 'f1c', 'p1', 'r1',
+         'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w', 'h1', 'h2', 'h3', 'u1', 'u2', 'u3', 'u4'}
 M_E1 = 'DASH vermutet – Manifest nicht lesbar'
 M_E2 = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
-M_FMT = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
-LV = {k: ('-', None, None) for k in ('u1', 'u2', 'u3', 'u4', 'a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd5', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
+LV = {k: ('E2/element-unproven', M_E2, r'Passende Stücke im Netzwerk') for k in MATCH}
 LV.update({
     'b1': ('E1/unread-invisible', M_E1, r'verdeckt'), 'b2': ('E1/unread-invisible', M_E1, r'verdeckt'), 'c2': ('E1/unread-invisible', M_E1, r'verdeckt'),
     'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'),
-    'u5': ('E2/query', M_E2, r'Zusatzparameter'), 'u6': ('E2/urlparam', 'DASH-Stream erkannt – nicht speicherbar', r'Adressparameter \(UrlQueryInfo\)'), 'd8': ('E2/alt-mixed', M_E2, r'verschiedenen Server-Alternativen \(CDN-Wechsel\)'),
-    'e3': ('E3/coverage', 'DASH-Stream zugeordnet – nicht speicherbar', r'^Manifest widersprüchlich: Tonspur 24 s statt 20 s$'),
+    'u5': ('E2/query', M_E2, r'Zusatzparameter'), 'u6': ('E2/urlparam', 'DASH-Stream erkannt – nicht speicherbar', r'Adressparameter \(UrlQueryInfo\)'),
+    'd8': ('E2/alt-mixed', M_E2, r'verschiedenen Server-Alternativen \(CDN-Wechsel\)'),
     'e1': ('E2/uncheckable', 'DASH-Stream erkannt – Zuordnung hier nicht möglich', r'^Stream-Form \(Byte-Bereiche einer Datei\) erlaubt keinen sicheren Nachweis$'),
     'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
-    'f1b': ('-', None, None), 'f1c': ('-', None, None), 'p1': ('-', None, None), 'r1': ('-', None, None),
     'r2': ('E2/competing', M_E2, r'Werbung'),
-    # Shadow-DOM: loadstart für Kadri unsichtbar → Epoche ab Beobachtung; alle Stücke waren schon vorher geladen → keine Bindung (Grenze)
     's1': ('E2/epoch-late', M_E2, r'erst seit kurzem'),
     'g1': (None, 'Keine speicherbare Videodatei erkannt – Video abspielen und erneut tippen', None),
-    'h1': ('E3/format', M_FMT, r'^Video VP9 · Ton Opus · WebM – gespeichert wird bisher nur H\.264 mit AAC-LC \(MP4\)$'),
-    'h2': ('E3/format', M_FMT, r'^Video VP9 · Ton Opus · MP4 – gespeichert wird bisher nur H\.264 mit AAC-LC \(MP4\)$'),
-    'h3': ('E3/audio-he-aac', 'DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', r'^Ton HE-AAC – gespeichert wird bisher nur AAC-LC$'),
 })
+PROFILE = {'e3': 'coverage', 'h1': 'format', 'h2': 'format', 'h3': 'audio-he-aac'}
 
 HITS = []
 def time_to_num(rid, t):
@@ -264,8 +230,6 @@ class H(http.server.BaseHTTPRequestHandler):
             return self.out(302, extra={'Location': '/m/u3/manifest.mpd?tok=s4a-tokenB'})
         if NEEDQ.get(key) and name.endswith('.m4s') and u.query != NEEDQ[key]: return self.out(403)
         if name == 'manifest.mpd':
-            if DELAY.get(key): time.sleep(DELAY[key])
-            if key in FAILMPD: return self.out(404)
             return self.out(200, m['mpd'].encode(), 'application/dash+xml')
         if SEGDELAY.get(key) and name.startswith('chunk-'): time.sleep(SEGDELAY[key])
         if m.get('time'):
@@ -300,7 +264,7 @@ KEEP = ('Quellen am Video', 'Auswahl', 'DASH', 'Helfer-Fähigkeiten', 'Rahmen', 
 want = [a for a in sys.argv[1:] if not a.startswith('-')]
 RUN = [s for s in SCN if (not want or s[0] in want) and s[0] in PAGES and (s[0] in M or s[0] in ('c1', 'c3', 'f1', 'f1b', 'f1c', 'r1', 'r2', 'f2'))]
 skipped = [s[0] for s in SCN if s not in RUN and (not want or s[0] in want)]
-check('Fixtures/Player vorhanden (sonst übersprungen: %s)' % (', '.join(skipped) or '–'), bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js'))
+check('Fixtures und Player vollständig (fehlende Fälle: %s)' % (', '.join(skipped) or '–'), not skipped and bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js'))
       and os.path.isfile(os.path.join(PLAYERS, 'dashjs-5.2.1', 'package', 'dist', 'modern', 'umd', 'dash.all.min.js')), PLAYERS)
 # S4b-4: Messmodus (ohne Erweiterung, nur Test-Instrumentierung der Seite): je Szenario die Zeitpunkte von loadstart/emptied
 # des Videoelements, sourceopen der MediaSource und Anfragebeginn/-ende jedes Init-/Medienstücks (Resource Timing).
@@ -335,9 +299,9 @@ with sync_playwright() as p:
     ctx, sw, udir = launch(p, extra_args=['--host-resolver-rules=MAP %s 127.0.0.1' % OTHER_NAME, '--no-proxy-server']); ext_id = sw.url.split('/')[2]
     ctx.grant_permissions(['clipboard-read', 'clipboard-write'])
     check('Kopplung', pair_helper(ctx, ext_id, helper) == 'Verbunden')
-    for sid, grp, title, safety, do_plan, do_start in RUN:
+    for sid, grp, title in RUN:
         pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)[:160]))
-        r = {'id': sid, 'group': grp, 'title': title, 'safety': safety}
+        r = {'id': sid, 'group': grp, 'title': title}
         n0 = len(HITS)
         pg.goto('http://%s/p/%s.html' % (FRONT, sid)); pg.bring_to_front()
         vids = lambda: [x for f in pg.frames for x in (f.evaluate('() => Array.from(document.querySelectorAll("video")).concat(Array.from(document.querySelectorAll("#host")).flatMap((h) => h.shadowRoot ? Array.from(h.shadowRoot.querySelectorAll("video")) : [])).map((v) => [v.currentTime, v.paused, v.readyState])') or [])]
@@ -395,12 +359,15 @@ with sync_playwright() as p:
         r['diag'] = dg
         allg = dg + '\n' + r.get('diag_frame', '')
         r['lines'] = [l for l in allg.split('\n') if l.strip().startswith(KEEP) or 'Bindung' in l]
-        b = re.findall(r'Bindung (\w+)\(([^)]*)\)', allg); r['bindung'] = b
+        b = re.findall(r'dash:manifest · Bindung (\w+)\(([^)]*)\)', allg); r['bindung'] = b
         r['bound'] = any(x[0] == 'bound' for x in b)
-        r['pruef'] = re.findall(r'Ergebnis (\w+) \(([^)]*)\)(?: · ([^\n·]+))?', allg)
+        r['pruef'] = re.findall(r'Ergebnis (Netzfolge passt|\w+) \(([^)]*)\)(?: · ([^\n·]+))?', allg)
         # Menü
         it = []
         n_menu = len(HITS)
+        files_before = helper.cmd('dl-files')
+        journal = lambda: sw.evaluate('async () => (await chrome.storage.local.get("kadri-dl-jobs"))["kadri-dl-jobs"] || []')
+        jobs_before = journal()
         if wait(lambda: pg.evaluate(js('return !!r.querySelector(".pill.on");')), 12):
             time.sleep(0.3)
             pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
@@ -409,132 +376,28 @@ with sync_playwright() as p:
         else: r['pill'] = False
         r['menu'] = it
         r['offer'] = OFFER in [x[0] for x in it]
-        if not r['offer']:   # S4b-5: ohne Angebot fragt Kadri den Helfer nicht (dashplan lädt das MPD – hier darf keins kommen)
-            time.sleep(2.0)
-            r['mpd_after_menu'] = len([x for x in HITS[n_menu:] if x['path'].endswith('.mpd')])
-        if r['offer'] and do_plan:
-            n1 = len(HITS)
-            # S4b-3: das Ergebnis des Tipps ist die Auswahl selbst oder ein NEUER Hinweis. Ein noch sichtbarer älterer Hinweis (z. B.
-            # „Diagnose kopiert“) ist kein Ergebnis – in S4a hat genau das die Fenster-Szenarien als „hängt“ fehlgedeutet.
-            toast0 = pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
-            pg.evaluate(js('const t = r.querySelector(".toast"); if (t) t.textContent = ""; return true;'))
-            if sid in ('c1n', 'c1w', 'a2w', 'c1t'): DELAY[sid] = 6
-            if sid == 'c1t': FAILMPD.add('c1t')
-            if sid == 'c1x': DELAY['c1x'] = 50
-            pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); return true;' % json.dumps(OFFER)))
-            special = sid in ('c1w', 'a2w', 'c1t', 'c1x')
-            def replay():   # (kurzes Testvideo: weiterlaufen lassen, damit Knopf und Fenster-Diagnose danach verfügbar sind)
-                for f in pg.frames:
-                    try: f.evaluate('() => document.querySelectorAll("video").forEach((v) => { if (v.ended || v.paused || v.currentTime > 12) { v.currentTime = 0; v.play().catch(() => {}); } })')
-                    except Exception: pass
-            head = lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h ? h.textContent : "";'))
-            toastt = lambda: pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
-            fsheets = lambda: [f.evaluate(js('return r.querySelectorAll(".dlm").length;')) for f in pg.frames if f != pg.main_frame]
-            if sid in ('c1w', 'a2w'):
-                # Warteblatt steht („Helfer-App prüft …“); bewusst schließen, bevor die (langsame) Planung antwortet
-                time.sleep(1.2)
-                r['wait_shown'] = pg.evaluate(js('return !!r.querySelector(".dlm.wait .dlw");'))
-                pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
-                replay(); time.sleep(9)
-                DELAY[sid] = 0
-                r['head_after'] = head(); r['frame_sheets'] = fsheets(); r['toast_after'] = toastt()
-            if sid == 'c1t':
-                time.sleep(1.5)
-                pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
-                wait(lambda: OFFER in [x[0] for x in (pg.evaluate(js(ITEMS)) or [])], 10)
-                r['menu_b'] = [x[0] for x in (pg.evaluate(js(ITEMS)) or [])]
-                seen = set()
-                end = time.time() + 9
-                while time.time() < end: seen.add(toastt()); time.sleep(0.1)
-                DELAY['c1t'] = 0; FAILMPD.discard('c1t')
-                r['toasts_seen'] = sorted(x for x in seen if x)
-                r['head_after'] = head(); r['frame_sheets'] = fsheets()
-            if sid == 'c1x':
-                t0 = time.time(); log = []
-                while time.time() - t0 < 62:
-                    st_ = (head(), toastt(), pg.evaluate(js('return !!r.querySelector(".dlm.wait");')), tuple(fsheets()))
-                    if not log or log[-1][1:] != st_: log.append((round(time.time() - t0, 1),) + st_)
-                    time.sleep(0.25)
-                DELAY['c1x'] = 0
-                r['timeline'] = log
-                r['head_after'] = head(); r['frame_sheets'] = fsheets()
-            if sid == 'c1n':
-                # während die (langsame) Planung läuft: neuer Tipp auf ⬇ → neue Auswahl „Speichern“; die späte Planantwort
-                # gehört zum älteren Tipp und darf weder oben noch im Fenster als Auswahl erscheinen
-                time.sleep(1.5)
-                pg.evaluate(js('r.querySelector(".pill.on button[aria-label=\\"Video speichern\\"]").click(); return true;'))
-                wait(lambda: OFFER in [x[0] for x in (pg.evaluate(js(ITEMS)) or [])], 10)
-                r['menu_b'] = [x[0] for x in (pg.evaluate(js(ITEMS)) or [])]
-                time.sleep(9)
-                DELAY['c1n'] = 0
-                r['head_after'] = pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return h ? h.textContent : "";'))
-                r['frame_sheets'] = [f.evaluate(js('return r.querySelectorAll(".dlm").length;')) for f in pg.frames if f != pg.main_frame]
-            if not special: wait(lambda: pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); const t = r.querySelector(".toast"); return (h && h.textContent === "DASH-Stream speichern") || (t && t.textContent && !/prüft/.test(t.textContent));')), 45)
-            o = [x for x in (pg.evaluate(js(ITEMS)) or []) if x[0] != 'Schließen']
-            r['plan'] = o if pg.evaluate(js('const h = r.querySelector(".dlm .dlh"); return !!h && h.textContent === "DASH-Stream speichern";')) else []
-            r['toast'] = pg.evaluate(js('const t = r.querySelector(".toast"); return t ? t.textContent : "";'))
-            r['toast_vorher'] = toast0
-            hh = [x for x in HITS[n1:] if not x['path'].startswith(('/p/', '/lib/'))]
-            r['mpd_after_tap'] = len([x for x in hh if x['path'].endswith('.mpd')])   # (statisches MPD: danach lädt es nur noch der Helfer)
-            r['helper_clean'] = not any(x['cookie'] or x['auth'] for x in hh)
-            if not r['plan'] and not special:
-                d3 = diag_press() if sid.startswith('c') else diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
-            elif do_start:
-                f0 = helper.cmd('dl-files'); n2 = len(HITS)
-                # doppelter Tipp auf dieselbe Option (gleicher Takt): genau EIN Auftrag
-                pg.evaluate(js('const b = Array.from(r.querySelectorAll(".dlm .dli")).find((x) => x.firstChild.textContent === %s); b.click(); b.click(); return true;' % json.dumps(r['plan'][0][0])))
-                got = ['']
-                wait(lambda: got.__setitem__(0, helper.cmd('dl-files')) or (got[0] != f0 and re.search(r':\d{5,}', got[0])), 45)
-                time.sleep(3)
-                got[0] = helper.cmd('dl-files')
-                r['file'] = got[0] if got[0] != f0 else ''
-                r['new_files'] = [x for x in got[0].split()[1:] if x not in f0.split()[1:]]
-                r['dl_hosts'] = sorted({x['host'] for x in HITS[n2:] if re.search(r'(init|chunk)-', x['path'])})   # S4b-6: Hosts der Helfer-Abrufe
-                r['dl_q'] = sorted({x['q'] for x in HITS[n2:] if re.search(r'(init|chunk)-', x['path'])})   # S4b-8: Query der Helfer-Abrufe
-                r['helper_clean'] = r['helper_clean'] and not any(x['cookie'] or x['auth'] for x in HITS[n2:])
-                d3 = diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
-            if sid.startswith('c') or sid == 'a2w':   # S4b-3: Relay-Spur beider Seiten (anonym)
-                spur = lambda t: next((l for l in t.split('\n') if l.startswith('Relay-Spur')), '')
-                r['trace_top'] = spur(diag())
-                try: pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
-                except Exception: pass
-                for f in pg.frames:   # (kurzes Testvideo evtl. schon zu Ende: wieder abspielen, damit der Knopf oben steht)
-                    try: f.evaluate('() => document.querySelectorAll("video").forEach((v) => { if (v.ended || v.paused) { v.currentTime = 0; v.play().catch(() => {}); } })')
-                    except Exception: pass
-                time.sleep(1.5)
-                r['trace_frame'] = spur(diag_press())
-                print('     SPUR oben:    ' + r['trace_top'][:1800]); print('     SPUR Fenster: ' + r['trace_frame'][:1800])
+        time.sleep(0.5)
+        # Das MPD ist bereits gelesen. Eine Neuplanung würde erneut auf das MPD zugreifen.
+        r['mpd_after_menu'] = sum(x['path'].endswith('.mpd') for x in HITS[n_menu:])
+        check('[%s] Produkt: keine Bindung, kein DASH-Angebot' % sid, not r['bound'] and not r['offer'], [r['bindung'], it])
+        check('[%s] Kein Helfer-Plan, neuer Job oder Datei' % sid,
+              r['mpd_after_menu'] == 0 and journal() == jobs_before and helper.cmd('dl-files') == files_before)
+        if sid in MATCH:
+            check('[%s] Positive Netzfolge bleibt diagnostisch sichtbar' % sid,
+                  any(x[0] == 'Netzfolge passt' for x in r['pruef']), r['pruef'])
+        if sid == 'u3':
+            check('[u3] Kein Stückabruf mit der Query der Anfrageadresse', not any(
+                's4a-tokenA' in x['q'] for x in HITS if '/m/u3/' in x['path'] and x['path'].endswith('.m4s')))
+        if sid in ('c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x'):
+            check('[%s] Relay: E2-Hinweis steht im Hauptfenster ohne auswählbares DASH' % sid, any(x[0] == M_E2 for x in it) and not r['offer'], it)
         try: pg.evaluate(js('const b = r.querySelector(".dlm .dlx"); if (b) b.click(); return true;'))
         except Exception: pass
         r['errs'] = errs
         r['anon'] = not re.search(r'://|127\.0\.0|example\.org|manifest\.mpd|chunk-|init-\d|/m/|s4a-token|sig=', allg)
         RES.append(r)
-        print('[%s] spielt=%s bound=%s Prüfung=%s Angebot=%s Plan=%s Menü=%s' % (sid, r['plays'], r['bound'], r['pruef'][:2], r['offer'],
-              [x[0] for x in r.get('plan', [])] or r.get('toast', ''), [x[0] + (' | ' + x[1] if x[1] else '') for x in it][:3]))
+        print('[%s] spielt=%s Prüfung=%s Menü=%s' % (sid, r['plays'], r['pruef'][:2], it[:3]))
         for l in r['lines']: print('     ' + l.strip()[:260])
-        # ---- Sicherheits-Erwartungen ----
-        if safety == 'nie': check('[%s] Sicherheit: bindet nicht (%s)' % (sid, title), not r['bound'] and not r['offer'], r['bindung'])
-        if safety == 'richtig' and r.get('plan') and sid in WANT_OPTS and WANT_OPTS[sid]:
-            check('[%s] Sicherheit: Bindung trifft das laufende Manifest (Optionen %s)' % (sid, WANT_OPTS[sid]), [x[0] for x in r['plan']] == WANT_OPTS[sid], r['plan'])
         check('[%s] Diagnose anonym' % sid, r['anon'])
-        # ---- Funktions-Erwartungen (hart) ----
-        ex = EXPECT.get(sid)
-        if ex:
-            check('[%s] Funktion: Bindung %s' % (sid, 'ja' if ex['bound'] else 'nein'), r['bound'] == ex['bound'], r['bindung'])
-            check('[%s] Funktion: Angebot %s' % (sid, 'ja' if ex['offer'] else 'nein'), r['offer'] == ex['offer'], it[:2])
-            if ex.get('noplan'): check('[%s] Funktion: kein dashplan – der Helfer lädt das MPD nicht' % sid, r.get('mpd_after_menu') == 0, r.get('mpd_after_menu'))
-            if ex.get('plan') == 'rejected': check('[%s] Funktion: Helfer lehnt beim Plan ab' % sid, not r.get('plan') and 'abgelehnt' in r.get('helper_line', ''), r.get('helper_line'))
-            elif ex.get('plan'): check('[%s] Funktion: Planoptionen %s' % (sid, ' + '.join(x.split(' ')[0] for x in ex['plan'])), sorted(x[0] for x in r.get('plan', [])) == sorted(ex['plan']), r.get('plan') or r.get('toast'))
-            if sid == 'd5':   # S4b-6: der Helfer lud alle Init-/Stückabrufe über die ZWEITE BaseURL (CDN-Host), keinen über die erste
-                check('[d5] Funktion: Download vollständig über die zweite BaseURL (alle Stückabrufe an %s)' % OTHER_NAME, r.get('dl_hosts') == [OTHER], r.get('dl_hosts'))
-            if sid in NEEDQ:   # S4b-8: der Helfer bildete die Adressen selbst – jede Init-/Stückanfrage mit genau dieser Query
-                check('[%s] Funktion: Helfer-Abrufe aller Init/Stücke genau mit ?%s (Annex I, selbst gebildet)' % (sid, NEEDQ[sid].replace('s4a-token', '…')), r.get('dl_q') == [NEEDQ[sid]], len(r.get('dl_q') or []))
-            if sid == 'u3': check('[u3] Funktion: kein Abruf mit dem Token der Anfrageadresse (tok=…A)', not any('s4a-tokenA' in x['q'] for x in HITS if '/m/u3/' in x['path'] and x['path'].endswith('.m4s')), '')
-            if sid == 'u4': check('[u4] Funktion: Download über die zweite BaseURL (%s) mit Token' % OTHER_NAME, r.get('dl_hosts') == [OTHER], r.get('dl_hosts'))
-            if ex.get('file'):
-                sizes = [int(x.rsplit(':', 1)[1]) for x in r.get('new_files', []) if ':' in x]
-                check('[%s] Funktion: genau EIN Download trotz Doppeltipp, Datei vollständig (%s Byte)' % (sid, '/'.join(map(str, sorted(FILE_OK)))), len(sizes) == 1 and sizes[0] in FILE_OK, r.get('new_files'))
-            if r.get('mpd_after_tap') is not None and r.get('plan'): check('[%s] Funktion: Helfer lud das MPD genau einmal (ohne Cookie/Authorization)' % sid, r['mpd_after_tap'] == 1 and r['helper_clean'], (r['mpd_after_tap'], r['helper_clean']))
         # ---- S4b: Ebenen und Meldungen (hart) ----
         if sid in LV:
             want_lv, want_msg, want_sub = LV[sid]
@@ -542,6 +405,8 @@ with sync_playwright() as p:
             mm = re.search(r'erste blockierende Ebene (\S+)(?: \((\S+)\))?', lvl)
             got_lv = None if not lvl else (mm.group(2) or mm.group(1)) if mm else '?'
             r['levels'] = lvl
+            if sid in PROFILE:
+                check('[%s] E3-Profilgrund bleibt sichtbar' % sid, ' · E3 ' + PROFILE[sid] + ' · ' in lvl, lvl)
             check('[%s] Ebenen: erste blockierende Ebene %s' % (sid, want_lv), got_lv == want_lv, lvl or '(keine DASH-Ebenen-Zeile)')
             if want_msg:
                 m0 = it[0] if it else ['', '']
@@ -553,44 +418,11 @@ with sync_playwright() as p:
             lp = r['longpress']
             check('[%s] Langdruck auf ▶ kopiert die anonymisierte Diagnose (keine Adresse, kein Token)' % sid, lp.startswith('Kadri – anonymisierte Diagnose')
                   and not re.search(r'://|127\.0\.0|example\.org|manifest\.mpd|chunk-|/m/|/p/|s4a-token|sig=', lp), lp[:200])
-        if sid in ('c1w', 'a2w'):
-            spur = r.get('trace_top', '') + ' ' + r.get('trace_frame', '')
-            check('[%s] Warteblatt „Helfer-App prüft …“ stand während der Planung' % sid, r.get('wait_shown') is True, r.get('wait_shown'))
-            check('[%s] bewusst geschlossen: die späte Planantwort öffnet kein Blatt (oben)' % sid, r.get('head_after') == '', r.get('head_after'))
-            check('[%s] … und kein Blatt im Fenster' % sid, not any(r.get('frame_sheets') or []), r.get('frame_sheets'))
-            check('[%s] … Helfer lud das MPD genau einmal, kein Download gestartet' % sid, r.get('mpd_after_tap') == 1 and not r.get('new_files'), r.get('mpd_after_tap'))
-            check('[%s] … Spur: Abbruch beim Schließen, späte Antwort verworfen' % sid, 'ablauf:abgebrochen(schliessen)' in spur and
-                  (('top:menu-abgelehnt(abgebrochen)' in spur and (not r.get('trace_frame') or 'frame:menu-reply(veraltet)' in spur)) if sid == 'c1w' else 'blatt:veraltet' in spur), spur[-900:])
-        if sid == 'c1t':
-            spur = r.get('trace_top', '')
-            check('[c1t] neuer Tipp ⬇ während der Planung: neue Auswahl erscheint', OFFER in r.get('menu_b', []), r.get('menu_b'))
-            check('[c1t] später Fehler-Hinweis des älteren Tipps oben abgelehnt (veraltet), nie sichtbar', 'top:toast-abgelehnt(veraltet)' in spur
-                  and not any(re.search(r'nicht speichern|nicht erreichbar|HTTP|Fehler', x) for x in r.get('toasts_seen', [])), [r.get('toasts_seen'), spur[-600:]])
-            check('[c1t] die neuere Auswahl bleibt stehen', r.get('head_after') == 'Speichern', r.get('head_after'))
-        if sid == 'c1x':
-            tl = r.get('timeline', [])
-            ends = [x for x in tl if not x[3] and x[0] > 1]   # Warteblatt zu
-            last = tl[-1] if tl else None
-            check('[c1x] Planung über 45 s (echte Zeit): nie eine Planauswahl', not any(x[1] == 'DASH-Stream speichern' for x in tl), tl)
-            check('[c1x] … Warteblatt kontrolliert beendet (spätestens nach 47 s) mit Hinweis', bool(ends) and ends[0][0] <= 47 and bool(ends[0][2]), tl[:12])
-            check('[c1x] … kein Blatt im Fenster, keins oben am Ende', last is not None and not any(last[4]) and r.get('head_after') == '', last)
-            check('[c1x] … kein Download gestartet, Helfer-Abruf des MPD höchstens einmal', not r.get('new_files') and r.get('mpd_after_tap', 0) <= 1, r.get('mpd_after_tap'))
-        if sid == 'c1n':
-            m = re.search(r'([0-9a-f]{8}) top:pick\(seq=1 i=0\)', r.get('trace_top', ''))
-            a = m.group(1) if m else '?'
-            check('[c1n] neuer Tipp während langsamer Planung: Auswahl „Speichern“ mit Angebot erscheint', OFFER in r.get('menu_b', []), r.get('menu_b'))
-            check('[c1n] späte Planantwort des älteren Tipps oben als veraltet abgelehnt', (a + ' top:menu-abgelehnt(veraltet)') in r.get('trace_top', ''), r.get('trace_top', '')[-700:])
-            check('[c1n] … und im Fenster verworfen (keine lokale Auswahl im iframe)', (a + ' frame:menu-reply(veraltet)') in r.get('trace_frame', '') and not any(r.get('frame_sheets', [1])), (r.get('frame_sheets'), r.get('trace_frame', '')[-500:]))
-            check('[c1n] oben bleibt die neuere Auswahl „Speichern“ (keine Qualitätsauswahl aus der veralteten Antwort)', r.get('head_after') == 'Speichern', r.get('head_after'))
-        if sid in ('c1', 'c3') and r.get('trace_top'):
-            # Relay-Spur: die Auswahl des Plans kam oben mit der Kennung des Tipps auf das Angebot an (Zuordnung über rid)
-            m = re.search(r'([0-9a-f]{8}) top:pick\(seq=1 i=0\)', r['trace_top'])
-            check('[%s] Relay: Planauswahl oben mit der Kennung genau dieses Tipps gezeigt, keine Ablehnung' % sid,
-                  bool(m) and (m.group(1) + ' top:menu-gezeigt(seq=2') in r['trace_top'] and 'menu-abgelehnt' not in r['trace_top']
-                  and bool(m) and (m.group(1) + ' plan:helfer-antwort(ok') in r['trace_frame'], (r['trace_top'][-600:], r['trace_frame'][-600:]))
         pg.close()
     ctx.close()
-helper.stop() if hasattr(helper, 'stop') else None
+helper.stop()
+srv.shutdown()
+shutdown()
 if OUTDIR:
     os.makedirs(OUTDIR, exist_ok=True)
     json.dump(RES, open(os.path.join(OUTDIR, 's4a-matrix.json'), 'w'), ensure_ascii=False, indent=1)

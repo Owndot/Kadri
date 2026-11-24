@@ -13,7 +13,7 @@
   // Ist YTDLnis nicht installiert, öffnet sich dessen Download-Seite.
   const YTDLNIS = 'com.deniscerri.ytdl';
   function toYtdlnis(link) {
-    if (!link) return false;
+    if (!link || mediaIsDashManifest(link)) return false;
     openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest');
     return true;
   }

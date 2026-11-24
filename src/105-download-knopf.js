@@ -31,8 +31,8 @@
       h > 0 && !isHls ? { quality: { status: 'observed', value: { height: h }, evidenceIds: ['decoded-frame'] } } : {}));
   }
   // ---------- S3c: DASH-Streams (gemeinsam für Webseitenknopf und Player) ----------
-  // Angebot nur, wenn ALLES zutrifft: das MPD ist an genau dieses Video gebunden (bound, Beleg dash-segments, genau eines –
-  // selectDashStreams), Kadri hat es gelesen und daraus Fingerabdruck und S3-Vorprüfung berechnet (src/039: fMP4/H.264 mit
+  // Ein Angebot verlangt eine bestätigte Elementzuordnung, die selectDashStreams unter P0-A nicht liefert.
+  // Nach erfolgter Zuordnung wären Fingerabdruck und S3-Vorprüfung erforderlich (src/039: fMP4/H.264 mit
   // AAC-LC, statisch, eine Periode, ohne ContentProtection) und der Helfer meldet die Fähigkeit "dashdl" (caps.dash).
   // Ergebnis: { x, offer } – sonst { reason } (fester Hinweistext) oder null (kein gebundenes DASH-Manifest).
   function dashOfferFor(list, from, caps) {
@@ -99,15 +99,15 @@
   }
   // S3c-Fix: Ist das geplante Angebot noch genau dasselbe? Geprüft nach der (asynchronen) Planantwort und unmittelbar vor
   // dashstart: Player-Kontext und Medien-Epoche gültig, dieselbe Quelle in derselben Revision, weiterhin sicher gebunden
-  // (bound + dash-segments) und als EINZIGES MPD (kein konkurrierendes gebunden), dieselbe Adresse und derselbe Fingerabdruck,
+  // und als EINZIGES MPD (kein konkurrierendes gebunden), dieselbe Adresse und derselbe Fingerabdruck,
   // dieselbe Bindung {player, gen, rev}. Sonst false – der Aufrufer sendet nichts und meldet DASH_CHANGED.
   const DASH_CHANGED = 'Quelle hat sich geändert – erneut auswählen';
   function dashOfferStill(d, bind) {
     if (!d || !d.x || !d.offer || !d.v || !bind) return false;
     let now = null;
     try {
-      dashObserveFor(d.v, d.x.ctx);   // inzwischen gebundene MPDs (auch konkurrierende) nachtragen
-      const list = selectDashStreams(mediaRegistry.snapshot(d.x.ctx), { dash: true }).map((o) => Object.assign({ ctx: d.x.ctx }, o));
+      dashObserveFor(d.v, d.x.ctx);   // aktuelle Netz-Kandidaten nachtragen
+      const list = selectDashStreams(mediaRegistry.snapshot(d.x.ctx)).map((o) => Object.assign({ ctx: d.x.ctx }, o));
       now = dashOfferFor(list, dashFromOf(d.v));
     } catch (e) { return false; }
     if (!now || !now.offer || now.x.sourceId !== d.x.sourceId || now.x.revision !== d.x.revision) return false;
@@ -130,30 +130,27 @@
     const ctx = mediaRegistry.contextFor(v);
     if (!ctx) return { mp4: [], hls: [], all: [], allS: [], dash: '', dashOffer: null };
     try { pageDlObservePlaying(v, ctx); } catch (e) {}
+    try { dashObserveFor(v, ctx); } catch (e) {}
     const snap = mediaRegistry.snapshot(ctx);
     const all = selectDownloads(snap, { supported: true }).map((o) => Object.assign({ ctx: ctx }, o));
     const allS = selectStreams(snap, { hls: !!(caps && caps.hls) }).map((o) => Object.assign({ ctx: ctx }, o));
-    // S3c: gebundenes DASH (Stückfolgen seit dem Medienstart dieses Videos nachtragen, dann die strenge Auswahl)
-    try { dashObserveFor(v, ctx); } catch (e) {}
-    const snap2 = mediaRegistry.snapshot(ctx);
-    const allD = selectDashStreams(snap2, { dash: !!(caps && caps.dash) }).map((o) => Object.assign({ ctx: ctx }, o));
+    const allD = selectDashStreams(snap).map((o) => Object.assign({ ctx: ctx }, o));
     let dashOffer = null;
     try { dashOffer = dashOfferFor(allD, dashFromOf(v), caps); } catch (e) { dashOffer = null; }
     if (dashOffer && dashOffer.offer) dashOffer.v = v;   // (für die Nachprüfung vor Auswahl und Start)
     // S4b: dieselbe Ebenen-Entscheidung wie Player-Menü und Diagnose (src/046)
     let dashLv = null;
-    try { dashLv = dashLevelsFor(v, [snap2], dashCapsOf(caps && 'reachable' in caps ? caps : null), dashOffer); } catch (e) { dashLv = null; }
+    try { dashLv = dashLevelsFor(v, [snap], dashCapsOf(caps && 'reachable' in caps ? caps : null), dashOffer); } catch (e) { dashLv = null; }
     return { mp4: all.filter((o) => o.state === 'attemptable'), hls: allS.filter((o) => o.state === 'attemptable'), all: all, allS: allS,
-      dash: mediaDashState([snap2]), dashOffer: dashOffer, dashLv: dashLv };
+      dash: mediaDashState([snap]), dashOffer: dashOffer, dashLv: dashLv };
   }
   // Warum nichts angeboten wird (feste Texte, ohne Adresse)
   function pageDlReason(o, caps) {
     const rs = o.all.map((x) => x.reason).concat(o.allS.map((x) => x.reason));
-    // S4b: DASH nach Ebenen (src/046) – gebunden oder mit gelesenem MPD vor den allgemeinen Gründen (deren „nicht sicher
-    // zugeordnet“ gehört dann oft nur zu Teilen desselben Streams); nur vermutet erst nach allen sicheren Gründen
+    // Bei gelesenem MPD hat der konkrete DASH-Hinweis Vorrang vor allgemeinen Gründen für andere Quellen.
     const lv = o.dashLv && o.dashLv.first ? o.dashLv : null;
     o.dashWhy = false;
-    if (lv && (o.dash === 'bound' || lv.e1.ok)) { o.dashWhy = true; return lv.main; }   // (Grund in der Unterzeile, pageDlReasonSub)
+    if (lv && lv.e1.ok) { o.dashWhy = true; return lv.main; }   // (Grund in der Unterzeile, pageDlReasonSub)
     if (o.allS.some((x) => x.reason === 'helper-unavailable') || (!(caps && caps.hls) && o.allS.length)) return 'Stream erkannt – diese Helfer-App-Version speichert keine Streams';
     if (rs.indexOf('protected') >= 0) return 'Video geschützt (DRM/verschlüsselt) – nicht speicherbar';
     if (rs.indexOf('ambiguous') >= 0 || rs.indexOf('not-bound') >= 0) return 'Quelle nicht sicher diesem Video zugeordnet – Video kurz abspielen und erneut tippen';
@@ -175,7 +172,7 @@
     let u = '';
     try { u = v.currentSrc || ''; } catch (e) { return ''; }
     if (!/^https?:/i.test(u) || v.srcObject || v.readyState < 2 || v.error) return '';
-    return /\.(m3u8|mpd)(\?|#|$)/i.test(u) ? '' : u;
+    return /\.m3u8(\?|#|$)/i.test(u) || mediaIsDashManifest(u) ? '' : u;
   }
   // Alternativen, nur auf ausdrücklichen Tipp (wie im Player): YTDLnis, Browser-Download, im Browser öffnen, Teilen.
   // „Im Browser herunterladen“ nur, wenn der Browser die Datei sicher als Download behandelt: Datei derselben Herkunft wie
@@ -201,6 +198,7 @@
     return items;
   }
   function pageDlOpenTab(d) {
+    if (mediaIsDashManifest(d)) return;
     const w = window.open(d, '_blank');
     if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
   }
@@ -283,6 +281,7 @@
         .concat(dashOk ? [{ loaded: true, item: { label: 'DASH-Stream mit Helper herunterladen …', sub: tr('als MP4 · Qualität und Ton wählen') + ' · ' +
           tr('Stücke dieses Streams gerade geladen'), fn: () => pageDlDashPlan(dashOk), wait: true } }] : [])
         .sort((a, b) => Number(!!b.loaded) - Number(!!a.loaded)).map((e) => e.item);
+      if (o.dashLv && o.dashLv.code === 'E2/element-unproven') items.push({ label: o.dashLv.main, sub: o.dashLv.sub, info: true });
       pageDlMenu('Speichern', pageDlExternal(v, items));
     } finally {
       pageDl.busy = false;

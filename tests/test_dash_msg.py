@@ -76,9 +76,8 @@ def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel
 def sheet_items(fr): return fr.evaluate(js('return Array.from(r.querySelectorAll(".dlm .dli")).map((b) => b.firstChild.textContent);')) or []
 def player_items(fr): return fr.evaluate(js('return Array.from(r.querySelectorAll(".vmenu.on .vmi")).map((b) => b.firstChild.textContent);')) or []
 # S4b: Ebenen (src/046) – Fixture VP9: gebunden → Format-Ebene; nur vermutet mit gelesenem MPD → Zuordnungs-Ebene
-DB = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
 DS = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
-OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …')
+OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …', 'DASH-Stream mit Helper herunterladen …')
 helper_hits = lambda: [x for x in HITS if not x['browser']]
 
 helper = ChannelHelper()
@@ -109,7 +108,7 @@ with sync_playwright() as p:
     check('schwebendes Menü, DASH nur vermutet (Manifest ohne Endung, Stücke anderswo): „%s“' % DS, DS in it, it)
     check('… kein Angebot, kein generischer Hinweis', not any(x in it for x in OFFERS) and not any('Keine speicherbare Videodatei' in x for x in it), it)
     it = top_sheet('b')
-    check('schwebendes Menü, DASH sicher gebunden (Stücke aus dem Ordner des Manifests): „%s“' % DB, DB in it, it)
+    check('schwebendes Menü, DASH-Netz-Kandidat (Stücke aus dem Ordner des Manifests): „%s“' % DS, DS in it, it)
     check('… kein Angebot', not any(x in it for x in OFFERS), it)
     it = top_sheet('none')
     check('Gegenprobe ohne Manifest: bisheriger Hinweis „keine speicherbare Videodatei“, kein DASH-Hinweis',
@@ -135,7 +134,7 @@ with sync_playwright() as p:
     check('eigener Player, DASH nur vermutet: „%s“' % DS, DS in it, it)
     check('… kein Angebot, kein generischer Hinweis', not any(x in it for x in OFFERS) and 'Helfer-App: keine speicherbare Quelle erkannt' not in it, it)
     it = player_menu('b')
-    check('eigener Player, DASH sicher gebunden: „%s“' % DB, DB in it, it)
+    check('eigener Player, DASH-Netz-Kandidat: „%s“' % DS, DS in it, it)
     check('… kein Angebot', not any(x in it for x in OFFERS), it)
     it = player_menu('none')
     check('eigener Player, Gegenprobe ohne Manifest: bisheriger Hinweis, kein DASH-Hinweis', 'Helfer-App: keine speicherbare Quelle erkannt' in it and not any('DASH' in x for x in it), it)
@@ -155,12 +154,12 @@ with sync_playwright() as p:
         return got[0]
     MAN = ('DASH-Manifest: VOD · Perioden 1 · AdaptationSets 1 · Darstellungen 1 · Video 1 (vp9 ×1; mp4; bis 360p) · Audio 0 · Text 0 · Bild 0'
            ' · Adressierung template-duration · Schutz angegeben: nein (Verschlüsselung damit nicht ausgeschlossen)')
-    for m, bind in (('a', r'ambiguous\(start-timing\)'), ('b', r'bound\([^)]*dash-segments')):   # gebunden nur über die Stückfolge
+    for m, bind in (('a', r'ambiguous\(start-timing\)'), ('b', r'ambiguous\([^)]*dash-segments')):
         dg = anon_diag(m)
         lines = [l for l in dg.split('\n') if 'dash:' in l or 'DASH-Manifest' in l or 'Listen gelesen' in l]
-        check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('vermutet' if m == 'a' else 'gebunden', bind), re.search(r'dash:manifest · Bindung ' + bind, dg), lines)
+        check('Diagnose (%s): Eintrag dash:manifest mit Bindung %s' % ('zeitnah' if m == 'a' else 'Netzfolge', bind), re.search(r'dash:manifest · Bindung ' + bind, dg), lines)
         check('… Manifest eingeordnet (VOD, 1 Periode, vp9/mp4 bis 360p, Template mit Dauer, Schutz nicht angegeben ≠ unverschlüsselt)', MAN in dg, lines)
-        check('… Netzwerk: 1 gelesenes DASH-Manifest; Registry verweist auf die DASH-Ebenen (kein „stream-not-supported“), Ebenen-Zeile vorhanden', 'davon DASH-Manifeste 1' in dg and 'Download siehe DASH-Ebenen' in dg and 'stream-not-supported' not in dg and 'DASH-Ebenen: E1 read' in dg and 'derzeit nicht unterstützt' not in dg, lines)
+        check('… Netzwerk: 1 gelesenes DASH-Manifest; Registry verweist auf die DASH-Ebenen (kein „stream-not-supported“), Ebenen-Zeile vorhanden', 'davon DASH-Manifeste 1' in dg and 'Download siehe DASH-Ebenen' in dg and 'stream-not-supported' not in dg and 'DASH-Ebenen: E1 read' in dg and 'Angebot nein' in dg and 'derzeit nicht unterstützt' not in dg, lines)
         check('… anonym: keine Adresse, kein Host, kein Pfad', not re.search(r'://|127\.0\.0|localhost|/x/|manifest\.mpd|seg0', dg), dg[:300])
     check('keine Seitenfehler', not errs, errs)
     ctx.close()

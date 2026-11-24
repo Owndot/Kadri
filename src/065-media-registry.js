@@ -153,9 +153,11 @@
       const s = p.sources.get(sourceId);
       if (!s) return { ok: false, reason: 'unknown-source' };
       if (s.revision !== revision) return { ok: false, reason: 'stale-revision' };
+      const url = urls.get(sourceId);
+      if (mediaIsDashManifest(url)) return { ok: false, reason: 'dash-not-supported' };
       const d = mediaDownloadState(s);
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
-      return { ok: true, url: urls.get(sourceId) };
+      return { ok: true, url: url };
     }
     // P4b: gewählten Stream auflösen – nur aktuell, gebunden, auswählbar. Dazu die Bindung, die der Helfer prüft
     // (Player-Kennung, Medien-Epoche, Revision): ein Plan gilt nur für genau diesen Stand.
@@ -165,11 +167,13 @@
       const s = p.sources.get(sourceId);
       if (!s) return { ok: false, reason: 'unknown-source' };
       if (revision !== s.revision) return { ok: false, reason: 'stale-revision' };
+      const url = urls.get(sourceId);
+      if (mediaIsDashManifest(url)) return { ok: false, reason: 'dash-not-supported' };
       const d = mediaStreamState(s);
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
-      return { ok: true, url: urls.get(sourceId), bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };
+      return { ok: true, url: url, bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };
     }
-    // S3c: wie resolveStream, für ein DASH-Manifest (nur mit Beleg dash-segments, siehe mediaDashStreamState)
+    // Wie resolveStream, mit der DASH-spezifischen Freigabeprüfung (mediaDashStreamState).
     function resolveDash(ctx, sourceId, revision) {
       const p = playerOf(ctx);
       if (!p) return { ok: false, reason: 'stale-context' };
@@ -200,6 +204,7 @@
   const mediaHeight = (x) => { const m = /(\d{3,4})\s*p?\b/i.exec(String(x || '')); const n = m ? parseInt(m[1], 10) : 0; return n >= 100 && n <= 8640 ? n : 0; };
   function mediaPut(ctx, u, prov, origin, state, evidence, extra) {
     if (!ctx || !mediaUrlOk(u)) return null;
+    if (prov === 'network' && state === 'bound' && mediaIsDashManifest(u)) state = 'ambiguous';
     const o = { url: u, provenance: { kind: prov, origin: origin }, association: { state: state, evidence: evidence.slice() } };
     let role = 'unknown';
     try { role = mediaRoleHint(u); } catch (e) {}
@@ -222,8 +227,7 @@
     Object.assign(o, extra || {});
     return mediaRegistry.observe(ctx, o);
   }
-  // DASH (S2): ein gelesenes MPD gilt als an GENAU dieses Video gebunden, wenn seine Stücke nachweislich in Folge geladen
-  // wurden (dashBindingFor/dashBindDecision); sonst wird hier nichts eingetragen (zeitliche Nähe bleibt ambiguous).
+  // P0-A: Eine passende Netzfolge gehört zur Diagnose. Der Abruf belegt keine Wiedergabe am ausgewählten Element.
   function dashObserveFor(v, ctx) {
     if (!v || !ctx) return;
     const b = dashBindingFor(v);
@@ -232,7 +236,7 @@
       if (!r || r.state !== 'bound') return;
       const s = sources.find((x) => { try { return dashUrlKey(new URL(x.u).href) === e.key; } catch (er) { return false; } });
       const u = s ? s.u : (PLAYLIST_RE.test(e.p.u) ? e.p.u : e.p.u.split('#')[0] + '#kadri.mpd');
-      mediaPut(ctx, u, 'network', 'dash-segments', 'bound', ['dash-segments']);
+      mediaPut(ctx, u, 'network', 'dash-segments', 'ambiguous', ['dash-segments']);
     });
   }
   // Leichte Adapter (auch beim Öffnen des Download-Menüs): Element, <source>-Kinder, vorhandener Site-Adapter

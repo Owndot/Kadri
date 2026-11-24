@@ -1,5 +1,5 @@
   function openExternal(u, v, pkg, msg, fallback) {
-    if (!u) { toast('Keine Quelle für dieses Video gefunden'); return; }
+    if (!u || mediaIsDashManifest(u)) { toast('Keine Quelle für dieses Video gefunden'); return; }
     try { if (v) v.pause(); } catch (e) {}
     toast(msg || 'Wird im Videoplayer geöffnet …');
     const intent = intentUrl(u, pkg, fallback);
@@ -84,6 +84,7 @@
   }
   // true = Browser hat den Download übernommen
   async function browserDownload(u) {
+    if (mediaIsDashManifest(u)) return false;
     const name = fileNameFor(u);
     if (sameOrigin(u)) { nativeDownload(u, name); return true; }
     const cands = [];
@@ -95,6 +96,7 @@
   }
   let dlBusy = false;
   function directDownload(u, onFail) {
+    if (mediaIsDashManifest(u)) return;
     if (dlBusy) { toast('Download läuft schon …'); return; }
     dlBusy = true;
     const name = fileNameFor(u);

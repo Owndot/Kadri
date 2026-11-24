@@ -31,7 +31,7 @@ function setup(kind = 'mp4', env = {}) {
     KADRI_DOWNLOAD: async (op, args) => { requests.push({ op, args }); return ctx.reply(op, args); },
     reply: () => ({ ok: true, value: { job: { id: 'job-private-id', state: 'running', ...(kind === 'hls' ? { kind, done: 0, of: 0 } : {}) } } }) };
   vm.createContext(ctx);
-  vm.runInContext(read('src/080-helper-app.js').split('  // Einen früher gespeicherten')[0] + '\n' + read('src/105-download-knopf.js') +
+  vm.runInContext(read('src/045-media-source.js') + '\n' + read('src/080-helper-app.js').split('  // Einen früher gespeicherten')[0] + '\n' + read('src/105-download-knopf.js') +
     '\nglobalThis.api={pageDlStartMp4,pageDlPlan,onPageDownload,hdlDiagUpdate,hdlDiagText,diags:hdlDiags};', ctx);
   const anon = read('src/280-diagnose.js');
   vm.runInContext(anon.slice(anon.indexOf('  function anonScrub'), anon.indexOf('  function diagAnon')) + '\nglobalThis.scrub=anonScrub;', ctx);

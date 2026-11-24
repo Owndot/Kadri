@@ -115,9 +115,8 @@ def wait(pred, secs=10):
 UI = '(() => { const h = document.querySelector("[data-kadri-test]"); return h && h.shadowRoot; })()'
 def js(sel): return '() => { const r = %s; if (!r) return null; %s }' % (UI, sel)
 # S4b: Ebenen (src/046) – Fixtures VP9/Opus: gebunden → Format-Ebene; nicht gebunden → Zuordnungs-Ebene
-DB = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
 DS = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
-OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …')
+OFFERS = ('Mit Helper herunterladen', 'Stream mit Helper herunterladen …', 'DASH-Stream mit Helper herunterladen …')
 
 helper = ChannelHelper()
 check('echter Kanal-Helfer mit MP4- und HLS-Engine', helper.ready.startswith('READY') and helper.cmd('downloads 8791') == 'DOWNLOADS on' and helper.cmd('hls on') == 'HLS on')
@@ -153,7 +152,7 @@ with sync_playwright() as p:
     def lines(dg): return [l for l in dg.split('\n') if 'dash:' in l or 'DASH' in l or 'MPD-Texte' in l or l.startswith('Ladevorg')]
     def abg(seg=0, q=0, host=0, num=0, init=0, iq=0, ih=0):   # Zeile „DASH-Abgleich“ (Diagnose Stufe 1) mit genau diesen Zahlen
         return ('): Stücke exakt %d · nur Query abweichend %d · gleicher Pfad, anderer Host %d · Muster passt, Nummer/Zeitleiste abweichend %d · kein struktureller Treffer '
-                % (seg, q, host, num)), ('· Init exakt %d · Init nur Query abweichend %d · Init anderer Host %d · für die Bindung zählt nur exakt' % (init, iq, ih))
+                % (seg, q, host, num)), ('· Init exakt %d · Init nur Query abweichend %d · Init anderer Host %d · für die Netzfolge zählt nur exakt' % (init, iq, ih))
     def has_abg(dg, **kw):
         a, b = abg(**kw)
         return any(l.startswith('DASH-Abgleich 1/1 (Beobachter-Abrufe seit Videostart ') and a in l and l.endswith(b) for l in dg.split('\n'))
@@ -167,47 +166,47 @@ with sync_playwright() as p:
     for m, what in (('chain', 'BaseURL der MPD-Ebene (MPD ohne Endung, nur Content-Type)'), ('time', 'SegmentTimeline ($Time$)'), ('list', 'SegmentList'),
                     ('prefix', 'Namensraum-Präfix dash:MPD über die ganze Erkennungskette')):
         open_case(m); it = hint(); dg = diag()
-        check('%s: Stücke in Folge geladen → gebunden („%s“), kein Angebot' % (what, DB), DB in it and not any(x in it for x in OFFERS), it)
-        check('… Diagnose: dash:manifest bound(… dash-segments), Stückprüfung bound (stueckfolge) mit %d Treffern' % N,
-              re.search(r'dash:manifest · Bindung bound\([^)]*dash-segments', dg) and re.search(r'DASH-Stückprüfung 1/1: Treffer %d · Darstellungen mit Treffern 1 · längste Folge %d · Init-Abrufe 1 .* Ergebnis bound \(stueckfolge\)' % (N, N), dg)
-              and 'DASH-Manifest: VOD' in dg and anon(dg), lines(dg))
+        check('%s: Stücke in Folge geladen → Netz-Kandidat („%s“), kein Angebot' % (what, DS), DS in it and not any(x in it for x in OFFERS), it)
+        check('… Diagnose: dash:manifest ambiguous(… dash-segments), Netzfolge passt (stueckfolge) mit %d Treffern' % N,
+              re.search(r'dash:manifest · Bindung ambiguous\([^)]*dash-segments', dg) and re.search(r'DASH-Stückprüfung 1/1: Treffer %d · Darstellungen mit Treffern 1 · längste Folge %d · Init-Abrufe 1 .* Ergebnis Netzfolge passt \(stueckfolge\)' % (N, N), dg)
+              and 'DASH-Manifest: VOD' in dg and 'Angebot nein' in dg and anon(dg), lines(dg))
         o = obs(dg)
         check('… Diagnose Stufe 1: Abgleich exakt %d Stücke + 1 Init, keine unscharfen Stufen; Beobachter zählt ≥ %d Medien-Kandidaten seit Videostart, Puffer getrennt' % (N, N + 1),
               has_abg(dg, seg=N, init=1) and o and o[2] >= N + 1 and o[1] >= N + 1 and o[0] >= o[1], lines(dg))
 
     open_case('hlsurl'); it = hint(); dg = diag()
-    check('MPD unter einer .m3u8-Adresse: Inhalt schlägt Adresse – dash:manifest gebunden, kein HLS-Angebot', DB in it and not any(x in it for x in OFFERS)
-          and re.search(r'dash:manifest · Bindung bound', dg) and 'hls:' not in dg and anon(dg), (it, lines(dg)))
+    check('MPD unter einer .m3u8-Adresse: Inhalt schlägt Adresse – dash:manifest als Kandidat, kein HLS-Angebot', DS in it and not any(x in it for x in OFFERS)
+          and re.search(r'dash:manifest · Bindung ambiguous', dg) and 'hls:' not in dg and anon(dg), (it, lines(dg)))
 
     open_case('compete'); it = hint(); dg = diag()
-    check('zwei MPDs beschreiben dieselben geladenen Stücke: keines gebunden (konkurrenz), nur „vermutlich“', DS in it and DB not in it
+    check('zwei MPDs beschreiben dieselben geladenen Stücke: konkurrierende Kandidaten ohne Freigabe', DS in it and not any(x in it for x in OFFERS)
           and dg.count('Ergebnis ambiguous (konkurrenz)') == 2 and 'Bindung bound(' not in dg, (it, lines(dg)))
     open_case('few'); it = hint(); dg = diag()
-    check('nur 2 Stücke des MPD geladen: ambiguous (zu-wenig-folge), kein „erkannt“', DB not in it and 'Ergebnis ambiguous (zu-wenig-folge)' in dg
+    check('nur 2 Stücke des MPD geladen: ambiguous (zu-wenig-folge), kein Angebot', not any(x in it for x in OFFERS) and 'Ergebnis ambiguous (zu-wenig-folge)' in dg
           and re.search(r'Treffer 2 · Darstellungen mit Treffern 1 · längste Folge 2', dg), (it, lines(dg)))
     open_case('worker'); it = hint(); dg = diag()
-    check('Stücke aus einem Web-Worker (in diesem Fenster unsichtbar): keine Treffer → ambiguous, nie gebunden', DB not in it and 'Ergebnis ambiguous (keine-treffer)' in dg
+    check('Stücke aus einem Web-Worker (in diesem Fenster unsichtbar): keine Treffer → ambiguous, nie gebunden', not any(x in it for x in OFFERS) and 'Ergebnis ambiguous (keine-treffer)' in dg
           and 'Bindung bound(' not in dg, (it, lines(dg)))
     open_case('notmpd'); it = hint(); dg = diag()
     check('kein MPD (feed mit eingebettetem dash:MPD, Content-Type DASH): verworfen und gezählt, kein Manifest-Eintrag, kein DASH-Hinweis',
           'MPD-Texte verworfen: not-mpd ×1' in dg and 'dash:manifest' not in dg and 'DASH-Stückprüfung' not in dg and not any('DASH' in x for x in it), (it, lines(dg)))
     open_case('switch', played=2); time.sleep(1.0); it = hint(); dg = diag()
-    check('Medienwechsel (neues Medium ohne Stücke dieses MPD): die alten Treffer zählen nicht mehr – nicht gebunden', DB not in it
+    check('Medienwechsel (neues Medium ohne Stücke dieses MPD): die alten Treffer zählen nicht mehr – nicht gebunden', not any(x in it for x in OFFERS)
           and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
     open_case('qtwo'); it = hint(); dg = diag()
-    check('zwei MPDs mit gleichem Pfad, andere Query (?video=A/B), Stücke mit ?video=A: genau eines gebunden, das andere ohne Treffer',
-          DB in it and dg.count('Ergebnis bound (stueckfolge)') == 1 and dg.count('Ergebnis ambiguous (keine-treffer)') == 1
-          and 'DASH-Stückprüfung 2/2' in dg and dg.count('Bindung bound(') == 1 and anon(dg) and 'video=' not in dg, (it, lines(dg)))
+    check('zwei MPDs mit gleichem Pfad, andere Query (?video=A/B), Stücke mit ?video=A: genau eine passende Netzfolge, das andere ohne Treffer',
+          DS in it and dg.count('Ergebnis Netzfolge passt (stueckfolge)') == 1 and dg.count('Ergebnis ambiguous (keine-treffer)') == 1
+          and 'DASH-Stückprüfung 2/2' in dg and len(re.findall(r'dash:manifest · Bindung ambiguous\([^)]*dash-segments', dg)) == 1 and anon(dg) and 'video=' not in dg, (it, lines(dg)))
     open_case('qwrong'); it = hint(); dg = diag()
     check('gleicher Stückpfad, andere Video-Identität in der Query (MPD ?video=A, geladen ?video=B): keine Treffer → ambiguous',
-          DB not in it and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
+          not any(x in it for x in OFFERS) and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg) and 'Bindung bound(' not in dg, (it, lines(dg)))
     # ---------- Diagnose Stufe 1: unscharfe Stufen werden gezählt, binden aber nie ----------
     for m, what, kw, leak in (('dq', 'Stücke und Init mit angehängter Query (?tok=1), MPD ohne Query', dict(q=N, iq=1), 'tok'),
                               ('dhost', 'gleicher Pfad auf anderem Host (localhost statt 127.0.0.1)', dict(host=N, ih=1), 'localhost'),
                               ('dnum', 'Muster passt, Zeiten liegen neben der SegmentTimeline (+7)', dict(num=N, init=1), '61447')):
         open_case(m); it = hint(); dg = diag()
-        check('%s: Diagnose zählt %s, Stücke exakt 0 – Bindung ambiguous (keine-treffer), kein „erkannt“, anonym' % (what, kw),
-              DB not in it and has_abg(dg, **kw) and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg)
+        check('%s: Diagnose zählt %s, Stücke exakt 0 – Bindung ambiguous (keine-treffer), kein Angebot, anonym' % (what, kw),
+              not any(x in it for x in OFFERS) and has_abg(dg, **kw) and re.search(r'DASH-Stückprüfung 1/1: Treffer 0 .* Ergebnis ambiguous \(keine-treffer\)', dg)
               and 'Bindung bound(' not in dg and anon(dg) and leak not in dg and obs(dg) and obs(dg)[2] >= N, (it, lines(dg)))
     open_case('worker'); dg = diag(); o = obs(dg)
     check('Web-Worker: Beobachter sieht die Stücke nicht (Kandidaten seit Videostart < %d), Abgleich exakt 0 / unscharf 0 – Hinweis auf Worker in der Zeile' % N,

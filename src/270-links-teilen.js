@@ -11,7 +11,7 @@
     const as = el.getElementsByTagName('a');
     for (let j = 0; j < as.length && j < 200; j++) {
       const href = as[j].href || '';
-      if (!POST_RE.test(href) || NOT_POST_RE.test(href)) continue;
+      if (!POST_RE.test(href) || NOT_POST_RE.test(href) || mediaIsDashManifest(href)) continue;
       let key = href.split('#')[0];
       const ig = /(instagram\.com|threads\.(net|com))\//i.test(href) && href.match(IG_POST_RE);
       if (ig) key = new URL(href).origin + ig[0].replace(/^\/reels\//, '/reel/') + '/';   // z. B. /user/p/CODE/?img_index=1 -> /p/CODE/
@@ -134,6 +134,7 @@
     const fbu = fbOwnUrl(v);
     if (fbu) { postUrlFor.via = 'Video-ID'; return fbu; }
     postUrlFor.via = 'Seite';
+    if (mediaIsDashManifest(location.href)) return '';
     // Die Seite selbst ist schon die Beitragsseite (z. B. Reel, YouTube-Video)
     if (POST_RE.test(location.href) && !NOT_POST_RE.test(location.href)) return location.href.split('#')[0];
     if (!v) return '';
@@ -230,7 +231,7 @@
   }
   // Link mit Titel teilen (Android: Teilen-Menü) – geht das nicht (z. B. eingebettetes Fenster), Link kopieren
   function shareLinkTo(url, title) {
-    if (!url) { toast('Kein Link zu diesem Video gefunden'); return; }
+    if (!url || mediaIsDashManifest(url)) { toast('Kein Link zu diesem Video gefunden'); return; }
     const copy = () => copyText(url, 'Link kopiert');
     if (navigator.share) {
       const data = { url: url };
@@ -239,6 +240,7 @@
     } else copy();
   }
   function shareUrl(url) {
+    if (mediaIsDashManifest(url)) return Promise.resolve(false);
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
     if (navigator.share) {
       // Ergebnis: true = geteilt, false = abgebrochen/fehlgeschlagen

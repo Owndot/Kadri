@@ -1,7 +1,7 @@
 // S3c: Unit-Tests „DASH speichern“ OHNE Helfer: strenge Form von dashplan/dashstart (channel-session.js), die
 // Download-Verwaltung (channel-downloads.js: Plan mit Fingerabdruck, nur speicherbares Profil, Start, abgelaufener Plan,
 // Kennungen, Status, Fehlercodes, Fähigkeit "dashdl", Anfragekontext) mit einem Schein-Kanal, die Route im Hintergrund
-// (channel-service.js) sowie Auswahl und Auflösung in der Quellen-Registry (045/065: nur bound + dash-segments, genau eines).
+// (channel-service.js) sowie Auswahl und Auflösung in der Quellen-Registry (045/065: Netzfolgen und alte Snapshots ohne Freigabe).
 //   node tests/channel/dash_unit_check.js
 'use strict';
 const crypto = require('crypto');
@@ -326,7 +326,7 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
 
   }
   {
-    // Quellen-Registry: nur bound + dash-segments, genau eines; Auflösung mit Bindung
+    // Quellen-Registry: Netzfolgen und alte Snapshots ohne Freigabe; Auflösung mit Bindung
     const SRC = (f) => fs.readFileSync(path.join(__dirname, '../../src', f), 'utf8');
     const ctx = { URL, Uint8Array, JSON, Object, Array, Math, Number, String, Map, Set, WeakMap, Date, isFinite, Promise,
       location: { href: 'https://site.example/watch/1' }, crypto: { getRandomValues: (a) => a } };
@@ -343,14 +343,17 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     check('Registry: nur zeitlich vermutetes MPD → candidate (ambiguous), kein Angebot', sel.length === 1 && sel[0].state === 'candidate' && sel[0].reason === 'ambiguous', JSON.stringify(sel));
     put('https://cdn.example/a/manifest.mpd', 'bound', ['dash-segments']);
     sel = A.selectDashStreams(reg.snapshot(c), { dash: true });
-    check('… mit Beleg dash-segments gebunden → attemptable', sel.length === 1 && sel[0].state === 'attemptable', JSON.stringify(sel));
-    check('… ohne Fähigkeit des Helfers → unavailable (helper-unavailable)', A.selectDashStreams(reg.snapshot(c), { dash: false })[0].reason === 'helper-unavailable');
+    check('Alter bound + dash-segments-Snapshot: Kandidat ohne Zuordnung, auch bei fähigem Helfer',
+      sel.length === 1 && sel[0].state === 'candidate' && sel[0].identity !== 'played' && !sel[0].loaded, JSON.stringify(sel));
+    check('Fehlende Helferfähigkeit ändert die Zuordnung nicht',
+      A.selectDashStreams(reg.snapshot(c), { dash: false })[0].state === 'candidate');
     const res = reg.resolveDash(c, sel[0].sourceId, sel[0].revision);
-    check('Auflösung: Adresse und Bindung {player, gen, rev}', res.ok && res.url === 'https://cdn.example/a/manifest.mpd' && NS.hlsBindValid(res.bind), JSON.stringify(res));
+    check('Auflösung auch mit gültiger Revision und Kontext gesperrt', !res.ok && !res.url, JSON.stringify({ ok: res.ok, reason: res.reason }));
     check('Auflösung mit veralteter Revision abgelehnt', reg.resolveDash(c, sel[0].sourceId, sel[0].revision - 1).ok === false);
     put('https://cdn.example/b/manifest.mpd', 'bound', ['dash-segments']);
     sel = A.selectDashStreams(reg.snapshot(c), { dash: true });
-    check('Zwei gebundene MPDs zugleich: nicht eindeutig → keines angeboten', sel.length === 2 && sel.every((x) => x.state === 'candidate' && x.reason === 'ambiguous'), JSON.stringify(sel));
+    check('Zwei alte Netzzuordnungen: beide bleiben Kandidaten ohne Freigabe',
+      sel.length === 2 && sel.every((x) => x.state === 'candidate' && x.identity !== 'played'), JSON.stringify(sel));
     const c2 = reg.contextFor({ addEventListener() {} });
     reg.observe(c2, { url: 'https://cdn.example/c/manifest.mpd', provenance: { kind: 'element', origin: 'element-src' }, association: { state: 'bound', evidence: ['element-src'] } });
     check('MPD am Element (Beleg element-src, keine Stückfolge): nicht angeboten', A.selectDashStreams(reg.snapshot(c2), { dash: true }).every((x) => x.state !== 'attemptable'));
