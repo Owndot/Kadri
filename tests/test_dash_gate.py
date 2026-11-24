@@ -13,8 +13,10 @@ SRC = rd('src', '038-dash-manifest.js') + '\n' + rd('src', '039-dash-fingerprint
 DOC = 'https://media.example/s4b5/manifest.mpd'
 rows = [l.rstrip('\n').split('\t') for l in open(os.path.join(G, 'gate-v1-vectors.tsv'), encoding='utf-8') if l.strip() and not l.startswith('#')]
 head, rows = rows[0], [dict(zip(rows[0], r)) for r in rows[1:]]
-check('dash-gate/1: %d Vektoren über %d Fixtures, jede Fixture mindestens einmal' % (len(rows), len({r['datei'] for r in rows})), len(rows) == 69
-      and {r['datei'] for r in rows} == {f for f in os.listdir(G) if f.endswith('.mpd')} and len({r['datei'] for r in rows}) == 56, len(rows))
+check('dash-gate/1: %d Vektoren über %d Fixtures, jede Fixture mindestens einmal' % (len(rows), len({r['datei'] for r in rows})), len(rows) == 109
+      and {r['datei'] for r in rows} == {f for f in os.listdir(G) if f.endswith('.mpd')} and len({r['datei'] for r in rows}) == 94, len(rows))
+# S4b-8: Dokumentadresse je Vektor (Query der endgültigen MPD-Adresse, Spalte dok)
+docOf = lambda r: DOC + ('' if r['dok'] == '-' else r['dok'])
 bad = [r['datei'] for r in rows if hashlib.sha256(open(os.path.join(G, r['datei']), 'rb').read()).hexdigest() != r['sha256']]
 check('dash-gate/1: Fixtures unverändert (SHA-256 wie in der Vektortabelle)', not bad, bad)
 
@@ -27,6 +29,13 @@ JS = '''([t, u, alt]) => {
   return { code: code.replace(/-/g, '_'), ok: g.ok, track: g.track || '', detail: g.detail || [], reps: g.reps || null, anzeige: g.reason || '-',
     coverage: g.coverage || null, video: (g.video || []).map((x) => x.index), audio: (g.audio || []).map((x) => x.index) };
 }'''
+# S4b-8: Init- und erste Stückadresse der ersten Video-Darstellung aus dem Modell (dieselbe Adressbildung wie Abdruck und Helfer)
+STJS = '''([t, u, alt]) => { const pp = dashParse(t); const m = dfpModel(dfpTree(pp.root.ownerDocument), u, alt ? dfpSelection(alt) : null);
+  dfpExpand(m, m.ctx);
+  const r = m.reps.find((x) => dfpKind(m.sets[x.set], x.mimeType) === 'video');
+  if (!r || r.excluded) return 'EXCLUDED:' + (r ? r.excluded : '-');
+  const seg = r.list ? r.list[r.first] : r.media.pre + String((r.startNumber === null ? 1 : r.startNumber) + r.first).padStart(r.media.width, '0') + r.media.suf;
+  return r.initUrl + ' ' + seg; }'''
 # (Abdruck; schlägt das Lesen beim Helfer fehl, muss Kadri denselben Grund liefern – als Lesefehler ODER als Vorprüfung mpd-<grund>,
 #  z. B. n21: die Auswertungsgrenze prüft Kadri in der Vorprüfung, der Helfer beim Lesen; angeboten wird in beiden Fällen nicht)
 FPJS = '''([t, u]) => { const pp = dashParse(t); if (pp.error) return 'ERROR:' + pp.error; const f = dashFingerprint(t, pp, u);
@@ -43,7 +52,7 @@ with sync_playwright() as p:
     diff = []
     for r in rows:
         text = open(os.path.join(G, r['datei']), encoding='utf-8').read()
-        g = pg.evaluate(JS, [text, DOC, None if r['auswahl'] == '-' else r['auswahl']])
+        g = pg.evaluate(JS, [text, docOf(r), None if r['auswahl'] == '-' else r['auswahl']])
         got = {'erwartung': 'angeboten' if g['code'] == 'ok' else 'abgelehnt', 'code': g['code']}
         if r['spur'] != '-' or g.get('track'): got['spur'] = g.get('track') or '-'
         if r['detail'] != '-' or g.get('detail'): got['detail'] = ','.join(g.get('detail') or []) or '-'
@@ -56,16 +65,23 @@ with sync_playwright() as p:
             vr = [x for x in (g['reps'] or []) if x['kind'] == 'video']
             got['adressierung'] = vr[0]['addressing'] if vr else '?'
         got['anzeige'] = g['anzeige'] if g['code'] != 'ok' else '-'
+        if r['stuecke'] != '-': got['stuecke'] = pg.evaluate(STJS, [text, docOf(r), None if r['auswahl'] == '-' else r['auswahl']])
         want = {k: r[k] for k in got}
         ok = got == want
-        check('%s%s → %s%s' % (r['datei'][:-4], '' if r['auswahl'] == '-' else ' [' + r['auswahl'] + ']', r['code'], '' if r['detail'] == '-' else ' (' + r['spur'] + ': ' + r['detail'] + ')'), ok, {k: (want[k], got[k]) for k in got if got[k] != want[k]})
+        check('%s%s%s → %s%s' % (r['datei'][:-4], '' if r['auswahl'] == '-' else ' [' + r['auswahl'] + ']', '' if r['dok'] == '-' else ' ' + (r['dok'] if len(r['dok']) < 40 else r['dok'][:36] + '…'), r['code'], '' if r['detail'] == '-' else ' (' + r['spur'] + ': ' + r['detail'] + ')'), ok, {k: (want[k], got[k]) for k in got if got[k] != want[k]})
         if not ok: diff.append(r['datei'])
         if r['datei'].startswith('n01') and r['auswahl'] == '-':
             n01 = g
     # ---------- S4b-6: Strukturfingerabdruck über alle Alternativen = Helfer (gate-v1-fp.tsv, vom Helfer berechnet) ----------
+    # (S4b-8: je Datei und Dokumentadresse – Schlüssel „Datei“ bzw. „Datei?Query“ für jede dok-Spalte der Vektoren)
     fpw = {l.split('\t')[0]: l.rstrip('\n').split('\t')[1] for l in open(os.path.join(G, 'gate-v1-fp.tsv'), encoding='utf-8') if l.strip() and not l.startswith('#')}
-    fpd = [f for f in sorted(fpw) if pg.evaluate(FPJS, [open(os.path.join(G, f), encoding='utf-8').read(), DOC]) != fpw[f]]
-    check('Fingerabdruck aller %d Fixtures (mit allen BaseURL-Alternativen) identisch mit dem Helfer' % len(fpw), len(fpw) == 56 and not fpd, fpd)
+    keys = sorted({r['datei'] + ('' if r['dok'] == '-' else r['dok']) for r in rows})
+    def fpkey(k):
+        f, q = (k.split('?', 1)[0], '?' + k.split('?', 1)[1]) if '?' in k else (k, '')
+        return pg.evaluate(FPJS, [open(os.path.join(G, f), encoding='utf-8').read(), DOC + q])
+    fpd = [k for k in keys if fpkey(k) != fpw.get(k)]
+    check('Fingerabdruck aller %d Fixtures/Dokumentadressen (mit allen BaseURL-Alternativen und Annex-I-Query) identisch mit dem Helfer' % len(fpw),
+          len(fpw) == len(keys) and set(fpw) == set(keys) and not fpd, fpd)
     # ---------- e3 (n01) bis zur Meldung, ohne Angebot ----------
     check('e3/n01: Abdeckungsfehler mit Zahlen aus dem MPD: Tonspur beschreibt 24 s, Periode 20 s',
           n01.get('coverage') == {'track': 'audio', 'described': '24', 'period': '20'}, n01.get('coverage'))

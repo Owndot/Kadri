@@ -70,7 +70,7 @@ function world(hooks) {
   const mem = { jobs: undefined };
   const sent = [];
   let n = 0, planNo = 0;
-  const helper = { jobs: new Map(), plans: new Map(), hooks: hooks || {}, dashCaps: true, ctx: false, alt: false, opts: OPTS };
+  const helper = { jobs: new Map(), plans: new Map(), hooks: hooks || {}, dashCaps: true, ctx: false, alt: false, urlq: false, opts: OPTS };
   const salted = (p, o) => crypto.createHash('sha256').update(p + o.id).digest('hex').slice(0, 24);
   const channel = {
     async download(op, a) {
@@ -100,7 +100,7 @@ function world(hooks) {
     },
     async status() {
       return Object.assign({ ok: true, v: 3, hls: { v: 1, profiles: ['ts-avc-aac'], opus: false, ctx: 1 } },
-        helper.dashCaps ? { dashdl: Object.assign({ v: 1, profiles: ['fmp4-avc-aac'], fp: 'kadri-dash-fp/1' }, helper.ctx ? { ctx: 1 } : {}, helper.alt ? { alt: 1 } : {}) } : {});
+        helper.dashCaps ? { dashdl: Object.assign({ v: 1, profiles: ['fmp4-avc-aac'], fp: 'kadri-dash-fp/1' }, helper.ctx ? { ctx: 1 } : {}, helper.alt ? { alt: 1 } : {}, helper.urlq ? { urlq: 1 } : {}) } : {});
     },
   };
   const storage = { get: async () => mem.jobs && JSON.parse(JSON.stringify(mem.jobs)), set: async (v) => { mem.jobs = JSON.parse(JSON.stringify(v)); } };
@@ -236,6 +236,12 @@ const rejectWith = async (p) => { try { await p; return null; } catch (e) { retu
     check('dashplan mit alt an Helfer ohne alt: abgelehnt (alt_unsupported), kein dashplan gesendet', e5 && e5.reason === 'alt_unsupported' && ops(w5, 'dashplan').length === 0, e5 && e5.reason);
     const w6 = world(); w6.helper.alt = true;
     check('Fähigkeit: dashAlt true mit "alt":1', (await w6.dl.capabilities()).dashAlt === true);
+    // S4b-8: Annex I – Fähigkeit "urlq" (Helfer bildet UrlQueryInfo-Adressen selbst); ohne: dashUrlq false
+    check('Fähigkeit: dashUrlq false ohne "urlq" im dashdl (Helfer vor S4b-8)', (await w6.dl.capabilities()).dashUrlq === false);
+    const w7 = world(); w7.helper.alt = true; w7.helper.urlq = true;
+    check('Fähigkeit: dashUrlq true mit "urlq":1', (await w7.dl.capabilities()).dashUrlq === true);
+    const w8 = world(); w8.helper.dashCaps = false; w8.helper.urlq = true;
+    check('Fähigkeit: dashUrlq nie ohne dashdl', (await w8.dl.capabilities()).dashUrlq === false);
     await w6.dl.dashPlan(URL1, FP, BIND, undefined, null, 'm:1');
     check('… dashplan mit alt gesendet (an den Helfer, der die Auswahl selbst prüft)', ops(w6, 'dashplan').length === 1 && ops(w6, 'dashplan')[0].a.alt === 'm:1', JSON.stringify(ops(w6, 'dashplan')));
     const w4 = world(); w4.helper.ctx = true;

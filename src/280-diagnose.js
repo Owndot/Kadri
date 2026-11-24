@@ -47,7 +47,7 @@
     // Einige sind ≥ 20 Zeichen lang und wurden bisher wie private Kennungen entfernt. Keine allgemeine
     // Ausnahme für „blocked_*“, Unterstriche oder längere Fehlertexte: unbekannte Werte bleiben verborgen.
     // (S4b-6: feste Codes der Server-Alternativen)
-    const publicCodes = new Set(['baseurl-undetermined', 'dash-baseurl-undetermined', 'mpd-baseurl-undetermined', 'dash_baseurl_undetermined', 'mpd_baseurl_undetermined', 'no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
+    const publicCodes = new Set(['urlparam-unsupported', 'urlparam-conflict', 'urlparam-template', 'mpd-urlparam-unsupported', 'mpd-urlparam-conflict', 'mpd-urlparam-template', 'mpd-urlparam-limits', 'mpd-urlparam-query', 'mpd_urlparam_unsupported', 'mpd_urlparam_conflict', 'mpd_urlparam_template', 'mpd_urlparam_limits', 'mpd_urlparam_query', 'urlparam-unchecked', 'baseurl-undetermined', 'dash-baseurl-undetermined', 'mpd-baseurl-undetermined', 'dash_baseurl_undetermined', 'mpd_baseurl_undetermined', 'no_supported_variant', 'av_duration_mismatch', 'attributes_duplicate', 'stream_inf_without_uri',
       'blocked_automatic_retry', 'blocked_bad_argument', 'blocked_body_too_large', 'blocked_credential_header',
       'blocked_credentials_in_url', 'blocked_headers_too_large', 'blocked_redirect_target',
       'blocked_redirect_without_location', 'blocked_too_many_redirects',

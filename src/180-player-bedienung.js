@@ -323,6 +323,7 @@
         st.hdl.hls = !!(v && v.supported && v.hls);   // P4b: nur ein Helfer, der HLS meldet (alte: nie)
         st.hdl.dash = !!(v && v.supported && v.dash);   // S3c: nur ein Helfer, der "dashdl" meldet
         st.hdl.dashAlt = !!(v && v.supported && v.dash && v.dashAlt);   // S4b-6: und Server-Alternativen prüft
+        st.hdl.dashUrlq = !!(v && v.supported && v.dash && v.dashUrlq);   // S4b-8: und Annex-I-Adressparameter bildet
         if (!(v && v.reachable)) { drop('unreachable'); return; }   // vorübergehend: ein späterer Anlass prüft erneut
         if (!st.hdl.ok) { st.hdl.checked = u; drop('unsupported'); return; }
         hdlMark('find');
@@ -504,7 +505,7 @@
       // S3c: gebundenes DASH mit Vorprüfung und Fähigkeit (dashOfferFor) – sonst ein fester Grund für die Unterzeile des
       // Hinweises (dashWhy; nur zusammen mit dem Hinweis „DASH-Stream erkannt“ gezeigt)
       let dashD = null;
-      try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig), { reachable: true, dash: st.hdl.dash, dashAlt: st.hdl.dashAlt }); } catch (e) { dashD = null; }
+      try { if (st.hdl.ok && st.media && st.media.orig) dashD = dashOfferFor(dashList(false), dashFromOf(orig), { reachable: true, dash: st.hdl.dash, dashAlt: st.hdl.dashAlt, dashUrlq: st.hdl.dashUrlq }); } catch (e) { dashD = null; }
       if (dashD && dashD.offer) dashD.v = orig;   // (für die Nachprüfung vor Auswahl und Start)
       const dashOk = dashD && dashD.offer ? dashD : null;
       const dashWhy = dashD && dashD.reason ? dashD.reason : '';

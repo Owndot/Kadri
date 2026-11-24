@@ -48,12 +48,14 @@
   const DASH_LV_E2 = { 'keine-treffer': 'none', 'zu-wenig-folge': 'few', 'nicht-aktiv': 'stale', 'mehrere-videos': 'multi-video',
     konkurrenz: 'competing', 'dauer-abweicht': 'duration', 'nicht-pruefbar': 'uncheckable', 'start-unknown': 'start-unknown',
     // S4b-6: mehrere BaseURL – Wechsel der Alternative innerhalb einer Folge bzw. widersprüchliche Alternativen
-    'alt-mixed': 'alt-mixed', 'alt-competing': 'alt-competing' };
+    'alt-mixed': 'alt-mixed', 'alt-competing': 'alt-competing',
+    // S4b-8: Annex-I-Descriptor (UrlQueryInfo) vorhanden, aber nicht (sicher) auswertbar – nichts indiziert
+    urlparam: 'urlparam' };
   const DASH_LV_E3 = { 'dash-live': 'live', 'dash-type': 'live', 'dash-protected': 'protected', 'dash-multiperiod': 'multiperiod',
     'dash-duration-unknown': 'duration-unknown', 'dash-duration-limit': 'duration-limit', 'dash-no-audio': 'no-audio', 'dash-no-video': 'no-video',
     'dash-addressing': 'addressing', 'dash-codec': 'format', 'dash-audio-codec': 'audio-codec', 'dash-unsupported': 'unsupported',
     // S4b-5: Gründe aus der Vorprüfung im Gleichlauf mit dem Helfer (src/039 dfpGate)
-    'dash-coverage': 'coverage', 'dash-timeline': 'timeline', 'dash-limit': 'limit', 'dash-baseurl-undetermined': 'baseurl-undetermined' };
+    'dash-coverage': 'coverage', 'dash-timeline': 'timeline', 'dash-limit': 'limit', 'dash-baseurl-undetermined': 'baseurl-undetermined', 'dash-urlparam': 'urlparam' };
   // Reine Entscheidung. inp: {
   //   read: gültiges MPD gelesen · invalid: nur verworfene MPD-Texte · invisible: MSE läuft, aber kein Medienabruf sichtbar ·
   //   gone/changed: Angebot zwischen Prüfung und Tipp verschwunden bzw. Quelle gewechselt ·
@@ -79,6 +81,7 @@
       // S4b-5: Manifest mit mehreren Server-Alternativen (BaseURL) – vor S4b-6 weder zuordenbar noch speicherbar (Helfer:
       // mpd_baseurl_multiple); den Grund nennen statt „anderer Server“ oder „weiter abspielen“
       if (inp.fpCode === 'baseurl-multiple') c = 'baseurl-multiple';
+      if (/^urlparam-/.test(inp.fpCode || '')) c = 'urlparam';   // S4b-8: Grund nennen statt „keine Treffer“
       L.e2 = { ok: false, code: c };
     }
     // E3 (unabhängig von E2, sobald ein MPD gelesen ist; Schutz laut Registry gilt immer)
@@ -86,7 +89,7 @@
     if (inp.protectedSource) L.e3 = { ok: false, code: 'protected' };
     else if (!L.e1.ok) L.e3 = { ok: false, code: 'n/a' };
     else if (inp.altCode === 'baseurl-undetermined') L.e3 = { ok: false, code: 'baseurl-undetermined' };   // S4b-6
-    else if (inp.fpError || !inp.gate) L.e3 = { ok: false, code: inp.fpCode === 'baseurl-multiple' ? 'baseurl-multiple' : 'unchecked' };
+    else if (inp.fpError || !inp.gate) L.e3 = { ok: false, code: inp.fpCode === 'baseurl-multiple' ? 'baseurl-multiple' : /^urlparam-/.test(inp.fpCode || '') ? 'urlparam' : 'unchecked' };
     else if (!inp.gate.ok) {
       let c = DASH_LV_E3[inp.gate.reason] || 'unsupported';
       if (c === 'audio-codec' && fmt.audio.some((n) => /^HE-AAC/.test(n))) c = 'audio-he-aac';
@@ -100,6 +103,7 @@
     else if (!cp.supported) L.e4 = { ok: false, code: 'no-downloads' };
     else if (!cp.dash) L.e4 = { ok: false, code: 'no-dash' };
     else if (inp.altCode === 'helper-no-alt') L.e4 = { ok: false, code: 'no-alt' };   // S4b-6: Helfer prüft keine Alternativen
+    else if (inp.urlqCode === 'helper-no-urlq') L.e4 = { ok: false, code: 'no-urlq' };   // S4b-8: Helfer bildet keine Annex-I-Adressen
     // E5 (nur Diagnose)
     const j = inp.job;
     if (j) {
@@ -140,6 +144,7 @@
       'E2/alt-competing': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Stücke passen zu verschiedenen Server-Alternativen – keine eindeutige Auswahl'],
       'E2/start-unknown': ['DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen', 'Ladebeginn der Stücke nicht feststellbar – kein sicherer Nachweis möglich'],
       'E2/baseurl-multiple': ['DASH-Stream erkannt – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
+      'E2/urlparam': ['DASH-Stream erkannt – nicht speicherbar', 'Manifest verlangt Adressparameter (UrlQueryInfo) in einer nicht unterstützten Form'],
       'E3/format': ['DASH-Stream zugeordnet – Format wird noch nicht gespeichert', null],
       'E3/audio-codec': ['DASH-Stream zugeordnet – Tonformat wird noch nicht gespeichert', null],
       'E3/audio-he-aac': ['DASH-Stream zugeordnet – Tonformat HE-AAC wird noch nicht gespeichert', 'Ton HE-AAC – gespeichert wird bisher nur AAC-LC'],
@@ -158,12 +163,14 @@
       'E3/baseurl-undetermined': ['DASH-Stream zugeordnet – nicht speicherbar', 'Server-Alternative für diesen Stream nicht eindeutig bestimmbar'],
       'E3/baseurl-multiple': ['DASH-Stream zugeordnet – nicht speicherbar', 'Manifest nennt mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt'],
       'E3/unchecked': ['DASH-Stream zugeordnet – Manifest nicht prüfbar', 'Aufbau nicht eindeutig (z. B. mehrere Server-Alternativen)'],
+      'E3/urlparam': ['DASH-Stream – nicht speicherbar', 'Manifest verlangt Adressparameter (UrlQueryInfo) in einer nicht unterstützten Form'],
       'E3/n/a': ['DASH-Stream – nicht speicherbar', 'Geschützt (DRM)'],
       'E4/unpaired': ['DASH-Stream zugeordnet – Helfer-App nicht gekoppelt', 'In den Kadri-Einstellungen „Helfer koppeln“'],
       'E4/rejected': ['DASH-Stream zugeordnet – Helfer-App erkennt die Kopplung nicht mehr', 'Neu koppeln'],
       'E4/unreachable': ['DASH-Stream zugeordnet – Helfer-App nicht erreichbar', 'App öffnen und erneut tippen'],
       'E4/no-downloads': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version kann keine direkten Downloads'],
       'E4/no-alt': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version kennt keine Server-Alternativen (mehrere BaseURL)'],
+      'E4/no-urlq': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version kennt keine Adressparameter aus dem Manifest (UrlQueryInfo)'],
       'E4/no-dash': ['DASH-Stream zugeordnet – Helfer-App kann ihn nicht speichern', 'Diese Helfer-App-Version speichert kein DASH'],
     };
     const e = T[out.code] || T[first + '/' + 'unsupported'] || ['DASH-Stream – nicht speicherbar', ''];
@@ -223,10 +230,12 @@
       gate: fp && !fp.error ? (fp.multi ? (multiOffer ? multiOffer.gate : null) : fp.gate) : null,
       fpError: !fp || !!fp.error, fpCode: fp && fp.error ? String(fp.error) : '',
       altCode: /^(baseurl-undetermined|helper-no-alt)$/.test(oc) ? oc : fp && fp.multi && !fp.error && r.state === 'bound' && !(multiOffer && multiOffer.alt) ? 'baseurl-undetermined' : '',
+      // S4b-8: Annex I wirkt und der (bekannte) Helfer meldet keine eigene Adressbildung dafür
+      urlqCode: oc === 'helper-no-urlq' || (fp && !fp.error && fp.urlq && caps && caps.known && caps.dash && !caps.urlq) ? 'helper-no-urlq' : '',
       fmt: (cand && cand.p.dashFmt) || { video: [], audio: [], container: [] },
       caps: caps || { known: false }, job: job }, typeof tr === 'function' ? tr : null);
     lv.offer = !!(offer && offer.offer);
     return lv;
   }
   // Fähigkeit der Helfer-App für dashLevels aus einer caps-Antwort ({ reachable, supported, dash, error }) bzw. null
-  const dashCapsOf = (c) => (c ? { known: true, reachable: !!c.reachable, supported: !!c.supported, dash: !!(c.supported && c.dash), alt: !!(c.supported && c.dash && c.dashAlt), error: c.error || '' } : { known: false });
+  const dashCapsOf = (c) => (c ? { known: true, reachable: !!c.reachable, supported: !!c.supported, dash: !!(c.supported && c.dash), alt: !!(c.supported && c.dash && c.dashAlt), urlq: !!(c.supported && c.dash && c.dashUrlq), error: c.error || '' } : { known: false });

@@ -589,6 +589,7 @@
               // S3c: DASH nur, wenn der Helfer genau dieses Profil und diesen Fingerabdruck meldet (alte Helfer: kein Angebot)
               value.dash = !!(st && dashCapable(st));
               value.dashAlt = value.dash && st.dashdl.alt === 1;   // S4b-6: dashplan v2 (Auswahl unter mehreren BaseURL)
+              value.dashUrlq = value.dash && st.dashdl.urlq === 1;   // S4b-8: Annex-I-Adressparameter (UrlQueryInfo)
               dashCtxCaps = { at: now(), ok: value.dash && st.dashdl.ctx === 1 };
             } catch (e) { value.hls = false; value.dash = false; }
           }

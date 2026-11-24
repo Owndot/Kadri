@@ -8,7 +8,7 @@
 # eine Bindung muss immer das richtige Manifest treffen. Alles andere wird gemessen und als Tabelle/JSON ausgegeben.
 #   node tools/build.js --test
 #   tests/make_s4a_fixtures.sh /tmp/s4a-fx
-#   S4A_FIXTURES=/tmp/s4a-fx S4A_PLAYERS=<Ordner mit dashjs-4.7.4/ und shaka-player-4.11.7/ (npm pack, entpackt)> \
+#   S4A_FIXTURES=/tmp/s4a-fx S4A_PLAYERS=<Ordner mit dashjs-4.7.4/, dashjs-5.2.1/ (S4b-8) und shaka-player-4.11.7/ (npm pack, entpackt)> \
 #   HELPER_HOST_DIR=<Helper 3887569: tests/java/channel/build.sh OUT> xvfb-run -a python3 tests/s4a_dash_player_matrix.py [SZENARIO …]
 import os, re, sys, time, json, hashlib, threading, http.server, urllib.parse
 KADRI = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')); sys.path.insert(0, os.path.join(KADRI, 'tests'))
@@ -60,6 +60,14 @@ mk('e2', mpd_list(BASE_MPD)); mk('e3', mpd_list(BASE_MPD, timeline=False)); mk('
 # S4b-4: Medien-Epochen – Vorspann mit verspäteten Antworten, Vorladen, schneller Wechsel (sauber / alter Lader lädt weiter), Shadow-DOM
 for k in ('f1cad', 'r1x', 'r2x'): mk(k, mpd_drop_rep(BASE_MPD, '1'))
 for k in ('f1c', 'p1', 'r1', 'r2', 's1'): mk(k, BASE_MPD)
+# S4b-8: Annex I (UrlQueryInfo) – Descriptor auf MPD-Ebene; der Server verlangt an jedem Stück genau diese Query (sonst 403)
+def mpd_up(t, scheme='urn:mpeg:dash:urlparam:2014', el='UrlQueryInfo'):
+    d = '<EssentialProperty schemeIdUri="%s"><up:%s xmlns:up="urn:mpeg:dash:schema:urlparam:2014" queryTemplate="$querypart$" useMPDUrlQuery="true"/></EssentialProperty>' % (scheme, el)
+    return t.replace('\t<Period ', '\t' + d + '\n\t<Period ', 1)
+for k in ('u1', 'u2', 'u3', 'u5'): mk(k, mpd_up(BASE_MPD))
+mk('u4', mpd_up(mpd_base(BASE_MPD, 'http://%s/m/u4/' % FRONT, 'http://%s/m/u4/' % OTHER)))
+mk('u6', mpd_up(BASE_MPD, 'urn:mpeg:dash:urlparam:2016', 'ExtUrlQueryInfo'))
+NEEDQ = {'u1': 'tok=s4a-token', 'u2': 'tok=s4a-token', 'u3': 'tok=s4a-tokenB', 'u4': 'tok=s4a-token'}
 SEGDELAY = {'f1cad': 3.0}   # Stücke dieses Szenarios kommen 3 s verspätet an mk('g1', BASE_MPD); mk('h3', BASE_MPD.replace('mp4a.40.2', 'mp4a.40.5'))
 if fx('sb'): mk('e1', fx('sb'), d=os.path.join(FX, 'sb'))
 if fx('wm'): mk('h1', fx('wm'), d=os.path.join(FX, 'wm'))
@@ -77,6 +85,7 @@ def own(*cfgs, seq=False):
         return page(''.join(VID % i for i in vids) + '<script src="/lib/own.js"></script><script>' + '\n'.join(js) + '</script>')
     js.append(('(async () => { for (const c of C) { await S4A.start(c); const v = c.video; if (%s) { const t0 = Date.now(); while (v.currentTime < 6 && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 200)); } else await new Promise((r) => setTimeout(r, 2500)); } })();' % ('true' if seq == 'play' else 'false')) if seq else 'C.forEach((c) => S4A.start(c));')
     return page(''.join(VID % i for i in vids) + '<script src="/lib/own.js"></script><script>' + '\n'.join(js) + '</script>')
+def dashjs5(mpd): return page(VID % 0 + '<script src="/lib/dash5.all.min.js"></script><script>const p = dashjs.MediaPlayer().create(); p.updateSettings({ debug: { logLevel: 0 } }); p.initialize(document.getElementById("v0"), %s, true);</script>' % json.dumps(mpd))
 def dashjs(mpd): return page(VID % 0 + '<script src="/lib/dash.all.min.js"></script><script>const p = dashjs.MediaPlayer().create(); p.updateSettings({ debug: { logLevel: 0 } }); p.initialize(document.getElementById("v0"), %s, true);</script>' % json.dumps(mpd))
 def shaka(mpd): return page(VID % 0 + '<script src="/lib/shaka.js"></script><script>shaka.polyfill.installAll(); (async () => { const p = new shaka.Player(); await p.attach(document.getElementById("v0")); await p.load(%s); document.getElementById("v0").play().catch(() => {}); })();</script>' % json.dumps(mpd))
 def iframe(src): return page('<div style="padding:6px">Seite mit eingebettetem Player</div><iframe src="%s" allow="autoplay; fullscreen" style="width:100%%;aspect-ratio:16/9;border:0"></iframe>' % src)
@@ -96,6 +105,11 @@ PAGES = {
     'd1': dashjs(mp('d1')), 'd2': own(dict(mpd=mp('d2'), mode='main', resolve='initial')), 'd3': dashjs(mp('d3')),
     'd4': own(dict(mpd=mp('d4') + '?tok=s4a-token', mode='main', addQuery='tok=s4a-token')),
     'd5': own(dict(mpd=mp('d5'), mode='main', base=1)), 'd6': dashjs(mp('d6')),
+    # S4b-8: Annex I – eigener Player und dash.js 5.2.1 (Referenzplayer mit UrlQueryInfo)
+    'u1': own(dict(mpd=mp('u1') + '?tok=s4a-token', mode='main', addQuery='tok=s4a-token')),
+    'u2': dashjs5(mp('u2') + '?tok=s4a-token'), 'u3': dashjs5(mp('u3').replace('manifest.mpd', 'start.mpd') + '?tok=s4a-tokenA'),
+    'u4': own(dict(mpd=mp('u4') + '?tok=s4a-token', mode='main', base=1, addQuery='tok=s4a-token')),
+    'u5': own(dict(mpd=mp('u5') + '?tok=s4a-token', mode='main')), 'u6': dashjs5(mp('u6') + '?tok=s4a-token'),
     'd8': own(dict(mpd=mp('d8'), mode='main', base=0, switchAt=2)),
     'e1': dashjs(mp('e1')), 'e2': shaka(mp('e2')), 'e3': dashjs(mp('e3')),
     'f1': own(dict(mpd=mp('f1ad'), mode='main', vid='0', maxSegs=3, burst=True), dict(mpd=mp('f1'), mode='main'), seq='play'),
@@ -137,6 +151,12 @@ SCN = [
     ('d5', 'D Adressen', 'eigener Player · zwei BaseURL (Seite, CDN), Player nimmt die zweite (Ausweich-CDN) – S4b-6: gebunden, Download über die zweite', 'richtig', True, True),
     ('d8', 'D Adressen', 'eigener Player · zwei BaseURL, CDN-Wechsel mitten in der Folge (S4b-6: nie still akzeptiert)', 'nie', False, False),
     ('d6', 'D Adressen', 'dash.js · absolute BaseURL auf CDN-Host', 'richtig', True, False),
+    ('u1', 'U Annex I', 'eigener Player · MPD ?tok=…, UrlQueryInfo (MPD-Ebene), Player hängt den Token an Init/Stücke; Server verlangt ihn', 'richtig', True, True),
+    ('u2', 'U Annex I', 'dash.js 5.2.1 (Referenzplayer mit Annex I) · UrlQueryInfo, Server verlangt den Token', 'richtig', True, True),
+    ('u3', 'U Annex I', 'dash.js 5.2.1 · MPD-Abruf 302 von ?tok=A auf ?tok=B – Query der endgültigen Adresse', 'richtig', True, True),
+    ('u4', 'U Annex I', 'eigener Player · zwei BaseURL + UrlQueryInfo, Player nimmt die zweite (Token an den gewählten CDN)', 'richtig', True, True),
+    ('u5', 'U Annex I', 'eigener Player · UrlQueryInfo im MPD, Player hängt den Token NICHT an', 'nie', False, False),
+    ('u6', 'U Annex I', 'dash.js 5.2.1 · ExtUrlQueryInfo (2016; dash.js wendet sie an) – von Kadri nicht gedeutet', 'nie', False, False),
     ('e1', 'E Form', 'dash.js · Einzeldatei je Darstellung, SegmentList mit mediaRange (Byte-Bereiche)', 'nie', False, False),
     ('e2', 'E Form', 'Shaka · SegmentList + SegmentTimeline mit einzeln signierten SegmentURL', 'richtig', True, True),
     ('e3', 'E Form', 'dash.js · SegmentList mit fester Dauer, Ton-Abdeckung im MPD falsch (24 s statt 20 s) – Vorprüfungs-Gegenprobe', 'richtig', True, False),
@@ -153,7 +173,7 @@ SCN = [
     ('h2', 'H Codec', 'dash.js · VP9 + Opus in fMP4', 'richtig', True, False),
     ('h3', 'H Codec', 'eigener Player · AAC als mp4a.40.5 (HE-AAC) gekennzeichnet', 'richtig', True, False),
 ]
-WANT_OPTS = {'d5': OPT2, 'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
+WANT_OPTS = {'u1': OPT2, 'u2': OPT2, 'u3': OPT2, 'u4': OPT2, 'd5': OPT2, 'f1': OPT2, 'f1b': OPT2, 'f1c': OPT2, 'p1': OPT2, 'r1': OPT2, 'r2': OPT2, 's1': OPT2, 'h1': None, 'h2': None}
 # S4b: harte FUNKTIONS-Erwartungen je Szenario (heutiger Soll-Stand; jede S4b-Stufe ändert hier nur, was sie ausdrücklich
 # liefert). bound/offer: Bindung und Angebot; plan: erwartete Optionen ('rejected' = Helfer lehnt beim Plan ab);
 # file: vollständige Datei beim Helfer (Größe = Init + alle Stücke der gewählten Darstellung + Ton).
@@ -165,6 +185,9 @@ for k in ('a5', 'd3', 'e2', 'c1', 'c3'): EXPECT[k] = dict(bound=True, offer=True
 for k in ('b1', 'b2', 'c2', 'g1', 'd2', 'd4', 'd8', 'e1', 'f2', 'r2', 's1'): EXPECT[k] = dict(bound=False, offer=False)
 # S4b-6: mehrere BaseURL – an die beobachtete zweite Alternative gebunden, Helfer prüft die Auswahl und lädt vollständig über sie
 EXPECT['d5'] = dict(bound=True, offer=True, plan=OPT2, file=True)
+# S4b-8: Annex I – gebunden, Helfer bildet dieselben Adressen (Token) und lädt vollständig; ohne Anhängen / 2016: nie
+for k in ('u1', 'u2', 'u3', 'u4'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2, file=True)
+for k in ('u5', 'u6'): EXPECT[k] = dict(bound=False, offer=False)
 # S4b-4: Medien-Epoche – der Vorspann gehört zur vorigen MediaSource: das Haupt-MPD (360p + 180p) wird gebunden
 for k in ('f1b', 'f1c', 'p1', 'r1'): EXPECT[k] = dict(bound=True, offer=True, plan=OPT2)
 # S4b-5: Vorprüfung im Gleichlauf mit dem Helfer – e3 (Ton-Abdeckung 24 s statt 20 s) wird schon von Kadri erkannt: kein Angebot,
@@ -177,10 +200,11 @@ for k in ('c1n', 'c1w', 'c1t', 'c1x', 'a2w'): EXPECT[k] = dict(bound=True, offer
 M_E1 = 'DASH vermutet – Manifest nicht lesbar'
 M_E2 = 'DASH-Stream erkannt – Zuordnung zum Video nicht nachgewiesen'
 M_FMT = 'DASH-Stream zugeordnet – Format wird noch nicht gespeichert'
-LV = {k: ('-', None, None) for k in ('a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd5', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
+LV = {k: ('-', None, None) for k in ('u1', 'u2', 'u3', 'u4', 'a1', 'a2', 'a3', 'a4', 'a5', 'd1', 'd3', 'd5', 'd6', 'e2', 'f1', 'c1', 'c3', 'c1n', 'c1w', 'c1t', 'c1x', 'a2w')}
 LV.update({
     'b1': ('E1/unread-invisible', M_E1, r'verdeckt'), 'b2': ('E1/unread-invisible', M_E1, r'verdeckt'), 'c2': ('E1/unread-invisible', M_E1, r'verdeckt'),
-    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'), 'd8': ('E2/alt-mixed', M_E2, r'verschiedenen Server-Alternativen \(CDN-Wechsel\)'),
+    'd2': ('E2/host', M_E2, r'anderen Server'), 'd4': ('E2/query', M_E2, r'Zusatzparameter'),
+    'u5': ('E2/query', M_E2, r'Zusatzparameter'), 'u6': ('E2/urlparam', 'DASH-Stream erkannt – nicht speicherbar', r'Adressparameter \(UrlQueryInfo\)'), 'd8': ('E2/alt-mixed', M_E2, r'verschiedenen Server-Alternativen \(CDN-Wechsel\)'),
     'e3': ('E3/coverage', 'DASH-Stream zugeordnet – nicht speicherbar', r'^Manifest widersprüchlich: Tonspur 24 s statt 20 s$'),
     'e1': ('E2/uncheckable', 'DASH-Stream erkannt – Zuordnung hier nicht möglich', r'^Stream-Form \(Byte-Bereiche einer Datei\) erlaubt keinen sicheren Nachweis$'),
     'f2': ('E2/multi-video', M_E2, r'Mehrere Videos'),
@@ -221,6 +245,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if parts[0] == 'lib' and len(parts) == 2:
             src = {'own.js': os.path.join(LIB, 'own.js'), 'own-worker.js': os.path.join(LIB, 'own-worker.js'),
                    'dash.all.min.js': os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js'),
+                   'dash5.all.min.js': os.path.join(PLAYERS, 'dashjs-5.2.1', 'package', 'dist', 'modern', 'umd', 'dash.all.min.js'),
                    'shaka.js': os.path.join(PLAYERS, 'shaka-player-4.11.7', 'package', 'dist', 'shaka-player.compiled.js')}.get(parts[1])
             if src and os.path.isfile(src): return self.out(200, open(src, 'rb').read(), 'text/javascript; charset=utf-8')
             return self.out(404)
@@ -235,6 +260,9 @@ class H(http.server.BaseHTTPRequestHandler):
                 exp = str(int(time.time()) + 300); sig = hashlib.sha256((u.path + exp).encode()).hexdigest()[:20]
                 return self.out(302, extra={'Location': 'http://%s%s?exp=%s&sig=%s' % (OTHER, u.path, exp, sig)})
             if not (q.get('exp') and q.get('sig') and hashlib.sha256((u.path + q['exp'][0]).encode()).hexdigest()[:20] == q['sig'][0]): return self.out(403)
+        if name == 'start.mpd' and key == 'u3':   # S4b-8: MPD-Weiterleitung mit anderem Token
+            return self.out(302, extra={'Location': '/m/u3/manifest.mpd?tok=s4a-tokenB'})
+        if NEEDQ.get(key) and name.endswith('.m4s') and u.query != NEEDQ[key]: return self.out(403)
         if name == 'manifest.mpd':
             if DELAY.get(key): time.sleep(DELAY[key])
             if key in FAILMPD: return self.out(404)
@@ -272,7 +300,8 @@ KEEP = ('Quellen am Video', 'Auswahl', 'DASH', 'Helfer-Fähigkeiten', 'Rahmen', 
 want = [a for a in sys.argv[1:] if not a.startswith('-')]
 RUN = [s for s in SCN if (not want or s[0] in want) and s[0] in PAGES and (s[0] in M or s[0] in ('c1', 'c3', 'f1', 'f1b', 'f1c', 'r1', 'r2', 'f2'))]
 skipped = [s[0] for s in SCN if s not in RUN and (not want or s[0] in want)]
-check('Fixtures/Player vorhanden (sonst übersprungen: %s)' % (', '.join(skipped) or '–'), bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js')), PLAYERS)
+check('Fixtures/Player vorhanden (sonst übersprungen: %s)' % (', '.join(skipped) or '–'), bool(PLAYERS) and os.path.isfile(os.path.join(PLAYERS, 'dashjs-4.7.4', 'package', 'dist', 'dash.all.min.js'))
+      and os.path.isfile(os.path.join(PLAYERS, 'dashjs-5.2.1', 'package', 'dist', 'modern', 'umd', 'dash.all.min.js')), PLAYERS)
 # S4b-4: Messmodus (ohne Erweiterung, nur Test-Instrumentierung der Seite): je Szenario die Zeitpunkte von loadstart/emptied
 # des Videoelements, sourceopen der MediaSource und Anfragebeginn/-ende jedes Init-/Medienstücks (Resource Timing).
 # Ergebnis als JSON (S4A_MEASURE=<Datei>), danach Ende.
@@ -461,6 +490,7 @@ with sync_playwright() as p:
                 r['file'] = got[0] if got[0] != f0 else ''
                 r['new_files'] = [x for x in got[0].split()[1:] if x not in f0.split()[1:]]
                 r['dl_hosts'] = sorted({x['host'] for x in HITS[n2:] if re.search(r'(init|chunk)-', x['path'])})   # S4b-6: Hosts der Helfer-Abrufe
+                r['dl_q'] = sorted({x['q'] for x in HITS[n2:] if re.search(r'(init|chunk)-', x['path'])})   # S4b-8: Query der Helfer-Abrufe
                 r['helper_clean'] = r['helper_clean'] and not any(x['cookie'] or x['auth'] for x in HITS[n2:])
                 d3 = diag(); r['helper_line'] = next((l for l in d3.split('\n') if l.startswith(' 1. Typ ')), '')
             if sid.startswith('c') or sid == 'a2w':   # S4b-3: Relay-Spur beider Seiten (anonym)
@@ -497,6 +527,10 @@ with sync_playwright() as p:
             elif ex.get('plan'): check('[%s] Funktion: Planoptionen %s' % (sid, ' + '.join(x.split(' ')[0] for x in ex['plan'])), sorted(x[0] for x in r.get('plan', [])) == sorted(ex['plan']), r.get('plan') or r.get('toast'))
             if sid == 'd5':   # S4b-6: der Helfer lud alle Init-/Stückabrufe über die ZWEITE BaseURL (CDN-Host), keinen über die erste
                 check('[d5] Funktion: Download vollständig über die zweite BaseURL (alle Stückabrufe an %s)' % OTHER_NAME, r.get('dl_hosts') == [OTHER], r.get('dl_hosts'))
+            if sid in NEEDQ:   # S4b-8: der Helfer bildete die Adressen selbst – jede Init-/Stückanfrage mit genau dieser Query
+                check('[%s] Funktion: Helfer-Abrufe aller Init/Stücke genau mit ?%s (Annex I, selbst gebildet)' % (sid, NEEDQ[sid].replace('s4a-token', '…')), r.get('dl_q') == [NEEDQ[sid]], len(r.get('dl_q') or []))
+            if sid == 'u3': check('[u3] Funktion: kein Abruf mit dem Token der Anfrageadresse (tok=…A)', not any('s4a-tokenA' in x['q'] for x in HITS if '/m/u3/' in x['path'] and x['path'].endswith('.m4s')), '')
+            if sid == 'u4': check('[u4] Funktion: Download über die zweite BaseURL (%s) mit Token' % OTHER_NAME, r.get('dl_hosts') == [OTHER], r.get('dl_hosts'))
             if ex.get('file'):
                 sizes = [int(x.rsplit(':', 1)[1]) for x in r.get('new_files', []) if ':' in x]
                 check('[%s] Funktion: genau EIN Download trotz Doppeltipp, Datei vollständig (%s Byte)' % (sid, '/'.join(map(str, sorted(FILE_OK)))), len(sizes) == 1 and sizes[0] in FILE_OK, r.get('new_files'))

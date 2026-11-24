@@ -4,6 +4,7 @@
 # (ChannelServer + DashEngine, tests/java/channel/build.sh) gebaut – nie für WASM, nie für eine Auslieferung.
 # Inhalt: Helfer ee54864 (S3b-Fix 2) + 3887569 (nur Testcode: Harness-Kommando „dash on“).
 # S4b-6: be157b2 auf test/s4b5-dash (enthält 3887569) – dashplan v2 mit Auswahl unter mehreren BaseURL (Fähigkeit dashdl.alt).
+# S4b-8: 6e553fc auf test/s4b5-dash – Annex-I-Adressparameter (UrlQueryInfo, Fähigkeit dashdl.urlq).
 repository=Owndot/video-assistent-helper
-helper_commit=be157b28be5017d44a8ccec8e9ff49ac983250dc
+helper_commit=6e553fcb82b437ce0be487233dd35f41958bade6
 product_base=ee5486442266f2730893353ac71611809dfd21b1

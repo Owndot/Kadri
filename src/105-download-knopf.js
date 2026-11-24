@@ -46,15 +46,19 @@
     const offer = dashOfferOf(sel.url, from);
     if (!offer) return { reason: 'Manifest nicht mehr verfügbar – Video kurz abspielen und erneut tippen', code: 'manifest-gone' };
     if (offer.error === 'baseurl-multiple') return { reason: 'mehrere Server-Alternativen (BaseURL) – noch nicht unterstützt', code: 'baseurl-multiple' };
+    // S4b-8: Annex-I-Adressparameter (UrlQueryInfo) in nicht unterstützter Form – fester Grund statt „nicht prüfbar“
+    if (/^urlparam-/.test(offer.error || '')) return { reason: 'Adressparameter des Manifests (UrlQueryInfo) in dieser Form nicht unterstützt', code: 'urlparam' };
     // S4b-6: mehrere BaseURL – nur mit eindeutig aus der Bindung bestimmter Alternative und einem Helfer, der sie prüft (alt)
     if (offer.multi && !offer.alt) return { reason: 'Server-Alternative nicht eindeutig bestimmbar', code: offer.altError === 'alt-mixed' || offer.altError === 'alt-competing' ? offer.altError : 'baseurl-undetermined' };
     if (offer.multi && caps && caps.reachable && caps.dash && !caps.dashAlt) return { reason: 'diese Helfer-App-Version kennt keine Server-Alternativen', code: 'helper-no-alt' };
+    // S4b-8: Annex I wirkt – nur ein Helfer, der dieselbe Adressbildung meldet (dashdl.urlq); ein älterer würde die Query weglassen
+    if (offer.urlq && caps && caps.reachable && caps.dash && !caps.dashUrlq) return { reason: 'diese Helfer-App-Version kennt keine Adressparameter aus dem Manifest', code: 'helper-no-urlq' };
     if (offer.error || !offer.fp) return { reason: 'Manifest nicht prüfbar', code: 'manifest-unchecked' };
     if (!offer.gate || !offer.gate.ok) return { reason: dashGateText(offer.gate && offer.gate.reason), code: dashGateCode(offer.gate && offer.gate.reason) };
     return { x: x, sel: sel, offer: offer };
   }
   const DASH_GATE_CODES = ['dash-live', 'dash-protected', 'dash-multiperiod', 'dash-codec', 'dash-audio-codec', 'dash-no-audio', 'dash-no-video',
-    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit', 'dash-coverage', 'dash-timeline', 'dash-limit', 'dash-baseurl-undetermined'];
+    'dash-addressing', 'dash-duration-unknown', 'dash-duration-limit', 'dash-coverage', 'dash-timeline', 'dash-limit', 'dash-baseurl-undetermined', 'dash-urlparam'];
   const dashGateCode = (r) => (DASH_GATE_CODES.indexOf(r) >= 0 ? r : 'dash-unsupported');
   function dashGateText(r) {
     return ({ 'dash-live': 'Live-Stream – nicht speicherbar', 'dash-protected': 'geschützt (DRM) – nicht speicherbar',
@@ -63,7 +67,8 @@
       'dash-no-video': 'kein Video', 'dash-addressing': 'Stream-Form nicht unterstützt', 'dash-duration-unknown': 'Länge unbekannt – nicht speicherbar',
       'dash-duration-limit': 'zu lang (über 48 h)', 'dash-coverage': 'Manifest widersprüchlich (Länge der Spuren)',
       'dash-timeline': 'Manifest widersprüchlich (Zeitleiste)', 'dash-limit': 'zu viele Stücke oder zu groß',
-      'dash-baseurl-undetermined': 'Server-Alternative nicht eindeutig bestimmbar' })[r] || 'Stream-Form nicht unterstützt';
+      'dash-baseurl-undetermined': 'Server-Alternative nicht eindeutig bestimmbar',
+      'dash-urlparam': 'Adressparameter des Manifests (UrlQueryInfo) in dieser Form nicht unterstützt' })[r] || 'Stream-Form nicht unterstützt';
   }
   // Optionen des Helfers den Darstellungen des eigenen Modells zuordnen: Höhe, Breite, Sprache und Summe der Bandbreiten
   // (Video + Ton) müssen GENAU ein Paar ergeben – sonst ist die Option nicht eindeutig zuordenbar und entfällt. Der Ton wird

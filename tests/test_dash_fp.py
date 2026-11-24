@@ -56,7 +56,7 @@ with sync_playwright() as p:
     check('Querprüfung: %d Abdrücke identisch mit dem Helper, %d vom Helper abgelehnte MPDs auch hier ohne Abdruck' % (n_ok, n_err),
           len(rows) == 116 and n_ok == 74 and n_err == 42 and not diff, diff[:5])
     r = fp(fx('vod-timeline-avc-aac.mpd'))
-    check('Ergebnis enthält nur Abdruck (64 Hex), Vorprüfung und Kennzeichen „Alternativen“ – keine Adresse, keine Kennung', set(r.keys()) <= {'fp', 'gate', 'text', 'multi'} and len(r['fp']) == 64
+    check('Ergebnis enthält nur Abdruck (64 Hex), Vorprüfung und Kennzeichen „Alternativen“/„Annex I“ (ohne Descriptor: keins) – keine Adresse, keine Kennung', set(r.keys()) <= {'fp', 'gate', 'text', 'multi', 'urlq'} and r.get('urlq') is None and len(r['fp']) == 64
           and 'http' not in json.dumps(r) and 'cdn.example' not in json.dumps(r), r)
     big = '<?xml version="1.0"?><MPD xmlns="%s" type="static" mediaPresentationDuration="PT9999S"><Period><SegmentList timescale="1" duration="1">%s</SegmentList><AdaptationSet mimeType="video/mp4">%s</AdaptationSet></Period></MPD>' % (
         NS, ''.join('<SegmentURL media="s%d"/>' % i for i in range(20000)), ''.join('<Representation id="r%d" bandwidth="1"><BaseURL>b%d/</BaseURL></Representation>' % (i, i) for i in range(120)))

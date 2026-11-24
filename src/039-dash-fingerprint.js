@@ -15,12 +15,14 @@
   // Keine Adresse, keine Kennung verlässt diese Funktionen außer dem Abdruck (Hex) und festen Gründen.
   const DFP = Object.freeze({
     VERSION: 'kadri-dash-fp/1', NS: 'urn:mpeg:dash:schema:mpd:2011', XLINK: 'http://www.w3.org/1999/xlink',
-    XINCLUDE: 'http://www.w3.org/2001/XInclude', XMLNS: 'http://www.w3.org/2000/xmlns/',
+    XINCLUDE: 'http://www.w3.org/2001/XInclude', XMLNS: 'http://www.w3.org/2000/xmlns/', UP: 'urn:mpeg:dash:schema:urlparam:2014',
     MAX_URI: 4096, SAFE: 9007199254740991, MAX_TIMESCALE: 4294967295, MAX_BANDWIDTH: 1e9, MAX_FMT: 20,
     MAX_ELEMENTS: 200000, MAX_DEPTH: 32, MAX_ATTRS: 64, MAX_ATTR: 8192, MAX_TEXT: 4096, MAX_PERIODS: 64, MAX_SETS: 1024,
     MAX_REPS: 4096, MAX_TL: 100000, MAX_LIST: 100000, MAX_RESOLVED: 200000, MAX_TOTAL_SECONDS: 48 * 3600,
     // Kadri-eigene Rechengrenze: geerbte Listen/Zeitleisten erscheinen je Darstellung erneut; darüber kein Abdruck
     MAX_LINES: 2000000,
+    // S4b-8: Annex I (UrlQueryInfo) wie DashLimits des Helfers
+    MAX_UP_DESCRIPTORS: 16, MAX_UP_QUERY: 2048, MAX_UP_PARAMS: 64,
   });
   const DFP_NAMES = new Set(['MPD', 'Period', 'AdaptationSet', 'Representation', 'SubRepresentation', 'ContentComponent', 'BaseURL',
     'SegmentBase', 'SegmentList', 'SegmentTemplate', 'SegmentTimeline', 'S', 'SegmentURL', 'Initialization', 'RepresentationIndex',
@@ -215,7 +217,7 @@
     }
   }
   function dfpEl(name, attrs) {
-    return { name: name, attrs: attrs, kids: [], text: null, s: null, sCount: 0, listMedia: null, listRange: null, entryExtra: false,
+    return { name: name, attrs: attrs, kids: [], text: null, s: null, sCount: 0, listMedia: null, listRange: null, entryExtra: false, foreignKids: false,
       attr(k) { return this.attrs.has(k) ? this.attrs.get(k) : null; },
       all(n) { return this.kids.filter((k) => k.name === n); } };
   }
@@ -243,8 +245,15 @@
       const attrs = attrsOf(el);
       const dash = el.namespaceURI === DFP.NS, local = el.localName;
       let me = null;
-      if (!dash) { if (DFP_NAMES.has(local)) dfpFail('namespace'); }
-      else if (!parent) dfpFail('namespace');
+      if (!dash) {
+        if (DFP_NAMES.has(local)) dfpFail('namespace');
+        // S4b-8: Annex I – Elemente im urlparam-Namensraum als Kind eines Descriptors bleiben erhalten („{ns}lokal“, wie DashXml)
+        if (el.namespaceURI === DFP.UP && parent && (parent.name === 'EssentialProperty' || parent.name === 'SupplementalProperty')) {
+          me = dfpEl('{' + DFP.UP + '}' + local, attrs);
+          parent.kids.push(me);
+        } else if (parent) parent.foreignKids = true;
+      }
+      else if (!parent || parent.name.charAt(0) === '{') dfpFail('namespace');
       else if (local === 'S') {
         if (parent.name !== 'SegmentTimeline') dfpFail('structure');
         if (++cnt.timeline > DFP.MAX_TL) dfpFail('limits');
@@ -295,6 +304,72 @@
       return { scheme: p.attr('schemeIdUri'), value: p.attr('value'), extra: extra };
     });
   }
+  // ---------- S4b-8: Annex I (UrlQueryInfo) wie DashUrlParam des Helfers ----------
+  // Minimalform: Essential-/SupplementalProperty (Period nur Supplemental) mit schemeIdUri urn:mpeg:dash:urlparam:2014, ohne @value,
+  // genau ein Kind UrlQueryInfo mit genau queryTemplate="$querypart$" und useMPDUrlQuery="true"/"1". Wirkung: die Query der
+  // endgültigen MPD-Adresse wird unverändert an jede Init-/Stückadresse der Darstellungen darunter gehängt. Alles andere aus der
+  // Familie (2016/2025, urn:mpeg:dash:state:, ExtUrlQueryInfo, queryString, $query:…$, Kinder, fremde Attribute, andere Stellen,
+  // mehrere entlang einer Kette) ist fatal mit festem Grund. Ohne Descriptor wird nie eine Query übernommen.
+  const DFP_UP_SCHEME = 'urn:mpeg:dash:urlparam:2014';
+  const dfpUpFamily = (s) => s !== null && (s.startsWith('urn:mpeg:dash:urlparam:') || s.startsWith('urn:mpeg:dash:state:'));
+  const dfpUpIs = (e) => (e.name === 'EssentialProperty' || e.name === 'SupplementalProperty') && dfpUpFamily(e.attr('schemeIdUri'));
+  const dfpUpOwn = (e) => e.kids.filter(dfpUpIs);
+  function dfpUpCount(e) { let n = dfpUpIs(e) ? 1 : 0; e.kids.forEach((k) => { n += dfpUpCount(k); }); return n; }
+  function dfpUpCheck(d) {
+    if (d.attr('schemeIdUri') !== DFP_UP_SCHEME) dfpFail('urlparam-unsupported');
+    d.attrs.forEach((v, k) => { if (k !== 'schemeIdUri' && k !== 'id') dfpFail('urlparam-unsupported'); });
+    if (d.foreignKids || d.kids.length !== 1 || d.kids[0].name !== '{' + DFP.UP + '}UrlQueryInfo') dfpFail('urlparam-unsupported');
+    const q = d.kids[0];
+    if (q.foreignKids || q.kids.length) dfpFail('urlparam-unsupported');
+    q.attrs.forEach((v, k) => { if (k !== 'queryTemplate' && k !== 'useMPDUrlQuery') dfpFail('urlparam-unsupported'); });
+    const use = q.attr('useMPDUrlQuery');
+    if (use !== 'true' && use !== '1') dfpFail('urlparam-unsupported');
+    if (q.attr('queryTemplate') !== '$querypart$') dfpFail('urlparam-template');
+  }
+  // → { query, at: Set der Elemente mit wirksamem Descriptor } (at leer: keine Wirkung)
+  function dfpUrlParam(root, doc) {
+    const none = { query: '', at: new Set() };
+    const total = dfpUpCount(root);
+    if (!total) return none;
+    if (total > DFP.MAX_UP_DESCRIPTORS) dfpFail('urlparam-limits');
+    const placed = dfpUpOwn(root).map((d) => [d, root]);
+    root.all('Period').forEach((pe) => {
+      dfpUpOwn(pe).forEach((d) => { if (d.name === 'EssentialProperty') dfpFail('urlparam-unsupported'); placed.push([d, pe]); });
+      pe.all('AdaptationSet').forEach((ae) => {
+        dfpUpOwn(ae).forEach((d) => placed.push([d, ae]));
+        ae.all('Representation').forEach((re) => dfpUpOwn(re).forEach((d) => placed.push([d, re])));
+      });
+    });
+    if (placed.length !== total) dfpFail('urlparam-unsupported');
+    placed.forEach((x) => dfpUpCheck(x[0]));
+    const m = dfpUpOwn(root).length;
+    if (m > 1) dfpFail('urlparam-conflict');
+    root.all('Period').forEach((pe) => {
+      const p = dfpUpOwn(pe).length;
+      if (p > 1 || (m + p > 1 && p > 0)) dfpFail('urlparam-conflict');
+      pe.all('AdaptationSet').forEach((ae) => {
+        const a = dfpUpOwn(ae).length;
+        if (a > 1 || (m + p + a > 1 && a > 0)) dfpFail('urlparam-conflict');
+        ae.all('Representation').forEach((re) => {
+          const r = dfpUpOwn(re).length;
+          if (r > 1 || (m + p + a + r > 1 && r > 0)) dfpFail('urlparam-conflict');
+        });
+      });
+    });
+    const qm = doc.indexOf('?'), q = qm < 0 ? '' : doc.slice(qm + 1);
+    if (q.length > DFP.MAX_UP_QUERY) dfpFail('urlparam-limits');
+    if (q && q.split('&').length > DFP.MAX_UP_PARAMS) dfpFail('urlparam-limits');
+    for (let i = 0; i < q.length; i++) {
+      const c = q.charCodeAt(i);
+      if (c <= 0x20 || c >= 0x7f || DFP_BAD.indexOf(q[i]) >= 0) dfpFail('urlparam-query');
+      if (q[i] === '%' && !/^%[0-9A-Fa-f]{2}/.test(q.slice(i, i + 3))) dfpFail('urlparam-query');
+    }
+    return { query: q, at: new Set(placed.map((x) => x[1])) };
+  }
+  const dfpUpFor = (up, chain) => (up.at.size && chain.some((e) => up.at.has(e)) ? up.query : null);
+  // Query an eine Adresse hängen: „?“, bzw. „&“ hinter einer vorhandenen Query; null/leer: unverändert (DashUrlParam.append)
+  const dfpUpAppend = (u, q) => (q === null || q === '' || u === null ? u : u + (u.indexOf('?') >= 0 ? '&' : '?') + q);
+
   // ---------- S4b-6: mehrere BaseURL (Alternativen) wie DashManifest/BaseSelection des Helfers ----------
   // Auswahl: je Element mit MEHREREN BaseURL der Index der gewählten – „m:1;p0:0;s3:1;r7:0“ (Schlüssel m, p<Periode>, s<Set>,
   // r<Darstellung>, Nummern über alle Perioden in Dokumentreihenfolge; aufsteigend, je einmal). sel: null = mehrere BaseURL
@@ -403,21 +478,23 @@
     if (kind === 'SegmentBase') { r.addressing = 'SEGMENT_BASE'; r.excluded = 'byte-range'; return; }
     if (kind === 'SegmentTemplate') {
       const media = dfpInherit(segs, 'media');
-      if (initTpl !== null) r.initUrl = dfpInit(initTpl, r.id, r.bandwidth, r.base);
-      else if (initSrc !== null) r.initUrl = dfpResolve(r.base, initSrc);
+      if (initTpl !== null) r.initUrl = dfpUpAppend(dfpInit(initTpl, r.id, r.bandwidth, r.base), r.urlQuery);
+      else if (initSrc !== null) r.initUrl = dfpUpAppend(dfpResolve(r.base, initSrc), r.urlQuery);
       if (media === null) { r.excluded = 'addressing-media'; return; }
       const m = dfpMedia(media, r.id, r.bandwidth, r.base);
-      r.mediaCanon = m.canon;
-      r.media = { kind: m.kind, width: m.width, pre: m.pre, suf: m.suf };
+      // S4b-8: Query hinter das Suffix (DashTemplate.Media.withQuery)
+      const suf = r.urlQuery ? m.suf + ((m.pre + m.suf).indexOf('?') >= 0 ? '&' : '?') + r.urlQuery : m.suf;
+      r.mediaCanon = m.pre + '{' + (m.kind === 'number' ? 'Number' : 'Time') + (m.width > 0 ? ':' + String(m.width).padStart(2, '0') : '') + '}' + suf;
+      r.media = { kind: m.kind, width: m.width, pre: m.pre, suf: suf };
       if (m.kind === 'time') { r.addressing = 'TIME_TIMELINE'; if (!tl) { r.excluded = 'time-without-timeline'; return; } }
       else { r.addressing = tl ? 'NUMBER_TIMELINE' : 'NUMBER_DURATION'; if (!tl && r.duration === null) { r.excluded = 'addressing-duration'; return; } }
     } else {
       let holder = null;
       for (const s of segs) if (s && s.listMedia) { if (holder) dfpFail('addressing-ambiguous'); holder = s; }
-      if (initSrc !== null) r.initUrl = dfpResolve(r.base, initSrc);
+      if (initSrc !== null) r.initUrl = dfpUpAppend(dfpResolve(r.base, initSrc), r.urlQuery);
       else if (initTpl !== null) dfpFail('addressing-attr');
       if (!holder) { r.addressing = 'SINGLE'; r.excluded = 'addressing-single'; return; }
-      const lk = ctx.id(holder) + '|' + r.base;
+      const lk = ctx.id(holder) + '|' + r.base + '|' + r.urlQuery;
       let c = ctx.lists.get(lk);
       if (!c) {
         ctx.listResolved += holder.listMedia.length;
@@ -425,8 +502,8 @@
         const list = [], seen = new Set();
         let dup = false, ranges = false;
         holder.listMedia.forEach((m, i) => {
-          if (holder.listRange[i] !== null || m === null) { ranges = true; list.push(m === null ? r.base : dfpResolve(r.base, m)); return; }
-          const u = dfpResolve(r.base, m);
+          if (holder.listRange[i] !== null || m === null) { ranges = true; list.push(dfpUpAppend(m === null ? r.base : dfpResolve(r.base, m), r.urlQuery)); return; }
+          const u = dfpUpAppend(dfpResolve(r.base, m), r.urlQuery);
           if (seen.has(u)) dup = true;
           seen.add(u);
           list.push(u);
@@ -443,6 +520,8 @@
     }
     if (r.initRange !== null) { r.excluded = 'byte-range'; return; }
     if (extra.length) { r.excluded = 'addressing-attr'; return; }
+    // S4b-8: mit angehängter Query zu lange Init-/Listenadressen (Stückvorlagen prüft dfpExpand)
+    if (r.urlQuery && ((r.initUrl !== null && r.initUrl.length > DFP.MAX_URI) || (r.list && r.list.some((u) => u.length > DFP.MAX_URI)))) r.excluded = 'uri-length';
   }
   function dfpCountAll(e, name) { let n = e.name === name ? 1 : 0; e.kids.forEach((k) => { n += dfpCountAll(k, name); }); return n; }
 
@@ -451,6 +530,8 @@
     const doc = dfpCanonical(h >= 0 ? documentUrl.slice(0, h) : documentUrl);
     const ids = new Map();
     const ctx = { lists: new Map(), listResolved: 0, exps: new Map(), expanded: 0, id: (o) => { if (o === null || o === undefined) return '-'; if (!ids.has(o)) ids.set(o, ids.size); return String(ids.get(o)); } };
+    // S4b-8: Annex I zuerst (wie DashManifest.parse)
+    const up = dfpUrlParam(root, doc);
     const mRaw = dfpRawBases(root);
     const m = { typeRaw: root.attr('type'), mpd: dfpOptDuration(root, 'mediaPresentationDuration'), base: dfpBaseOf(doc, mRaw, 'm', sel), periods: [], sets: [], reps: [],
       baseAlts: mRaw.length > 1 ? mRaw : null };
@@ -490,6 +571,7 @@
             segLevels: '', timescale: null, pto: null, startNumber: null, duration: null, mediaCanon: null, initUrl: null, initRange: null,
             templateExtra: [], tl: null, tlCount: 0, list: null, listRange: null, listRanges: false, excluded: null,
             addressing: 'NONE', media: null, first: 0, count: 0, covered: null, maxD: 0n, coverInfo: null };
+          r.urlQuery = dfpUpFor(up, [root, pe, ae, re]);
           if (a.base === null && rRaw.length > 1 && sel && !sel.first) dfpChoose(sel, 'r' + m.reps.length, rRaw.length);   // (Index prüfen)
           if (sel && (mRaw.length > 1 || pRaw.length > 1 || aRaw.length > 1 || rRaw.length > 1)) r.baseAlternatives = dfpCombinations(doc, [mRaw, pRaw, aRaw, rRaw]);
           m.reps.push(r);
@@ -507,6 +589,7 @@
     }));
     if (sel && !sel.first && !Array.from(sel.pick.keys()).every((k) => sel.used.has(k))) dfpFail('alt-invalid');
     m.cpTop = root.all('ContentProtection').length; m.cpAll = all; m.cpNested = all - direct;
+    m.up = up;
     m.ctx = ctx;
     return m;
   }
@@ -751,8 +834,9 @@
   }
   function dfpWhy(a, r, kind) {
     if (kind === 'conflict') return 'set-kind';
-    if (a.ess.length) return 'set-essential';
-    if (r.ess.length) return 'rep-essential';
+    // S4b-8: ein (geprüfter, unterstützter) Annex-I-Descriptor ist kein unbekanntes EssentialProperty
+    if (a.ess.some((p) => p.scheme !== DFP_UP_SCHEME)) return 'set-essential';
+    if (r.ess.some((p) => p.scheme !== DFP_UP_SCHEME)) return 'rep-essential';
     if (r.subReps > 0 || a.components > 0) return 'subrepresentation';
     if (r.excluded) return r.excluded;
     const mime = r.mimeType === null ? '' : r.mimeType.trim().toLowerCase(), codecs = r.codecs === null ? '' : r.codecs.trim();
@@ -889,7 +973,10 @@
       const sha = canonical ? null : dfpSha256();
       dfpWrite(m, (s) => { if (++lines > DFP.MAX_LINES) dfpFail('limits'); if (sha) sha.update(s); else txt += s; });
       const multi = !!(m.baseAlts || m.periods.some((x) => x.baseAlts) || m.sets.some((x) => x.baseAlts) || m.reps.some((x) => x.baseAlts));
-      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m, m.ctx), multi: multi };
+      // S4b-8: wirkt ein Annex-I-Descriptor: je Darstellung (Nummer wie beim Helfer) nur OB die Query der MPD-Adresse angehängt
+      // wird – für den Index (src/038); die Query selbst (oft ein Token) verlässt diese Funktion nicht
+      const urlq = m.up.at.size ? { reps: m.reps.map((r) => r.urlQuery !== null) } : null;
+      return { fp: sha ? sha.hex() : '', text: canonical ? txt : undefined, gate: dfpGate(m, m.ctx), multi: multi, urlq: urlq };
     } catch (e) {
       return { error: e && e.dfp ? e.dfp : 'internal' };
     }
@@ -898,7 +985,7 @@
   // Prüfung der Auswahl am MPD). alt null: wie dashplan v1 (mehrere BaseURL fatal). Ergebnis wie dfpGate; ein fataler
   // Grund als { ok: false, code: 'mpd-<grund>' }.
   function dashGateFor(text, parsed, documentUrl, alt) {
-    const fatal = (c) => ({ ok: false, code: 'mpd-' + c, reason: c === 'baseurl-undetermined' ? 'dash-baseurl-undetermined' : c === 'baseurl-multiple' ? 'baseurl-multiple' : 'unchecked',
+    const fatal = (c) => ({ ok: false, code: 'mpd-' + c, reason: c === 'baseurl-undetermined' ? 'dash-baseurl-undetermined' : c === 'baseurl-multiple' ? 'baseurl-multiple' : /^urlparam-/.test(c) ? 'dash-urlparam' : 'unchecked',
       track: '', detail: [], coverage: null, reps: [], video: [], audio: [] });
     try {
       if (typeof text !== 'string' || !text || !parsed || !parsed.root || typeof documentUrl !== 'string' || text.length > 4e6) return fatal('input');

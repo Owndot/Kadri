@@ -214,10 +214,32 @@
   // Vergleichsschlüssel einer Adresse für DASH: alles außer dem #-Teil (nur intern; nie in Registry-Zusammenfassung/Diagnose)
   const dashUrlKey = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin + x.pathname + x.search : ''; } catch (e) { return ''; } };
   const dashEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  function dashSegmentIndex(parsed, mpdUrl) {
-    const out = { reps: [], single: 0, overflow: false, multi: false };
+  // S4b-8: Annex-I-Descriptor (urlparam, jede Form) irgendwo im MPD?
+  const DASH_UP_RE = /^urn:mpeg:dash:(urlparam|state):/;
+  function dashHasUrlParam(root) {
+    const all = root.getElementsByTagNameNS('*', '*');
+    for (let i = 0; i < all.length; i++) {
+      const e = all[i];
+      if ((e.localName === 'EssentialProperty' || e.localName === 'SupplementalProperty') && DASH_UP_RE.test(e.getAttribute('schemeIdUri') || '')) return true;
+    }
+    return false;
+  }
+  // S4b-8: Query an eine absolute Adresse hängen („?“ bzw. „&“ hinter einer vorhandenen Query) – wie dfpUpAppend/DashUrlParam
+  const dashUpAppend = (u, q) => (q ? u + (u.indexOf('?') >= 0 ? '&' : '?') + q : u);
+  // uq (S4b-8): Ergebnis von dashFingerprint(…).urlq – { reps: [wirkt ein Annex-I-Descriptor? je Darstellung] } bzw. { error } –
+  // aus derselben Auswertung wie Abdruck und Helfer (src/039, dort auch die Prüfung der Query). Angehängt wird die Query der
+  // MPD-Adresse (mpdUrl: die endgültige nach Weiterleitungen, wie dort). Nennt das MPD einen Annex-I-Descriptor und liegt keine
+  // gültige Auswertung vor, wird nichts indiziert (urlparam: fester Grund) – nie ohne die Query.
+  function dashSegmentIndex(parsed, mpdUrl, uq) {
+    const out = { reps: [], single: 0, overflow: false, multi: false, urlparam: '' };
     if (!parsed || !parsed.root || typeof mpdUrl !== 'string') return out;
     const root = parsed.root;
+    let upq = null, upQuery = '';
+    if (dashHasUrlParam(root)) {
+      if (!uq || uq.error || !Array.isArray(uq.reps)) { out.urlparam = (uq && uq.error) || 'urlparam-unchecked'; return out; }
+      upq = uq.reps;
+      try { upQuery = new URL(mpdUrl).search.slice(1); } catch (e) { out.urlparam = 'urlparam-unchecked'; return out; }
+    }
     // Alternativen einer Ebene: [{ base, sel: ['m:1', …] }] – Auswahlschlüssel wie beim Helfer (BaseSelection), nur für
     // Elemente mit mehreren BaseURL; null = Grenze überschritten (dann wird nichts indiziert, overflow)
     const altsOf = (el, outer, key) => {
@@ -252,7 +274,7 @@
           const seen = new Set();
           rAlts.forEach((alt) => {
             if (out.reps.length >= DASH_IDX.records) { out.overflow = true; return; }
-            const rec = dashIndexRep(r, a, per, alt.base, g, gs, alt.sel.join(';'), out);
+            const rec = dashIndexRep(r, a, per, alt.base, g, gs, alt.sel.join(';'), out, upq && upq[g] === true ? upQuery : null);
             if (!rec) return;
             // gleiche Adressen über verschiedene Alternativen: einmal (die erste Alternative in Dokumentreihenfolge)
             const sig = rec.mode === 'list' ? 'L|' + Array.from(rec.list.keys()).join('\n') + '|' + rec.init : rec.re.source + '|' + rec.init;
@@ -266,7 +288,7 @@
     return out;
   }
   // Eintrag einer Darstellung für EINE Basis (src/038 vor S4b-6: die einzige) – null, wenn keine Stückfolge erkennbar
-  function dashIndexRep(r, a, per, base, g, gs, alt, out) {
+  function dashIndexRep(r, a, per, base, g, gs, alt, out, q) {
     const tplAttr = (chain, k) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); if (t && t.getAttribute(k) != null) return t.getAttribute(k); } return null; };
     const tplTimeline = (chain) => { for (let i = 0; i < chain.length; i++) { const t = dashKid(chain[i], 'SegmentTemplate'); const tl = t && dashKid(t, 'SegmentTimeline'); if (tl) return tl; } return null; };
     {
@@ -284,9 +306,10 @@
             if (!ex) { out.single++; return null; }
             const hasNum = ex.kind === 'number', hasTime = ex.kind === 'time';
             // Marke nur aus Ziffern, kollisionsfrei gegen Vorlage, eingesetzte Werte und Basis (siehe dashMark)
-            const tok = dashMark(ex.text, base);
+            // (S4b-8: die Marke darf auch in der angehängten Annex-I-Query nicht vorkommen)
+            const tok = dashMark(ex.text + '\n' + (q || ''), base);
             let abs = '';
-            try { abs = dashUrlKey(new URL(ex.text.replace('\u0001', tok), base).href); } catch (e) { abs = ''; }
+            try { abs = dashUrlKey(new URL(dashUpAppend(new URL(ex.text.replace('\u0001', tok), base).href, q)).href); } catch (e) { abs = ''; }
             if (!abs || abs.split(tok).length !== 2) { out.single++; return null; }
             const parts = abs.split(tok);
             try { if (new URL(abs).origin.indexOf(tok) >= 0) { out.single++; return null; } } catch (e) { out.single++; return null; }   // Marke im Host
@@ -319,20 +342,20 @@
             }
             const ini = tplAttr(chain, 'initialization');
             const iniText = ini ? fill(ini) : null;
-            if (iniText) { try { rep.init = dashUrlKey(new URL(iniText, base).href); } catch (e) {} }
+            if (iniText) { try { rep.init = dashUrlKey(new URL(dashUpAppend(new URL(iniText, base).href, q)).href); } catch (e) {} }
           } else {
             let sl = null;
             for (let i = 0; i < chain.length && !sl; i++) sl = dashKid(chain[i], 'SegmentList');
             const urls = sl ? dashKids(sl, 'SegmentURL').map((x) => x.getAttribute('media')).filter((x) => x) : [];
             if (!urls.length) { out.single++; return null; }   // SegmentBase/Einzeldatei/nur mediaRange: keine Stückfolge
             rep.mode = 'list'; rep.list = new Map();
-            urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashUrlKey(new URL(m, base).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
+            urls.slice(0, DASH_IDX.list).forEach((m, k) => { try { const key = dashUrlKey(new URL(dashUpAppend(new URL(m, base).href, q)).href); if (key && !rep.list.has(key)) rep.list.set(key, k); } catch (e) {} });
             if (rep.list.size < 2) { out.single++; return null; }   // alle auf dieselbe Datei (Byte-Bereiche): keine Folge erkennbar
             // nur für die Diagnose: dieselben Stücke ohne Query (Herkunft+Pfad) und nur nach Pfad
             rep.dList = new Set(); rep.dListPath = new Set();
             rep.list.forEach((k, key) => { try { const ux = new URL(key); rep.dList.add(ux.origin + ux.pathname); rep.dListPath.add(ux.pathname); } catch (e) {} });
             const ini = dashKid(sl, 'Initialization');
-            if (ini && ini.getAttribute('sourceURL')) { try { rep.init = dashUrlKey(new URL(ini.getAttribute('sourceURL'), base).href); } catch (e) {} }
+            if (ini && ini.getAttribute('sourceURL')) { try { rep.init = dashUrlKey(new URL(dashUpAppend(new URL(ini.getAttribute('sourceURL'), base).href, q)).href); } catch (e) {} }
           }
           if (rep.init) { try { const ux = new URL(rep.init); rep.dInitOP = ux.origin + ux.pathname; rep.dInitPath = ux.pathname; } catch (e) {} }
           const ct = String(a.getAttribute('contentType') || '').toLowerCase(), mime = String(r.getAttribute('mimeType') || a.getAttribute('mimeType') || '').toLowerCase();
@@ -443,6 +466,7 @@
       const co = coherent(hs);
       const r = { state: 'ambiguous', reason: '', hits: n, reps: by.size, run: co.recent, last: last, unknownStart: unknown };
       res[m.key] = r;
+      if (m.urlparam) { r.reason = 'urlparam'; return; }   // S4b-8: Annex I nicht (sicher) auswertbar – keine Bindung
       if (!m.checkable || m.overflow) { r.reason = 'nicht-pruefbar'; return; }
       if (!n) { r.reason = unknown ? 'start-unknown' : 'keine-treffer'; return; }
       // S4b-6: Alternative (BaseURL) der Treffer – je Darstellung genau eine (kein stiller CDN-Wechsel in einer Folge),
