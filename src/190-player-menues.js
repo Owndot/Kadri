@@ -54,14 +54,21 @@
       if (hls && hls.levels && hls.levels.length > 1) {
         const u = st.cur;
         if (!playbackAllowed(u)) return items;
+        const levels = hls.levels.filter((level) => hlsLevelAllowed(level, playbackAllowed));
+        if (levels.length < 2) return items;
         items.push({ label: 'Automatisch', sub: 'passt sich der Verbindung an', cur: st.qualPinned === null,
           fn: () => { if (st.hls === hls && playbackAllowed(u)) { hls.currentLevel = -1; st.qualPinned = null; refreshQual(); } } });
-        hls.levels.map((l, i) => ({ l: l, i: i }))
-          .sort((a, b) => (b.l.height || 0) - (a.l.height || 0) || (b.l.bitrate || 0) - (a.l.bitrate || 0))
-          .forEach((x) => {
-            const name = x.l.height ? x.l.height + 'p' : 'Stufe ' + (x.i + 1);
-            items.push({ label: name, sub: x.l.bitrate ? (x.l.bitrate / 1e6).toFixed(1).replace('.', ',') + ' Mbit/s' : '', cur: st.qualPinned === x.i,
-              fn: () => { if (st.hls === hls && playbackAllowed(u)) { hls.currentLevel = x.i; st.qualPinned = x.i; refreshQual(); } } });
+        levels.sort((a, b) => (b.height || 0) - (a.height || 0) || (b.bitrate || 0) - (a.bitrate || 0))
+          .forEach((level) => {
+            const index = hls.levels.indexOf(level);
+            const name = level.height ? level.height + 'p' : 'Stufe ' + (index + 1);
+            items.push({ label: name, sub: level.bitrate ? (level.bitrate / 1e6).toFixed(1).replace('.', ',') + ' Mbit/s' : '', cur: st.qualPinned === index,
+              fn: () => {
+                if (vp !== st || st.hls !== hls || !playbackAllowed(u) || !hlsLevelAllowed(level, playbackAllowed)) return;
+                const selected = hls.levels.indexOf(level);
+                if (selected < 0) return;
+                hls.currentLevel = selected; st.qualPinned = selected; refreshQual();
+              } });
           });
         return items;
       }

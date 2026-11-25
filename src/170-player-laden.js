@@ -139,13 +139,26 @@
           return;
         }
         if (!IS_KADRI && typeof loadBundledHls === 'function') loadBundledHls();
-        if (typeof Hls !== 'undefined' && Hls.isSupported()) {
+        if (typeof Hls !== 'undefined' && Hls.isSupported() && typeof Hls.DefaultConfig.loader.prototype.loadInternal === 'function') {
           // Untertitel zeichnet der Player selbst (⋯ → Untertitel) – hls.js lädt sie nur
-          const hls = new Hls({ enableWorker: false, subtitleDisplay: false, startPosition: st.startTime > 1 ? st.startTime : -1 });
+          const activeHls = () => vp === st && st.hls === hls && st.cur === u;
+          const allowed = (url) => activeHls() && playbackAllowed(u) && playbackAllowed(url);
+          const startPosition = st.startTime > 1 ? st.startTime : -1;
+          const hls = new Hls({ enableWorker: false, subtitleDisplay: false, autoStartLoad: false, startPosition,
+            pLoader: guardedHlsLoader(allowed, (context) => {
+              if (!activeHls()) return true;
+              if (!recoverHlsLevel(hls, context, allowed, vid)) return false;
+              st.qualPinned = null;
+              refreshQual();
+              return true;
+            }) });
           st.hls = hls;
-          hls.on(Hls.Events.ERROR, (ev, data) => { if (data && data.fatal) tryNext(); });
+          hls.on(Hls.Events.ERROR, (ev, data) => { if (activeHls() && data && data.fatal) tryNext(); });
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            try { if (hls.levels && hls.levels.length) hls.startLevel = hls.levels.length - 1; } catch (e) {}   // beste Qualität zuerst
+            if (!activeHls()) return;
+            if (!pruneHlsLevels(hls, allowed)) { queueMicrotask(() => { if (activeHls()) tryNext(); }); return; }
+            hls.startLevel = hls.levels.length - 1;
+            hls.startLoad(startPosition);
             vid.play().catch(() => {});
             refreshQual();
           });
@@ -155,7 +168,8 @@
           hls.attachMedia(vid);
           return;
         }
-        if (vid.canPlayType('application/vnd.apple.mpegurl')) { vid.src = u; vid.play().catch(() => {}); return; }
+        // Native HLS-Varianten wären für Kadri nicht prüfbar. Nächste sichere Quelle oder Original spiegeln.
+        if (vid.canPlayType('application/vnd.apple.mpegurl')) st.noNativeHlsStart = true;
         tryNext();
         return;
       }
@@ -211,6 +225,14 @@
       clearTimeout(st.loadTimer);
       bridgeDrop();
       dropPoster();
+      const originalUrl = srcOf(orig);
+      if (orig.paused && originalUrl && (!playbackAllowed(originalUrl) ||
+          (st.noNativeHlsStart && PLAYLIST_RE.test(originalUrl)))) {
+        st.closePaused = true;
+        toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen');
+        closePlayer();
+        return;
+      }
       if (!st.openStat.swap) st.openStat.how = 'gespiegelt';
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}

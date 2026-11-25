@@ -83,10 +83,20 @@
       pvs.key = key;
       pvs.src = u;
       if (st.hls && typeof Hls !== 'undefined') {
-        const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
+        const activePreview = () => vp === st && pvs.hls === hp && pvs.src === u && st.cur === key;
+        const allowed = (url) => activePreview() && playbackAllowed(u) && playbackAllowed(url);
+        const unavailable = () => { prev.classList.add('noimg'); st.prevWhy = 'nur Zeit (Stream-Fehler der Vorschau)'; };
+        const hp = new Hls({ enableWorker: false, autoStartLoad: false, startLevel: 0,
+          maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0,
+          pLoader: guardedHlsLoader(allowed, (context) => !activePreview() || recoverHlsLevel(hp, context, allowed, pv, true)) });
         pvs.hls = hp;
-        hp.on(Hls.Events.MANIFEST_PARSED, () => { try { hp.currentLevel = 0; hp.autoLevelEnabled = false; } catch (e) {} });   // kleinste Stufe
-        hp.on(Hls.Events.ERROR, (ev, d) => { if (d && d.fatal) { prev.classList.add('noimg'); st.prevWhy = 'nur Zeit (Stream-Fehler der Vorschau)'; } });
+        hp.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (!activePreview()) return;
+          if (!pruneHlsLevels(hp, allowed)) { unavailable(); return; }
+          hp.loadLevel = 0;
+          hp.startLoad();
+        });
+        hp.on(Hls.Events.ERROR, (ev, d) => { if (activePreview() && d && d.fatal) unavailable(); });
         hp.loadSource(u);
         hp.attachMedia(pv);
       } else {
