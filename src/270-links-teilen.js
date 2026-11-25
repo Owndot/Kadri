@@ -224,10 +224,31 @@
   }
 
   function onDownload(v, opts) {
-    const url = postUrlFor(v || active);
+    const video = v || active;
+    const url = postUrlFor(video);
     if (!url) { toast('Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen'); return; }
     if (CONFIG.downloader !== 'share' && !opts) { toYtdlnis(url); return; }
-    shareUrl(url);
+    sharePageLink(url, pageLinkOutputFor(url, video ? mediaOutputContext(video) : null, video));
+  }
+  // Nur Aufrufer mit eigener Seiten-/Beitragsauswahl dürfen diesen Kontext bilden.
+  function pageLinkAllowed(u, video) {
+    if (!mediaUrlOk(u) || mediaIsDashManifest(u)) return false;
+    const key = mediaIdentityKey(u);
+    if (!key || key.length > MEDIA_LIMITS.urlLen || mayBeOverflowMpd(key) ||
+        (video && key === mediaIdentityKey(srcOf(video))) ||
+        sources.some((source) => key === mediaIdentityKey(source.u))) return false;
+    const ownDocument = key === mediaIdentityKey(location.href);
+    return mediaKindOf(u, ownDocument ? document.contentType : '') === 'unknown';
+  }
+  function pageLinkOutputFor(url, current, video) {
+    return mediaOutputFor(url, current, null, (u) => pageLinkAllowed(u, video));
+  }
+  let pageLinkSharing = false;
+  async function sharePageLink(url, allowed, title) {
+    if (pageLinkSharing) return false;
+    pageLinkSharing = true;
+    try { return await (title === undefined ? shareUrl(url, allowed) : shareLinkTo(url, title, allowed)); }
+    finally { pageLinkSharing = false; }
   }
   // Link mit Titel teilen (Android: Teilen-Menü) – geht das nicht (z. B. eingebettetes Fenster), Link kopieren
   function shareLinkTo(url, title, allowed = mediaOutputFor(url)) {
@@ -236,18 +257,18 @@
     if (navigator.share) {
       const data = { url: url };
       if (title) data.title = title;
-      navigator.share(data).catch((e) => { if (!e || e.name !== 'AbortError') copy(); });
-    } else copy();
+      return navigator.share(data).catch((e) => { if (!e || e.name !== 'AbortError') return copy(); });
+    }
+    return copy();
   }
   function shareUrl(url, allowed = mediaOutputFor(url)) {
     if (!allowed(url)) return Promise.resolve(false);
     const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen', allowed);
     if (navigator.share) {
       // Ergebnis: true = geteilt, false = abgebrochen/fehlgeschlagen
-      return navigator.share({ url: url }).then(() => true, (e) => { if (!e || e.name !== 'AbortError') fallback(); return false; });
+      return navigator.share({ url: url }).then(() => true, async (e) => { if (!e || e.name !== 'AbortError') await fallback(); return false; });
     }
-    fallback();
-    return Promise.resolve(false);
+    return Promise.resolve(fallback()).then(() => false);
   }
 
   function typeShort(u) {

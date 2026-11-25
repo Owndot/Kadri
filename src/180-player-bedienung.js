@@ -573,9 +573,9 @@
         items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen',
           fn: () => directDownload(d, () => toast('Die Seite sperrt den Download'), fileAllowed) });
       }
-      const shareAllowed = linkAllowed || fileAllowed;
+      const shareAllowed = link ? pageLinkOutputFor(link, current, orig) : fileAllowed;
       if (shareAllowed) items.push({ label: 'Teilen …', sub: 'an eine andere App',
-        fn: () => { if (shareAllowed()) dlOut(() => shareUrl(link || d, shareAllowed)); } });
+        fn: () => { if (shareAllowed()) dlOut(() => link ? sharePageLink(link, shareAllowed) : shareUrl(d, shareAllowed)); } });
       if (!items.length) { toast('Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items, keep);
       st.hdl.menuList = menu.querySelector('.vmlist');
@@ -588,17 +588,32 @@
     // Fenster fragt das Skript die Hauptseite nach ihrer Adresse (nur für das Fenster, das gerade den Player zeigt).
     on(bShare, () => {
       const title = pageTitle();
-      if (IN_FRAME) {
-        let done = false;
-        const own = () => { if (done) return; done = true; shareLinkTo(location.href.split('#')[0], title); };
-        fb.onPageUrl = (u, t) => { if (done) return; done = true; fb.onPageUrl = null; shareLinkTo(u || location.href.split('#')[0], t || title); };
-        fpost(window.parent, { t: 'askurl' });
-        setTimeout(own, 500);
-        return;
-      }
+      const current = playerOutputContext();
       let link = '';
       try { link = postUrlFor(orig); } catch (e) {}
-      shareLinkTo(link || location.href.split('#')[0], title);
+      const local = link || location.href.split('#')[0];
+      const localAllowed = pageLinkOutputFor(local, current, orig);
+      if (IN_FRAME) {
+        if (st.shareWaiting) return;
+        st.shareWaiting = true;
+        let done = false;
+        const finish = (u, t) => {
+          if (done) return;
+          done = true;
+          st.shareWaiting = false;
+          if (fb.onPageUrl === finish) fb.onPageUrl = null;
+          if (!current()) return;
+          // Die URL aus postMessage bleibt eine untypisierte Adresse und braucht die Medienprüfung.
+          const parentAllowed = u && mediaOutputFor(u, current);
+          if (parentAllowed && parentAllowed()) sharePageLink(u, parentAllowed, t || title);
+          else sharePageLink(local, localAllowed, title);
+        };
+        fb.onPageUrl = finish;
+        fpost(window.parent, { t: 'askurl' });
+        setTimeout(finish, 500);
+        return;
+      }
+      sharePageLink(local, localAllowed, title);
     });
     on(bExt, () => {
       const t = M().currentTime;
@@ -657,12 +672,10 @@
     // Keine Datei zum Übergeben: wenigstens den Link GENAU dieses Videos teilen (z. B. an NewPipe, YTDLnis …)
     function shareLink(why) {
       const link = postUrlFor(orig);
-      const allowed = mediaOutputFor(link, playerOutputContext(), orig);
+      const allowed = pageLinkOutputFor(link, playerOutputContext(), orig);
       if (!allowed()) { toast(why); return; }
-      if (navigator.share) {
-        toast(why + ' – Link wird geteilt');
-        navigator.share({ url: link }).catch(() => {});
-      } else copyText(link, why + ' – Link kopiert', allowed);
+      toast(navigator.share ? why + ' – Link wird geteilt' : why);
+      return sharePageLink(link, allowed, '');
     }
     if (TT) ttVideoUrl(orig).then((x) => { if (x) { st.ttUrl = x; st.refreshDl(); } }, () => {});
     // Instagram: MP4 mit Ton schon vorab holen, damit "In App öffnen" sofort klappt (nur eine kleine Datenabfrage)

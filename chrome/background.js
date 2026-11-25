@@ -358,7 +358,7 @@ function fuiBack(r) {
   if (r.gone === true) out.gone = true;
   const x = r.ext;
   if (x && typeof x === 'object') {
-    if (['ytdlnis', 'open', 'share'].includes(x.k) && typeof x.u === 'string' && x.u.length <= 8192 && /^https?:\/\/[^\s]+$/i.test(x.u)) out.ext = { k: x.k, u: x.u };
+    if (['ytdlnis', 'open', 'share', 'share-page'].includes(x.k) && typeof x.u === 'string' && x.u.length <= 8192 && /^https?:\/\/[^\s]+$/i.test(x.u)) out.ext = { k: x.k, u: x.u };
     else if (x.k === 'copy' && typeof x.t === 'string') out.ext = { k: 'copy', t: x.t.slice(0, 100000) };
   }
   return out;

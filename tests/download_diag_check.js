@@ -29,13 +29,17 @@ function setup(kind = 'mp4', env = {}) {
     baseDomain: (h) => String(h).split('.').slice(-2).join('.'),
     location: { hostname: env.page || 'www.private.invalid', href: 'https://' + (env.page || 'www.private.invalid') + '/watch' },
     dashUrlKey: (url) => url.split('#')[0],
+    mediaIdentityKey: (url) => typeof url === 'string' ? url.split('#')[0] : '',
+    srcOf: (video) => video?.currentSrc || '', sources: [], mayBeOverflowMpd: () => false,
     SHOW_DOWNLOAD: false,
     // Variante C nur nach Bestätigung: Aufrufe und Texte des Dialogs werden festgehalten
     confirms: [], confirm: (msg) => { ctx.confirms.push(msg); return typeof env.confirm === 'function' ? env.confirm(msg) : false; },
     KADRI_DOWNLOAD: async (op, args) => { requests.push({ op, args }); return ctx.reply(op, args); },
     reply: () => ({ ok: true, value: { job: { id: 'job-private-id', state: 'running', ...(kind === 'hls' ? { kind, done: 0, of: 0 } : {}) } } }) };
   vm.createContext(ctx);
-  vm.runInContext(read('src/045-media-source.js') + '\n' + read('src/080-helper-app.js').split('  // Einen früher gespeicherten')[0] + '\n' + read('src/105-download-knopf.js') +
+  const links = read('src/270-links-teilen.js');
+  const linkContext = links.slice(links.indexOf('  function pageLinkAllowed('), links.indexOf('  // Link mit Titel teilen'));
+  vm.runInContext(read('src/045-media-source.js') + '\n' + read('src/080-helper-app.js').split('  // Einen früher gespeicherten')[0] + '\n' + read('src/105-download-knopf.js') + '\n' + linkContext +
     '\nglobalThis.api={pageDlStartMp4,pageDlPlan,onPageDownload,hdlDiagUpdate,hdlDiagText,diags:hdlDiags};', ctx);
   const anon = read('src/280-diagnose.js');
   vm.runInContext(anon.slice(anon.indexOf('  function anonScrub'), anon.indexOf('  function diagAnon')) + '\nglobalThis.scrub=anonScrub;', ctx);

@@ -128,7 +128,7 @@
     if (a === 'diag') { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } return { ok: true, ext: { k: 'copy', t: t } }; }
     if (a === 'share') {
       const u = postUrlFor(v);
-      return mediaSourceAllowed(u) ? { ok: true, ext: { k: 'share', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
+      return pageLinkAllowed(u, v) ? { ok: true, ext: { k: 'share-page', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
     }
     return { ok: false };
   }
@@ -145,7 +145,10 @@
       pageDlMenu('Speichern', [it], true);
       return { ok: true };
     }
-    if (it.ext) return it.ext.u && !mediaSourceAllowed(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
+    if (it.ext) {
+      const allowed = it.ext.k === 'share-page' ? pageLinkAllowed : mediaSourceAllowed;
+      return it.ext.u && !allowed(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
+    }
     try { it.fn(); } catch (e) {}
     return { ok: true };
   }
@@ -261,16 +264,35 @@
     hidePill();
   }
   // Tipp auf den Knopf hier oben → Aktion im Ursprungsfenster
+  function fuiTopOutputContext(g) {
+    const frame = fuiTop.geo.get(g.n)?.f;
+    const doc = frame?.contentDocument, href = doc?.URL;
+    const src = frame?.getAttribute('src'), srcdoc = frame?.getAttribute('srcdoc');
+    let loaded = false;
+    const changed = () => { loaded = true; };
+    frame?.addEventListener('load', changed);
+    return {
+      current: () => !loaded && !!frame?.isConnected && fuiTop.regs.get(g.key) === g &&
+        frame.getAttribute('src') === src && frame.getAttribute('srcdoc') === srcdoc &&
+        frame.contentDocument === doc && doc?.URL === href,
+      dispose: () => frame?.removeEventListener('load', changed),
+    };
+  }
   function fuiTopAct(a) {
     const g = fuiTop.cur;
-    if (!g) return;
+    if (!g || (a === 'share' && g.sharePending)) return;
+    const output = a === 'share' ? fuiTopOutputContext(g) : null;
+    if (output) g.sharePending = true;
     const now = Date.now();
     fuiTop.recent = { g: g, t: now };
     const rid = fuiNewRid();
     if (a === 'dl' || a === 'player') { fuiTop.credit = { g: g, t: now, rid: rid }; fuiTop.lastRid = rid; }
     if (a === 'player') { g.hold = now + 4000; fuiTopDrop(); }
     fuiLog(rid, 'top:act', a);
-    fuiTopSend('act', g, { a: a, rid: rid }).then((r) => { fuiLog(rid, 'top:act-reply', fuiTraceRes(r)); fuiTopResult(g, r, a); });
+    return fuiTopSend('act', g, { a: a, rid: rid }).then((r) => {
+      fuiLog(rid, 'top:act-reply', fuiTraceRes(r));
+      return fuiTopResult(g, r, a, output?.current);
+    }).finally(() => { if (output) { output.dispose(); g.sharePending = false; } });
   }
   function fuiTopPick(g, seq, i) {
     const now = Date.now();
@@ -279,12 +301,16 @@
     fuiTop.credit = { g: g, t: now, rid: rid };   // ein Eintrag darf genau eine Folge-Auswahl öffnen (z. B. Qualität des Streams)
     fuiTop.lastRid = rid;
     fuiLog(rid, 'top:pick', 'seq=' + seq + ' i=' + i);
-    fuiTopSend('pick', g, { seq: seq, i: i, rid: rid }).then((r) => { fuiLog(rid, 'top:pick-reply', fuiTraceRes(r)); fuiTopResult(g, r, 'pick'); });
+    const output = fuiTopOutputContext(g);
+    fuiTopSend('pick', g, { seq: seq, i: i, rid: rid }).then((r) => {
+      fuiLog(rid, 'top:pick-reply', fuiTraceRes(r));
+      return fuiTopResult(g, r, 'pick', output.current);
+    }).finally(output.dispose);
     return rid;   // (Kennung des Warteblatts, src/105)
   }
   const fuiTraceRes = (r) => (!r ? 'keine-antwort' : (r.ok === true ? 'ok' : 'nicht-ok') + (r.gone ? '+weg' : '') + (r.toast ? '+hinweis' : '') + (r.ext ? '+' + r.ext.k : ''));
   // what: 'pick' (Eintrag der Auswahl) oder die Aktion des Knopfs ('dl', 'player', 'diag', 'share')
-  function fuiTopResult(g, r, what) {
+  function fuiTopResult(g, r, what, current) {
     if (!r) {
       toast('Video im eingebetteten Fenster nicht mehr erreichbar');
       fuiTop.regs.delete(g.key);
@@ -300,15 +326,16 @@
         : r.gone ? 'Video im eingebetteten Fenster gerade nicht bereit – nichts gestartet. Bitte erneut tippen, sobald der Knopf wieder erscheint'
           : 'Aktion im eingebetteten Fenster nicht ausgeführt – bitte erneut tippen');
     }
-    if (r.ok === true && r.ext) fuiTopExt(r.ext);
+    if (r.ok === true && r.ext) return fuiTopExt(r.ext, current);
   }
   // Aktionen, die einen frischen Tipp brauchen: hier ausführen (der Tipp war hier)
-  function fuiTopExt(x) {
+  function fuiTopExt(x, current) {
     if (!x || typeof x !== 'object') return;
     const u = typeof x.u === 'string' && /^https?:\/\//i.test(x.u) ? x.u : '';
     if (x.k === 'ytdlnis' && u) toYtdlnis(u);
     else if (x.k === 'open' && u) pageDlOpenTab(u);
     else if (x.k === 'share' && u) shareUrl(u);
+    else if (x.k === 'share-page' && u && current?.()) return sharePageLink(u, pageLinkOutputFor(u, current));
     else if (x.k === 'copy' && typeof x.t === 'string') copyText(x.t, 'Anonymisierte Diagnose des Video-Fensters kopiert');
   }
   function fuiTopMsg(m) {

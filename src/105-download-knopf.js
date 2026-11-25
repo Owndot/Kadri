@@ -200,9 +200,10 @@
       items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen',
         frameConfirm: true, allowed: fileAllowed, fn: () => pageDlOpenTab(d, fileAllowed) });
     }
-    const shareAllowed = linkAllowed || fileAllowed;
-    items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: link ? { k: 'share', u: link } : null,
-      frameConfirm: !link, allowed: shareAllowed, fn: () => shareUrl(link || d, shareAllowed) });
+    const shareAllowed = link ? pageLinkOutputFor(link, current, v) : fileAllowed;
+    items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: link ? { k: 'share-page', u: link } : null,
+      frameConfirm: !link, allowed: shareAllowed,
+      fn: () => link ? sharePageLink(link, shareAllowed) : shareUrl(d, shareAllowed) });
     return items;
   }
   function pageDlOpenTab(d, allowed = mediaOutputFor(d)) {

@@ -54,10 +54,16 @@ const call = (m, s) => new Promise((res) => { sent.length = 0; ctx.relay(Object.
   check('act vom Hauptfenster: nur an genau das gemeldete Dokument (frameId + documentId)', sent.length === 1 && sent[0].tab === 7 && sent[0].opt.frameId === 3 && sent[0].opt.documentId === DOC, sent);
   check('… nur der feste Befehl', JSON.stringify(sent[0].msg) === JSON.stringify({ t: 'kadri-fui-in', op: 'act', n: N, a: 'dl' }), sent[0].msg);
   check('… Antwort: ok und der http(s)-Link der Aktion, sonst nichts', JSON.stringify(r) === '{"ok":true,"ext":{"k":"open","u":"https://cdn.example/v.mp4"}}', r);
+  answer = () => ({ ok: true, ext: { k: 'share-page', u: 'https://site.example/watch?v=1', cookie: 'c=1' } });
+  r = await call({ op: 'act', n: N, a: 'share', to: { f: 3, d: DOC } }, top());
+  check('typisierter Seitenlink aus genau dem angefragten Dokument, ohne Zusatzfelder',
+    sent[0].opt.documentId === DOC && JSON.stringify(r.ext) === '{"k":"share-page","u":"https://site.example/watch?v=1"}', r);
   for (const u of ['javascript:alert(1)', 'intent://x#Intent;end', 'data:text/html,x', 'https://a b']) {
-    answer = () => ({ ok: true, ext: { k: 'share', u } });
-    r = await call({ op: 'pick', n: N, seq: 2, i: 0, to: { f: 3, d: DOC } }, top());
-    check('Antwort mit Link „' + u.slice(0, 12) + '…“: Link verworfen', r && r.ok === true && !r.ext, r);
+    for (const k of ['share', 'share-page']) {
+      answer = () => ({ ok: true, ext: { k, u } });
+      r = await call({ op: 'pick', n: N, seq: 2, i: 0, to: { f: 3, d: DOC } }, top());
+      check(k + ' mit Link „' + u.slice(0, 12) + '…“: Link verworfen', r && r.ok === true && !r.ext, r);
+    }
   }
   answer = () => ({ ok: true, ext: { k: 'run', u: 'https://x.example/' } });
   r = await call({ op: 'pick', n: N, seq: 2, i: 0, to: { f: 3, d: DOC } }, top());

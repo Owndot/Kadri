@@ -163,8 +163,8 @@
         document.execCommand('copy'); ta.remove(); ok();
       } catch (e) { toast('Kopieren nicht möglich'); }
     };
-    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
-    else fallback();
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(ok, fallback);
+    return fallback();
   }
 
 

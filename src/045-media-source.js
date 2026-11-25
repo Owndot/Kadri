@@ -56,7 +56,7 @@
     };
   }
   // Behalte Ursprung, bekannte Ziele und jede Ablehnung für genau diese Auswahl.
-  function mediaOutputFor(origin, current, v) {
+  function mediaOutputFor(origin, current, v, pageLinkCheck) {
     const page = location.href.split('#')[0];
     const selection = { keys: new Set(), blocked: false };
     if (typeof watchDashOutput === 'function') watchDashOutput(selection);
@@ -64,7 +64,8 @@
       if (!origin || !target || selection.blocked || location.href.split('#')[0] !== page || (current && !current())) return false;
       selection.keys.add(dashUrlKey(target));
       const ctx = v && mediaRegistry.contextFor(v);
-      selection.blocked = ctx ? !mediaRegistry.playbackAllowed(ctx, origin) || !mediaRegistry.playbackAllowed(ctx, target)
+      if (pageLinkCheck) selection.blocked = target !== origin || !pageLinkCheck(origin);
+      else selection.blocked = ctx ? !mediaRegistry.playbackAllowed(ctx, origin) || !mediaRegistry.playbackAllowed(ctx, target)
         : !mediaSourceAllowed(origin) || !mediaSourceAllowed(target);
       return !selection.blocked;
     };

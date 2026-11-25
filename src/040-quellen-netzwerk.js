@@ -322,6 +322,7 @@
   const MPD_IDENTITY_LIMIT = 512;
   const MEDIA_ADMISSION_LIMIT = 256;
   let mediaIdentityOverflow = false;
+  let overflowMpdFilter = null;
   const dashIdentityHasSuffix = (key) => /\.mpd$/i.test(key.split('?')[0]);
   function mediaIdentityKey(u) {
     try { return u ? dashUrlKey(new URL(u, location.href).href) : ''; } catch (e) { return ''; }
@@ -330,7 +331,20 @@
     admittedMediaIdentities.delete(key);
     if (key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) || mediaSourceIdentities.has(key)) return;
     if (mediaSourceIdentities.size < MPD_IDENTITY_LIMIT) mediaSourceIdentities.add(key);
-    else mediaIdentityOverflow = true;
+    else {
+      mediaIdentityOverflow = true;
+      overflowMpdFilter ||= new Uint8Array(8192);
+      for (const bit of overflowMpdBits(key)) overflowMpdFilter[bit >> 3] |= 1 << (bit & 7);
+    }
+  }
+  // Die Linkfreigabe benötigt auch jenseits des exakten Medienbudgets ein Veto für beobachtete MPDs.
+  // Der feste Bitfilter speichert keine Adressen. Kollisionen können einen Link vorsorglich ablehnen.
+  function overflowMpdBits(key) {
+    const hash = sha256hex(key);
+    return [0, 4, 8].map((offset) => parseInt(hash.slice(offset, offset + 4), 16));
+  }
+  function mayBeOverflowMpd(key) {
+    return !!overflowMpdFilter && overflowMpdBits(key).every((bit) => overflowMpdFilter[bit >> 3] & (1 << (bit & 7)));
   }
   function knownMpdIdentity(u) {
     const key = mediaIdentityKey(u);
