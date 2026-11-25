@@ -40,7 +40,10 @@
   }
   // Die Adresse kann auch ohne .mpd-Endung oder mit irreführender Dateiendung ein gelesenes MPD sein.
   const mediaIsDashManifest = (u) => mediaKindOf(u, '') === 'dash' ||
-    (typeof dashSummaryOf === 'function' && !!dashSummaryOf(u));
+    (typeof knownMpdIdentity === 'function' ? knownMpdIdentity(u) : typeof dashSummaryOf === 'function' && !!dashSummaryOf(u));
+  const mediaSourceAllowed = (u) => !!u && (typeof admitMediaIdentity === 'function'
+    ? mediaKindOf(u, '') !== 'dash' && admitMediaIdentity(mediaIdentityKey(u))
+    : !mediaIsDashManifest(u));
   // Medienwechsel am Element, einschließlich einer neuen src vor dem ersten Browserereignis.
   function mediaOutputContext(v, current) {
     const src = v.src, playing = v.currentSrc, object = v.srcObject;
@@ -62,7 +65,7 @@
       selection.keys.add(dashUrlKey(target));
       const ctx = v && mediaRegistry.contextFor(v);
       selection.blocked = ctx ? !mediaRegistry.playbackAllowed(ctx, origin) || !mediaRegistry.playbackAllowed(ctx, target)
-        : mediaIsDashManifest(origin) || mediaIsDashManifest(target);
+        : !mediaSourceAllowed(origin) || !mediaSourceAllowed(target);
       return !selection.blocked;
     };
     allowed();

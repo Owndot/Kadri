@@ -273,6 +273,8 @@
     let u;
     try { u = new URL(raw, location.href).href; } catch (e) { return; }
     if (!/^https?:/i.test(u) || SEGMENT_RE.test(u) || SPLIT_CDN_RE.test(hostOf(u))) return;
+    const key = dashUrlKey(u);
+    if (u.length > MEDIA_IDENTITY_URL_LIMIT || (!dashIdentityHasSuffix(key) && !admitMediaIdentity(key))) return;
     const i = sources.findIndex((s) => s.u === u);
     if (i >= 0) {
       // die Seite lädt sie erneut (z. B. zurück zu einem früheren Video): gilt ab jetzt wieder als neu.
@@ -311,6 +313,39 @@
   // Gelesene gültige MPDs je VOLLER Adresse (ohne #) – zwei MPDs mit gleichem Pfad, aber anderer Query sind zwei Manifeste.
   // (plInfo bleibt nach Pfad geschlüsselt – die HLS-Logik ändert sich nicht.)
   const dashInfo = new Map();
+  // Identitätsveto je Dokument, unabhängig von den Analysedaten und den wechselnden Elementkontexten.
+  // Nach Überlauf bleiben bisher zugelassene Adressen verfügbar. Eine nicht mehr erfassbare MPD-Adresse wird
+  // aus dieser Menge entfernt. Neue Adressen sind ab dann nicht mehr sicher von solchen MPDs unterscheidbar.
+  const mediaSourceIdentities = new Set();
+  const admittedMediaIdentities = new Set();
+  const MEDIA_IDENTITY_URL_LIMIT = 4096;
+  const MPD_IDENTITY_LIMIT = 512;
+  const MEDIA_ADMISSION_LIMIT = 256;
+  let mediaIdentityOverflow = false;
+  const dashIdentityHasSuffix = (key) => /\.mpd$/i.test(key.split('?')[0]);
+  function mediaIdentityKey(u) {
+    try { return u ? dashUrlKey(new URL(u, location.href).href) : ''; } catch (e) { return ''; }
+  }
+  function rememberMpdIdentity(key) {
+    admittedMediaIdentities.delete(key);
+    if (key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) || mediaSourceIdentities.has(key)) return;
+    if (mediaSourceIdentities.size < MPD_IDENTITY_LIMIT) mediaSourceIdentities.add(key);
+    else mediaIdentityOverflow = true;
+  }
+  function knownMpdIdentity(u) {
+    const key = mediaIdentityKey(u);
+    return mediaSourceIdentities.has(key) || dashInfo.has(key);
+  }
+  function admitMediaIdentity(key) {
+    if (!key || key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) ||
+        mediaSourceIdentities.has(key) || dashInfo.has(key)) return false;
+    if (mediaIdentityOverflow) return admittedMediaIdentities.has(key);
+    // Letzte mögliche Auswahlen für den Überlauffall vormerken. Ein Eintrag behauptet keinen Medientyp.
+    admittedMediaIdentities.delete(key);
+    admittedMediaIdentities.add(key);
+    if (admittedMediaIdentities.size > MEDIA_ADMISSION_LIMIT) admittedMediaIdentities.delete(admittedMediaIdentities.values().next().value);
+    return true;
+  }
   // Schwache Referenzen auf Auswahlen, die ein Menü oder ein laufender Vorgang noch hält.
   const dashOutputWatches = new Set();
   function watchDashOutput(selection) {
@@ -375,6 +410,13 @@
           return;
         }
         info.kind = 'dash';
+        const keys = new Set([mediaIdentityKey(reqUrl), mediaIdentityKey(finalUrl)]);
+        keys.delete('');
+        for (const key of keys) {
+          rememberMpdIdentity(key);
+          if (vp && vp.noteDashPlayback) vp.noteDashPlayback(key);
+          noteDashOutput(key);
+        }
         try { info.dash = dashSummaryFromParsed(parsed); } catch (e) { info.dash = null; }
         try { info.dashFmt = dashRawFormats(parsed); } catch (e) { info.dashFmt = null; }   // S4b: Formatnamen für die Meldungen (src/046)
         // S3c: Strukturfingerabdruck (kadri-dash-fp/1) und S3-Vorprüfung gegen die finale Adresse des MPD (src/039) – für
@@ -391,13 +433,7 @@
         } catch (e) { info.dashFp = { error: 'fp' }; uq = { error: 'fp' }; }
         try { info.dashIdx = dashSegmentIndex(parsed, base, uq); } catch (e) { info.dashIdx = null; }
         info.dashHits = []; info.dashInit = 0;
-        [reqUrl, finalUrl].forEach((x) => {
-          const k = x ? dashUrlKey(new URL(x, location.href).href) : '';
-          if (!k) return;
-          if (vp && vp.noteDashPlayback) vp.noteDashPlayback(k);
-          noteDashOutput(k);
-          dashInfo.delete(k); dashInfo.set(k, info);
-        });
+        for (const key of keys) { dashInfo.delete(key); dashInfo.set(key, info); }
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
         // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
         if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t, x.s));   // (mit Anfragebeginn bzw. null = unbekannt)
@@ -535,7 +571,7 @@
     if (!gate) { try { gate = dashGateFor(p.dashSrc.text, p.dashSrc.parsed, p.dashSrc.doc, alt); } catch (e) { gate = null; } p.dashGateAlt = { alt: alt, gate: gate }; }
     return { url: p.dashFp.url, fp: p.dashFp.fp, multi: true, alt: alt, gate: gate, played: played, urlq: urlq };
   }
-  function dashSummaryOf(u) { let k = ''; try { k = dashUrlKey(new URL(u, location.href).href); } catch (e) {} const p = k && dashInfo.get(k); return p && p.dash ? p.dash : null; }
+  function dashSummaryOf(u) { const p = dashInfo.get(mediaIdentityKey(u)); return p && p.dash ? p.dash : null; }
   // Länge eines Streams, soweit bekannt (aus der eigenen Liste oder einer ihrer Unter-Listen)
   function streamLen(u) {
     const p = plInfo.get(urlKey(u));
@@ -549,11 +585,12 @@
   // Rolle einer Adresse nach den Belegen des Netzwerks (für das Quellenmodell): aus gelesenen Listen, sonst nach
   // eindeutigen Mustern für Stücke und Einzelspuren. Nur ein Hinweis für die Einordnung – nie eine Transferidentität.
   function mediaRoleHint(u) {
+    if (knownMpdIdentity(u)) return 'manifest';
     const k = urlKey(u);
     if (plParts.has(k)) return plParts.get(k);
     const p = plInfo.get(k);
     // (DASH: Manifest nur, wenn genau diese Adresse – samt Query – als gültiges MPD gelesen wurde)
-    if (p) return p.kind === 'dash' ? (dashSummaryOf(u) ? 'manifest' : 'unknown') : p.kids.size ? 'master' : 'media-playlist';
+    if (p) return p.kind === 'dash' ? 'unknown' : p.kids.size ? 'master' : 'media-playlist';
     if (SEGMENT_RE.test(u)) return 'segment';
     try { if (isSplitTrack(u)) return 'track'; } catch (e) {}
     return 'unknown';

@@ -140,7 +140,7 @@
       return () => subs.delete(x);
     }
     function playbackAllowed(ctx, u) {
-      if (!u || mediaIsDashManifest(u)) return false;
+      if (!mediaSourceAllowed(u)) return false;
       const p = playerOf(ctx);
       const s = p && p.sources.get(p.byUrl.get(u));
       return !s || s.kind !== 'dash' || s.role !== 'manifest';
@@ -159,7 +159,7 @@
       if (!s) return { ok: false, reason: 'unknown-source' };
       if (s.revision !== revision) return { ok: false, reason: 'stale-revision' };
       const url = urls.get(sourceId);
-      if (mediaIsDashManifest(url)) return { ok: false, reason: 'dash-not-supported' };
+      if (!mediaSourceAllowed(url)) return { ok: false, reason: mediaIsDashManifest(url) ? 'dash-not-supported' : 'identity-unavailable' };
       const d = mediaDownloadState(s);
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
       return { ok: true, url: url };
@@ -173,7 +173,7 @@
       if (!s) return { ok: false, reason: 'unknown-source' };
       if (revision !== s.revision) return { ok: false, reason: 'stale-revision' };
       const url = urls.get(sourceId);
-      if (mediaIsDashManifest(url)) return { ok: false, reason: 'dash-not-supported' };
+      if (!mediaSourceAllowed(url)) return { ok: false, reason: mediaIsDashManifest(url) ? 'dash-not-supported' : 'identity-unavailable' };
       const d = mediaStreamState(s);
       if (d.state !== 'attemptable') return { ok: false, reason: d.reason || 'not-attemptable' };
       return { ok: true, url: url, bind: { player: p.playerId, gen: p.epoch, rev: s.revision } };

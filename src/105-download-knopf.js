@@ -172,7 +172,7 @@
     let u = '';
     try { u = v.currentSrc || ''; } catch (e) { return ''; }
     if (!/^https?:/i.test(u) || v.srcObject || v.readyState < 2 || v.error) return '';
-    return /\.m3u8(\?|#|$)/i.test(u) || mediaIsDashManifest(u) ? '' : u;
+    return /\.m3u8(\?|#|$)/i.test(u) || !mediaSourceAllowed(u) ? '' : u;
   }
   // Alternativen, nur auf ausdrücklichen Tipp (wie im Player): YTDLnis, Browser-Download, im Browser öffnen, Teilen.
   // „Im Browser herunterladen“ nur, wenn der Browser die Datei sicher als Download behandelt: Datei derselben Herkunft wie

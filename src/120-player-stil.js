@@ -300,7 +300,7 @@ video.vamb{filter:blur(48px) saturate(1.45) brightness(.7);
   function playerSources(v, resMap) {
     const out = [];
     const add = (u, res) => {
-      if (!u || typeof u !== 'string' || !/^https?:/i.test(u) || mediaIsDashManifest(u)) return;
+      if (!u || typeof u !== 'string' || !/^https?:/i.test(u) || !mediaSourceAllowed(u)) return;
       if (out.indexOf(u) < 0) out.push(u);
       if (resMap && res > 0) resMap[u] = res;   // für das Qualitäts-Menü
     };

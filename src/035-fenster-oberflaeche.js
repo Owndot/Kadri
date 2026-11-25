@@ -128,7 +128,7 @@
     if (a === 'diag') { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } return { ok: true, ext: { k: 'copy', t: t } }; }
     if (a === 'share') {
       const u = postUrlFor(v);
-      return u ? { ok: true, ext: { k: 'share', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
+      return mediaSourceAllowed(u) ? { ok: true, ext: { k: 'share', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
     }
     return { ok: false };
   }
@@ -145,7 +145,7 @@
       pageDlMenu('Speichern', [it], true);
       return { ok: true };
     }
-    if (it.ext) return it.ext.u && mediaIsDashManifest(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
+    if (it.ext) return it.ext.u && !mediaSourceAllowed(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
     try { it.fn(); } catch (e) {}
     return { ok: true };
   }

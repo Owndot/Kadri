@@ -462,7 +462,7 @@
     // Alle anderen Seiten: Liste möglicher Quellen, die beste zuerst.
     // Was der Web-Player GERADE lädt (Netzwerk) ist zuverlässiger als Angaben in der Seitenbeschreibung.
     const list = [];
-    const add = (url, how) => { if (url && !list.some((x) => x.u === url)) list.push({ u: url, how: how }); };
+    const add = (url, how) => { if (mediaSourceAllowed(url) && !list.some((x) => x.u === url)) list.push({ u: url, how: how }); };
     const single = countEligible() <= 1;
     // Seite A: komplette MP4 mit Ton zuerst (beste Qualität vorn), der Stream nur als Ausweich
     if (PH && phCache && phCache.length) phCache.forEach((c) => add(c.u, 'MP4 mit Ton' + (c.res ? ' · ' + c.res + 'p' : '')));

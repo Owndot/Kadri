@@ -62,7 +62,7 @@ export = '''
     return {labels, primary: hdlPrimary(), shown: hdlShown()};
   }
   Object.assign(window.__k, {
-    mediaRegistry, pageDlOptions, dashOfferStill, pageDlDashGo, pageDlDashPlan, selectDashStreams,
+    mediaRegistry, pageDlOptions, dashOfferStill, pageDlDashGo, pageDlDashPlan, selectDashStreams, dashEpochSet,
     open: async v => { active = v; await onPageDownload(); return menu.map(x => x.label); },
     playerMenuFor,
     diag: () => { const lines = []; diagFrameSources(lines); return anonScrub(lines.join('\\n')); },
@@ -194,6 +194,48 @@ try:
               relay['relayId'] == '12345678' and relay['pick'] == {'ok': False} and relay['primary'] == '' and not relay['shown'] and
               not any('DASH-Stream mit Helper' in x['label'] for x in relay['items']) and
               not {'dashplan', 'dashstart'} & set(relay['commands']), relay)
+        # Audit-Gegenproben B2–B4: synthetische Zeitwerte unterhalb der weiterhin gesperrten Produktentscheidung.
+        fixture = (ROOT / 'tests/web/dash/gate/g02-number-duration.mpd').read_text(encoding='utf-8')
+        for name, reason, level in (
+            ('B2', 'nicht-aktiv', 'E2/stale'),
+            ('B3', 'stueckfolge', 'E2/element-unproven'),
+            ('B4', 'stueckfolge', 'E2/element-unproven'),
+        ):
+            page.goto(B)
+            page.set_content('<video id="v"></video>')
+            page.add_script_tag(content=src)
+            outcome = page.evaluate("""async ([name, text]) => {
+                const k = __k, u = new URL('/audit-check/manifest.mpd', location.href).href;
+                let now = 10400;
+                Date.now = () => now;
+                Object.defineProperty(v, 'duration', {value: 20});
+                k.notePlaylist(u, u, text);
+                k.dashEpochSet(v, 10000, 'loadstart');
+                const first = name === 'B4' ? 6 : 1, start = name === 'B3' ? 9600 : 10100;
+                for (let i = 0; i < 3; i++) {
+                    const segment = new URL('v/v0/' + String(first + i).padStart(5, '0') + '.m4s', u).href;
+                    k.seeUrl(segment, start + i * 100 + 50, 'fetch', start + i * 100);
+                }
+                const caps = {reachable: true, supported: true, dash: true};
+                k.pageDlOptions(v, caps);
+                const ctx = k.mediaRegistry.contextFor(v), source = k.mediaRegistry.snapshot(ctx).find(x => x.kind === 'dash');
+                if (!source) throw Error('DASH-Kandidat fehlt');
+                const bind = {player: ctx.playerId, gen: ctx.mediaEpoch, rev: source.revision};
+                const offer = k.dashOfferOf(u, k.dashFromOf(v)), old = {v, x: {...source, ctx}, offer};
+                if (name === 'B2') now += 30000;
+                const opts = k.pageDlOptions(v, caps);
+                const selection = k.selectDashStreams(k.mediaRegistry.snapshot(ctx))[0];
+                const labels = (await k.open(v)).concat(k.playerMenuFor(v).labels);
+                await k.pageDlDashPlan(old);
+                await k.pageDlDashGo(u, 'a'.repeat(32), {id: 'b'.repeat(24)}, old.x, old, bind);
+                return {reason: k.dashBindingFor(v).res[k.dashUrlKey(u)].reason, level: opts.dashLv?.code,
+                    candidate: selection?.state, association: source.association.state,
+                    gate: offer?.gate?.ok, action: !!opts.dashOffer?.offer || labels.some(x => x.includes('DASH-Stream mit Helper')),
+                    sends: k.commands.filter(op => op === 'dashplan' || op === 'dashstart')};
+            }""", [name, fixture])
+            check(name + ' bleibt trotz Netzbeobachtung an der Produktgrenze gesperrt',
+                  outcome == dict(reason=reason, level=level, candidate='candidate',
+                                  association='ambiguous', gate=True, action=False, sends=[]), outcome)
         browser.close()
 finally:
     shutdown()
