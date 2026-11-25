@@ -1,7 +1,8 @@
-  function openExternal(u, v, pkg, msg, fallback) {
-    if (!u || mediaIsDashManifest(u)) { toast('Keine Quelle für dieses Video gefunden'); return; }
+  function openExternal(u, v, pkg, msg, fallback, allowed = mediaOutputFor(u)) {
+    if (!u || !allowed(u)) { toast('Keine Quelle für dieses Video gefunden'); return false; }
     try { if (v) v.pause(); } catch (e) {}
     toast(msg || 'Wird im Videoplayer geöffnet …');
+    if (!allowed(u)) return false;
     const intent = intentUrl(u, pkg, fallback);
     lastIntent = { url: u, t: Date.now(), how: '' };
     // Weg 1: wie ein angetippter Link – funktioniert auch aus dem abgeschirmten Bereich zuverlässig
@@ -15,7 +16,7 @@
       a.rel = 'noreferrer';
       a.style.cssText = 'display:none';
       (root || document.documentElement).appendChild(a);
-      a.click();
+      if (allowed(u)) a.click();
       a.remove();
       lastIntent.how = 'Link';
     } catch (e) { lastIntent.how = 'Link-Fehler'; }
@@ -24,6 +25,7 @@
       removeEventListener('blur', onLeave, true);
       offVisChange(onLeave, true);
       if (left || document.hidden) { lastIntent.how += ' → Browser verlassen ✓'; return; }
+      if (!allowed(u)) return;
       try { location.href = intent; lastIntent.how += ' → Weg 2'; } catch (e) { lastIntent.how += ' → Weg 2 Fehler'; }
       setTimeout(() => {
         if (!document.hidden && document.hasFocus()) {
@@ -32,6 +34,7 @@
         }
       }, 1200);
     }, 900);
+    return true;
   }
   // ---------- Direkter Download einer Videodatei ----------
   function fileNameFor(u) {
@@ -64,39 +67,44 @@
   function probeAttachment(u) {
     return new Promise((resolve) => {
       const x = gmXhr();
-      if (!x) { resolve(false); return; }
+      if (!x) { resolve(''); return; }
       let done = false, req = null;
       const fin = (v) => { if (done) return; done = true; clearTimeout(t); try { req && req.abort && req.abort(); } catch (e) {} resolve(v); };
-      const t = setTimeout(() => fin(false), 6000);
+      const t = setTimeout(() => fin(''), 6000);
       const look = (r) => {
         const hd = String((r && r.responseHeaders) || '');
         if (!hd) return;
         const ok = r.status >= 200 && r.status < 400;
-        fin(ok && (/content-disposition:\s*attachment/i.test(hd) || /content-type:\s*application\/(octet-stream|force-download|x-download)/i.test(hd)));
+        const attachment = /content-disposition:\s*attachment/i.test(hd) || /content-type:\s*application\/(octet-stream|force-download|x-download)/i.test(hd);
+        fin(ok && attachment ? r.finalUrl || u : '');
       };
       try {
         // (Anmeldung/Cookies nur an die eigene Seite – fremde Server ohne)
         req = x({ method: 'GET', url: u, headers: { Range: 'bytes=0-0', Referer: mediaReferrer(u) }, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
           onreadystatechange: (r) => { if (r && r.readyState >= 2) look(r); },
-          onload: (r) => { look(r); fin(false); }, onerror: () => fin(false), ontimeout: () => fin(false) });
-      } catch (e) { fin(false); }
+          onload: (r) => { look(r); fin(''); }, onerror: () => fin(''), ontimeout: () => fin('') });
+      } catch (e) { fin(''); }
     });
   }
   // true = Browser hat den Download übernommen
-  async function browserDownload(u) {
-    if (mediaIsDashManifest(u)) return false;
+  async function browserDownload(u, allowed = mediaOutputFor(u)) {
+    if (!allowed(u)) return false;
     const name = fileNameFor(u);
     if (sameOrigin(u)) { nativeDownload(u, name); return true; }
     const cands = [];
     // Viele Video-Seiten (KVS, "get_file") liefern mit download=true die Datei als Download aus
     if (/\/get_file\//i.test(u) && !/[?&]download=/i.test(u)) cands.push(u + (u.indexOf('?') < 0 ? '?' : '&') + 'download=true&download_filename=' + encodeURIComponent(name));
     cands.push(u);
-    for (const c of cands) { if (await probeAttachment(c)) { nativeDownload(c, name); return true; } }
+    for (const c of cands) {
+      if (!allowed(c)) return false;
+      const target = await probeAttachment(c);
+      if (target && allowed(c) && allowed(target)) { nativeDownload(c, name); return true; }
+    }
     return false;
   }
   let dlBusy = false;
-  function directDownload(u, onFail) {
-    if (mediaIsDashManifest(u)) return;
+  function directDownload(u, onFail, allowed = mediaOutputFor(u)) {
+    if (!allowed(u)) return;
     if (dlBusy) { toast('Download läuft schon …'); return; }
     dlBusy = true;
     const name = fileNameFor(u);
@@ -106,13 +114,24 @@
       const pc = Math.floor(e.loaded / e.total * 100);
       if (pc >= lastPct + 10) { lastPct = pc; toast('Lade herunter … ' + pc + ' %'); }
     };
-    const ok = (blob) => { dlBusy = false; saveBlob(blob, name); toast('Gespeichert in Downloads: ' + name); };
+    const ok = (blob, target) => {
+      dlBusy = false;
+      if (!allowed(target)) return;
+      saveBlob(blob, name);
+      toast('Gespeichert in Downloads: ' + name);
+    };
     const fail = () => { dlBusy = false; if (onFail) onFail(); };
     const big = (b) => b && b.size > 20000;   // winzige Antworten sind Fehlerseiten, kein Video
     // 2. Versuch: normal über die Seite (klappt bei Dateien derselben Seite oder mit Freigabe)
     const viaPage = () => {
-      fetch(u, { credentials: 'include', referrerPolicy: 'strict-origin-when-cross-origin' }).then((r) => (r.ok ? r.blob() : Promise.reject(r.status)))
-        .then((b) => (big(b) ? ok(b) : fail()), fail);
+      if (!allowed(u)) { dlBusy = false; return; }
+      fetch(u, { credentials: 'include', referrerPolicy: 'strict-origin-when-cross-origin' }).then(async (r) => {
+        const target = r.url || u;
+        if (!allowed(target)) { dlBusy = false; return; }
+        if (!r.ok) { fail(); return; }
+        const b = await r.blob();
+        if (big(b)) ok(b, target); else fail();
+      }).catch(fail);
     };
     toast('Download startet …');
     // 1. Versuch: über Violentmonkey – darf auch fremde Server und schickt die Seite als Herkunft mit
@@ -121,16 +140,22 @@
     try {
       x({ method: 'GET', url: u, responseType: 'blob', headers: { Referer: mediaReferrer(u) }, timeout: 0, anonymous: baseDomain(hostOf(u)) !== baseDomain(location.hostname),
         onprogress: prog,
-        onload: (r) => { const b = r && r.response; if (r && r.status >= 200 && r.status < 300 && big(b)) ok(b); else viaPage(); },
+        onload: (r) => {
+          const b = r && r.response, target = (r && r.finalUrl) || u;
+          if (!allowed(target)) { dlBusy = false; return; }
+          if (r && r.status >= 200 && r.status < 300 && big(b)) ok(b, target); else viaPage();
+        },
         onerror: viaPage, onabort: fail });
     } catch (e) { viaPage(); }
   }
 
   let lastIntent = { url: '', t: 0, how: '' };
   let tapAt = 0, openTimes = null;   // Zeitmessung beim Öffnen des Players (Diagnose)
-  function copyText(text, okMsg) {
+  function copyText(text, okMsg, allowed) {
+    if (allowed && !allowed(text)) return;
     const ok = () => toast(okMsg);
     const fallback = () => {
+      if (allowed && !allowed(text)) return;
       try {
         const ta = document.createElement('textarea');
         ta.value = text; ta.style.cssText = 'position:fixed;opacity:0';

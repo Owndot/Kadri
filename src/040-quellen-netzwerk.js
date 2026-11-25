@@ -311,6 +311,19 @@
   // Gelesene gültige MPDs je VOLLER Adresse (ohne #) – zwei MPDs mit gleichem Pfad, aber anderer Query sind zwei Manifeste.
   // (plInfo bleibt nach Pfad geschlüsselt – die HLS-Logik ändert sich nicht.)
   const dashInfo = new Map();
+  // Schwache Referenzen auf Auswahlen, die ein Menü oder ein laufender Vorgang noch hält.
+  const dashOutputWatches = new Set();
+  function watchDashOutput(selection) {
+    for (const ref of dashOutputWatches) if (!ref.deref()) dashOutputWatches.delete(ref);
+    dashOutputWatches.add(new WeakRef(selection));
+  }
+  function noteDashOutput(key) {
+    for (const ref of dashOutputWatches) {
+      const selection = ref.deref();
+      if (!selection) dashOutputWatches.delete(ref);
+      else if (selection.keys.has(key)) selection.blocked = true;
+    }
+  }
   // Wurzelelement MPD (optional mit Namensraum-Präfix) am Anfang des Textes – Vorprüfung; entscheidend ist dashParse
   // (steht vor dem erneuten Senden durch page.js weiter unten – das ruft notePlaylist sofort beim Start auf)
   const DASH_ROOT_RE = /<(?:[A-Za-z_][\w.-]{0,31}:)?MPD[\s>]/;
@@ -382,6 +395,7 @@
           const k = x ? dashUrlKey(new URL(x, location.href).href) : '';
           if (!k) return;
           if (vp && vp.noteDashPlayback) vp.noteDashPlayback(k);
+          noteDashOutput(k);
           dashInfo.delete(k); dashInfo.set(k, info);
         });
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);

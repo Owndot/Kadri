@@ -465,12 +465,17 @@
         toast(r.value.reachable ? hdlText(r.value.job) : 'Helfer-App nicht erreichbar – Abbruch wird nachgeholt');
       });
     }
-    function browserSave(d) {
+    function playerOutputContext(current = () => vp === st) {
+      const rev = st.sourceRevision, source = st.cur;
+      return mediaOutputContext(orig, () => current() && st.sourceRevision === rev && st.cur === source);
+    }
+    function browserSave(d, allowed) {
+      if (!allowed()) return;
       toast('Download wird vorbereitet …');
-      browserDownload(d).then((ok) => {
+      browserDownload(d, allowed).then((ok) => {
         if (ok) { toast('Download an Browser übergeben'); return; }
         // Der Server gibt die Datei nicht als Download frei: alle Wege zur Auswahl
-        dlMenu(true);
+        if (allowed()) dlMenu(true);
       });
     }
     // Alle Wege zum Speichern (langes Drücken auf ⬇, oder wenn der Browser nicht darf)
@@ -553,15 +558,24 @@
         else if (dashItem) items.push(dashItem);
         else items.push({ label: 'Helfer-App: keine speicherbare Quelle erkannt', sub: d && !hdlUrl() ? 'Video noch nicht geladen – kurz abspielen und ⬇ erneut tippen' : 'keine MP4-Datei oder kein Stream nachweislich zu diesem Video', stay: true, fn: () => {} });
       }
-      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen', fn: () => dlOut(() => toYtdlnis(link)) });
+      const current = (link || d) && playerOutputContext();
+      const linkAllowed = link && mediaOutputFor(link, current, orig);
+      const fileAllowed = d && mediaOutputFor(d, () => current() && playbackAllowed(d), orig);
+      if (link) items.push({ label: 'Mit YTDLnis', sub: 'direkt öffnen',
+        fn: () => { if (linkAllowed()) dlOut(() => toYtdlnis(link, linkAllowed)); } });
       // Browser-Download nur bei einer Datei derselben Herkunft (sonst öffnet der Browser sie als Seite, siehe 105) und nicht
       // auf Android: dort öffnen Browser die Datei auch dann oft als Seite (Weiterleitung auf einen anderen Server)
-      if (d && !browserFailed && sameOrigin(d) && !IS_ANDROID_UA()) items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => browserSave(d) });
+      if (d && !browserFailed && sameOrigin(d) && !IS_ANDROID_UA()) items.push({ label: 'Im Browser herunterladen',
+        sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => browserSave(d, fileAllowed) });
       if (d) {
-        items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', fn: () => pageDlOpenTab(d) });
-        items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen', fn: () => directDownload(d, () => toast('Die Seite sperrt den Download')) });
+        items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen',
+          fn: () => pageDlOpenTab(d, fileAllowed) });
+        items.push({ label: 'Hier speichern', sub: 'Player bis zum Ende offen lassen',
+          fn: () => directDownload(d, () => toast('Die Seite sperrt den Download'), fileAllowed) });
       }
-      if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', fn: () => dlOut(() => shareUrl(link || d)) });
+      const shareAllowed = linkAllowed || fileAllowed;
+      if (shareAllowed) items.push({ label: 'Teilen …', sub: 'an eine andere App',
+        fn: () => { if (shareAllowed()) dlOut(() => shareUrl(link || d, shareAllowed)); } });
       if (!items.length) { toast('Für dieses Video gibt es keine Datei zum Herunterladen'); return; }
       openMenu('Herunterladen', items, keep);
       st.hdl.menuList = menu.querySelector('.vmlist');
@@ -588,31 +602,44 @@
     });
     on(bExt, () => {
       const t = M().currentTime;
-      const go = (u) => { closePlayer(); try { orig.currentTime = t; } catch (e) {} openExternal(u, orig, CONFIG.player); };
+      let released = false;
+      const current = playerOutputContext(() => vp === st || (released && !vp));
+      const go = (target, source = mediaOutputFor(target, null, orig)) => {
+        const allowed = (u) => current() && source(u);
+        if (!target || !allowed(target)) return;
+        released = true;
+        closePlayer();
+        try { orig.currentTime = t; } catch (e) {}
+        openExternal(target, orig, CONFIG.player, null, null, allowed);
+      };
       const u = st.cur || (resolve(orig) || {}).best;
       if (u) {
+        const cached = st.extSelection;
+        const ext = cached && cached.origin === u && cached.current() ? cached : null;
+        const source = ext ? ext.allowed : mediaOutputFor(u, null, orig);
+        if (!source(u) || (u === st.cur && !playbackAllowed(u))) { toast('Keine Quelle für dieses Video gefunden'); return; }
         // Geschützte Dateien der Seite selbst (z. B. /get_file/…): Die Adresse leitet nur MIT Browsersitzung zur echten
         // Datei weiter – VLC hat die nicht. Darum die Weiterleitung hier auflösen und die Endadresse übergeben.
         if (needsResolve(u)) {
-          if (st.extUrl && st.extFor === u) { go(st.extUrl); return; }
           toast('Bereite Video vor …');
-          finalUrl(u).then((f) => { if (vp === st) go(f); }, () => { if (vp === st) go(u); });
+          const pending = ext ? ext.pending : finalUrl(u, (f) => current() && source(f));
+          pending.then((f) => go(f, source));
           return;
         }
-        go(u);
+        go(u, source);
         return;
       }
       // Instagram (Bild + Ton getrennt): fertige MP4 mit Ton nehmen – meist schon beim Öffnen im Hintergrund geholt
       if (IG) {
         if (st.igUrl) { go(st.igUrl); return; }
         toast('Suche die Videodatei …');
-        igVideoUrl(orig).then((x) => { if (vp !== st) return; if (x) go(x); else shareLink('Keine Videodatei mit Ton gefunden (' + igLog + ')'); });
+        igVideoUrl(orig).then((x) => { if (!current()) return; if (x) go(x); else shareLink('Keine Videodatei mit Ton gefunden (' + igLog + ')'); });
         return;
       }
       if (TT) {
         if (st.ttUrl) { go(st.ttUrl); return; }
         toast('Suche die Videodatei …');
-        ttVideoUrl(orig).then((x) => { if (vp !== st) return; if (x) go(x); else shareLink('Keine Videodatei gefunden (' + ttLog + ')'); });
+        ttVideoUrl(orig).then((x) => { if (!current()) return; if (x) go(x); else shareLink('Keine Videodatei gefunden (' + ttLog + ')'); });
         return;
       }
       shareLink('Für dieses Video gibt es keine Datei-Adresse');
@@ -620,18 +647,22 @@
     // Weiterleitung schon beim Laden im Hintergrund auflösen (2 Bytes), damit "In App öffnen" sofort klappt
     st.prefetchExt = () => {
       const u = st.mode === 'own' ? st.cur : '';
-      if (!u || st.extFor === u || !needsResolve(u)) return;
-      st.extFor = u; st.extUrl = '';
-      finalUrl(u).then((f) => { if (st.extFor === u) st.extUrl = f; }, () => {});
+      if (vp !== st || !u || !playbackAllowed(u) || !needsResolve(u)) return;
+      if (st.extSelection && st.extSelection.origin === u && st.extSelection.current()) return;
+      const current = playerOutputContext();
+      const allowed = mediaOutputFor(u, null, orig);
+      if (!allowed()) return;
+      st.extSelection = { origin: u, current, allowed, pending: finalUrl(u, (f) => current() && allowed(f)) };
     };
     // Keine Datei zum Übergeben: wenigstens den Link GENAU dieses Videos teilen (z. B. an NewPipe, YTDLnis …)
     function shareLink(why) {
       const link = postUrlFor(orig);
-      if (!link) { toast(why); return; }
+      const allowed = mediaOutputFor(link, playerOutputContext(), orig);
+      if (!allowed()) { toast(why); return; }
       if (navigator.share) {
         toast(why + ' – Link wird geteilt');
         navigator.share({ url: link }).catch(() => {});
-      } else copyText(link, why + ' – Link kopiert');
+      } else copyText(link, why + ' – Link kopiert', allowed);
     }
     if (TT) ttVideoUrl(orig).then((x) => { if (x) { st.ttUrl = x; st.refreshDl(); } }, () => {});
     // Instagram: MP4 mit Ton schon vorab holen, damit "In App öffnen" sofort klappt (nur eine kleine Datenabfrage)

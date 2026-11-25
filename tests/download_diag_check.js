@@ -19,12 +19,16 @@ function setup(kind = 'mp4', env = {}) {
   const ctx = { IN_FRAME: false, fui: { n: '', rid: '' }, fuiLog() {}, URL, Date, WeakMap, TextDecoder, Uint8Array, CONFIG: {}, document: { hidden: false }, active: v, addEventListener() {}, removeEventListener() {},
     setTimeout: (f) => { timers.push(f); return timers.length; }, clearTimeout() {}, toast() {}, tr: (x) => x,
     pageTitle: () => 'PRIVATE-TITLE', fmtTime: () => '1:00',
-    mediaRegistry: { snapshot: () => [source], resolveSelection: () => ({ ok: true, url }), resolveStream: () => ({ ok: true, url, bind: {} }) },
+    mediaRegistry: { snapshot: () => [source], resolveSelection: () => ({ ok: true, url }), resolveStream: () => ({ ok: true, url, bind: {} }),
+      contextFor: () => ({ documentKey: 'doc', playerId: 'player', mediaEpoch: 1 }),
+      playbackAllowed: (_, url) => !/\.mpd(?:[?#]|$)/i.test(url) },
     gmXhr: () => (o) => { probes.push(o); ctx.probeReply(o); return { abort() {} }; },
     probeReply: (o) => o.onload({ status: 206 }),
     // Browser-Vergleich: zulässiger Referer und Sitzungsregel wie im Inhaltsskript (synthetisch)
     mediaReferrer: () => (env.ref === undefined ? 'https://private.invalid/page' : env.ref),
-    baseDomain: (h) => String(h).split('.').slice(-2).join('.'), location: { hostname: env.page || 'www.private.invalid' },
+    baseDomain: (h) => String(h).split('.').slice(-2).join('.'),
+    location: { hostname: env.page || 'www.private.invalid', href: 'https://' + (env.page || 'www.private.invalid') + '/watch' },
+    dashUrlKey: (url) => url.split('#')[0],
     SHOW_DOWNLOAD: false,
     // Variante C nur nach Bestätigung: Aufrufe und Texte des Dialogs werden festgehalten
     confirms: [], confirm: (msg) => { ctx.confirms.push(msg); return typeof env.confirm === 'function' ? env.confirm(msg) : false; },

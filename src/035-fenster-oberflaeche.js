@@ -14,9 +14,8 @@
   //  - Schutz vor Werbung: nur ein Video, das Kadri im Fenster selbst als laufend, hörbar und groß genug erkennt, nur ein
   //    sichtbar großes Fenster, genau ein Knopf (das Hauptfenster entscheidet), und eine Auswahl erscheint hier nur
   //    nach einem Tipp auf diesen Knopf (bzw. einen Eintrag) – nie von selbst.
-  //  - Aktionen, die im Fenster einen frischen Tipp bräuchten (Teilen, im Browser öffnen, YTDLnis, Diagnose kopieren),
-  //    führt das Hauptfenster aus, in dem getippt wurde: die Antwort des Fensters auf genau diesen Tipp bringt den Link
-  //    über die Erweiterung mit (nicht über die Seite).
+  //  - Seitenlinks und anonymisierte Diagnose kann das Hauptfenster übernehmen. Medienadressen, die einen frischen
+  //    Tipp brauchen, werden im Ursprungsfenster bestätigt, damit die Quellenprüfung dort bis zur Ausgabe gilt.
   //  - Fehlt etwas (Userscript, Firefox, keine Zuordnung, Vollbild im Fenster): Knopf und Auswahl wie bisher im Fenster.
   const FUI_ON = typeof KADRI_FRAMEUI === 'object' && !!KADRI_FRAMEUI && typeof KADRI_FRAMEUI.send === 'function';
   const FUI_GEO = '__kadriFg1';
@@ -141,6 +140,11 @@
     if (!it || it.info || typeof it.fn !== 'function') return { ok: false };
     fui.menu = null;
     fui.relayUntil = Date.now() + 60000;
+    if (it.allowed && !it.allowed()) return { ok: false };
+    if (it.frameConfirm) {
+      pageDlMenu('Speichern', [it], true);
+      return { ok: true };
+    }
     if (it.ext) return it.ext.u && mediaIsDashManifest(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
     try { it.fn(); } catch (e) {}
     return { ok: true };

@@ -152,7 +152,10 @@
 
   function onPillMain() {
     const v = active;
+    if (!v) return;
+    const current = mediaOutputContext(v, () => active === v);
     const go = () => {
+      if (!current()) return;
       const r = resolve(v);
       if (!r.best) {
         toast(r.splitOnly
@@ -170,13 +173,17 @@
         msg = 'Quelle ' + (idx + 1) + '/' + r.list.length + ' – klappt nicht? Nochmal tippen';
       }
       hidePill();
+      const allowed = mediaOutputFor(url, current, v);
+      if (!allowed()) { toast('Keine Quelle für dieses Video gefunden'); return; }
       // Geschützte Dateien der Seite selbst (z. B. /get_file/…?token): Weiterleitung im Browser auflösen
       if (needsResolve(url)) {
         toast('Bereite Video vor …');
-        finalUrl(url).then((f) => openExternal(f, v, CONFIG.player, msg || (f !== url ? 'Wird im Videoplayer geöffnet (Weiterleitung aufgelöst) …' : '')));
+        finalUrl(url, allowed).then((f) => {
+          if (f) openExternal(f, v, CONFIG.player, msg || (f !== url ? 'Wird im Videoplayer geöffnet (Weiterleitung aufgelöst) …' : ''), null, allowed);
+        });
         return;
       }
-      openExternal(url, v, CONFIG.player, msg);
+      openExternal(url, v, CONFIG.player, msg, null, allowed);
     };
     const p = META ? fetchHD(v) : PH ? phMp4() : null;
     if (p) {

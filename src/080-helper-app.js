@@ -559,9 +559,13 @@
   }
 
   // Datei mit den Angaben der Seite anfragen (nur 2 Bytes) und die Endadresse nach Weiterleitungen nehmen
-  async function finalUrl(u) {
+  async function finalUrl(u, allowed) {
+    if (allowed && !allowed(u)) return '';
     const xhr = gmXhr();
-    if (xhr) return finalUrlGM(u, xhr);
+    if (xhr) {
+      const f = await finalUrlGM(u, xhr);
+      return !allowed || allowed(f) ? f : '';
+    }
     const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = setTimeout(() => { try { ctl && ctl.abort(); } catch (e) {} }, 2500);
     try {
@@ -575,10 +579,10 @@
       const f = res.url || u;
       lastResolve = 'HTTP ' + res.status + (f !== u ? ' → ' + hostOf(f) : ' (keine Weiterleitung)');
       try { ctl && ctl.abort(); } catch (e) {}
-      return f;
+      return !allowed || allowed(f) ? f : '';
     } catch (e) {
       clearTimeout(timer);
       lastResolve = 'nicht möglich (' + ((e && e.name) || 'Fehler') + ')';
-      return u;
+      return !allowed || allowed(u) ? u : '';
     }
   }

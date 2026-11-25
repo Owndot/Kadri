@@ -182,23 +182,31 @@
     let link = '';
     try { link = SHOW_DOWNLOAD ? postUrlFor(v) : ''; } catch (e) {}
     const d = pageDlDirect(v);
-    // (ext: braucht einen frischen Tipp – steht die Auswahl im Hauptfenster, führt es diese Aktion selbst aus, src/035)
-    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', ext: { k: 'ytdlnis', u: link }, fn: () => toYtdlnis(link) });
+    if (!link && !d) return items;
+    const current = mediaOutputContext(v, () => active === v);
+    const fileAllowed = d && mediaOutputFor(d, current, v);
+    const linkAllowed = link && mediaOutputFor(link, current, v);
+    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', ext: { k: 'ytdlnis', u: link },
+      allowed: linkAllowed, fn: () => toYtdlnis(link, linkAllowed) });
     if (d && sameOrigin(d) && !IS_ANDROID_UA()) {
-      items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', fn: () => {
+      items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', allowed: fileAllowed, fn: () => {
+        if (!fileAllowed()) return;
         toast('Download wird vorbereitet …');
-        browserDownload(d).then((ok) => toast(ok ? 'Download an Browser übergeben'
+        browserDownload(d, fileAllowed).then((ok) => toast(ok ? 'Download an Browser übergeben'
           : 'Die Seite sperrt den Download'));
       } });
     }
     if (d) {
-      items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen', ext: { k: 'open', u: d }, fn: () => pageDlOpenTab(d) });
+      items.push({ label: 'Im Browser öffnen', sub: 'nur öffnen: neuer Tab, kein Download – dort ⋮ → Herunterladen',
+        frameConfirm: true, allowed: fileAllowed, fn: () => pageDlOpenTab(d, fileAllowed) });
     }
-    if (link || d) items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: { k: 'share', u: link || d }, fn: () => shareUrl(link || d) });
+    const shareAllowed = linkAllowed || fileAllowed;
+    items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: link ? { k: 'share', u: link } : null,
+      frameConfirm: !link, allowed: shareAllowed, fn: () => shareUrl(link || d, shareAllowed) });
     return items;
   }
-  function pageDlOpenTab(d) {
-    if (mediaIsDashManifest(d)) return;
+  function pageDlOpenTab(d, allowed = mediaOutputFor(d)) {
+    if (!allowed(d)) return;
     const w = window.open(d, '_blank');
     if (w) { try { w.opener = null; } catch (e) {} } else toast('Neuer Tab wurde blockiert – Pop-ups für diese Seite erlauben');
   }

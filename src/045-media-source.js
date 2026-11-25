@@ -41,6 +41,33 @@
   // Die Adresse kann auch ohne .mpd-Endung oder mit irreführender Dateiendung ein gelesenes MPD sein.
   const mediaIsDashManifest = (u) => mediaKindOf(u, '') === 'dash' ||
     (typeof dashSummaryOf === 'function' && !!dashSummaryOf(u));
+  // Medienwechsel am Element, einschließlich einer neuen src vor dem ersten Browserereignis.
+  function mediaOutputContext(v, current) {
+    const src = v.src, playing = v.currentSrc, object = v.srcObject;
+    const ctx = mediaRegistry.contextFor(v);
+    return () => {
+      if ((current && !current()) || !v.isConnected || v.src !== src || v.srcObject !== object ||
+          (playing && v.currentSrc !== playing)) return false;
+      const now = mediaRegistry.contextFor(v);
+      return now.documentKey === ctx.documentKey && now.playerId === ctx.playerId && now.mediaEpoch === ctx.mediaEpoch;
+    };
+  }
+  // Behalte Ursprung, bekannte Ziele und jede Ablehnung für genau diese Auswahl.
+  function mediaOutputFor(origin, current, v) {
+    const page = location.href.split('#')[0];
+    const selection = { keys: new Set(), blocked: false };
+    if (typeof watchDashOutput === 'function') watchDashOutput(selection);
+    const allowed = (target = origin) => {
+      if (!origin || !target || selection.blocked || location.href.split('#')[0] !== page || (current && !current())) return false;
+      selection.keys.add(dashUrlKey(target));
+      const ctx = v && mediaRegistry.contextFor(v);
+      selection.blocked = ctx ? !mediaRegistry.playbackAllowed(ctx, origin) || !mediaRegistry.playbackAllowed(ctx, target)
+        : mediaIsDashManifest(origin) || mediaIsDashManifest(target);
+      return !selection.blocked;
+    };
+    allowed();
+    return allowed;
+  }
   // Knowledge<T>: { status:'unknown' } | { status, value, evidenceIds }. check(value) prüft den Wert.
   function mediaKnowledge(k, check) {
     if (k === undefined) return { status: 'unknown' };

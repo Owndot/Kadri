@@ -12,10 +12,8 @@
   // YTDLnis nimmt Links jeder Seite direkt an (als "Video ansehen" mit Paketname) – ohne Teilen-Menü.
   // Ist YTDLnis nicht installiert, öffnet sich dessen Download-Seite.
   const YTDLNIS = 'com.deniscerri.ytdl';
-  function toYtdlnis(link) {
-    if (!link || mediaIsDashManifest(link)) return false;
-    openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest');
-    return true;
+  function toYtdlnis(link, allowed = mediaOutputFor(link)) {
+    return openExternal(link, null, YTDLNIS, 'An YTDLnis übergeben …', 'https://github.com/deniscerri/ytdlnis/releases/latest', allowed);
   }
   // ---------- Seite A: komplette MP4-Dateien mit Ton über die eigene Abfrage der Seite ----------
   // (Seite A wird am Hash der zweiten Domain-Ebene erkannt, Endung com/org/net – der Name steht nicht im Quelltext)

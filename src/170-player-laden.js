@@ -121,6 +121,7 @@
       while (st.idx < st.sources.length && !playbackAllowed(st.sources[st.idx])) st.idx++;
       if (st.idx >= st.sources.length) { useCapture(); return; }
       const u = st.sources[st.idx++];
+      st.sourceRevision = (st.sourceRevision || 0) + 1;
       st.cur = u;
       st.mode = 'own';
       if (st.setPipAllowed) st.setPipAllowed(true);

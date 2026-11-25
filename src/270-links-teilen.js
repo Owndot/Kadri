@@ -230,18 +230,18 @@
     shareUrl(url);
   }
   // Link mit Titel teilen (Android: Teilen-Menü) – geht das nicht (z. B. eingebettetes Fenster), Link kopieren
-  function shareLinkTo(url, title) {
-    if (!url || mediaIsDashManifest(url)) { toast('Kein Link zu diesem Video gefunden'); return; }
-    const copy = () => copyText(url, 'Link kopiert');
+  function shareLinkTo(url, title, allowed = mediaOutputFor(url)) {
+    if (!url || !allowed(url)) { toast('Kein Link zu diesem Video gefunden'); return; }
+    const copy = () => copyText(url, 'Link kopiert', allowed);
     if (navigator.share) {
       const data = { url: url };
       if (title) data.title = title;
       navigator.share(data).catch((e) => { if (!e || e.name !== 'AbortError') copy(); });
     } else copy();
   }
-  function shareUrl(url) {
-    if (mediaIsDashManifest(url)) return Promise.resolve(false);
-    const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen');
+  function shareUrl(url, allowed = mediaOutputFor(url)) {
+    if (!allowed(url)) return Promise.resolve(false);
+    const fallback = () => copyText(url, 'Link kopiert – in YTDLnis einfügen', allowed);
     if (navigator.share) {
       // Ergebnis: true = geteilt, false = abgebrochen/fehlgeschlagen
       return navigator.share({ url: url }).then(() => true, (e) => { if (!e || e.name !== 'AbortError') fallback(); return false; });
