@@ -52,19 +52,21 @@
       const items = [];
       const hls = st.hls;
       if (hls && hls.levels && hls.levels.length > 1) {
+        const u = st.cur;
+        if (!playbackAllowed(u)) return items;
         items.push({ label: 'Automatisch', sub: 'passt sich der Verbindung an', cur: st.qualPinned === null,
-          fn: () => { hls.currentLevel = -1; st.qualPinned = null; refreshQual(); } });
+          fn: () => { if (st.hls === hls && playbackAllowed(u)) { hls.currentLevel = -1; st.qualPinned = null; refreshQual(); } } });
         hls.levels.map((l, i) => ({ l: l, i: i }))
           .sort((a, b) => (b.l.height || 0) - (a.l.height || 0) || (b.l.bitrate || 0) - (a.l.bitrate || 0))
           .forEach((x) => {
             const name = x.l.height ? x.l.height + 'p' : 'Stufe ' + (x.i + 1);
             items.push({ label: name, sub: x.l.bitrate ? (x.l.bitrate / 1e6).toFixed(1).replace('.', ',') + ' Mbit/s' : '', cur: st.qualPinned === x.i,
-              fn: () => { hls.currentLevel = x.i; st.qualPinned = x.i; refreshQual(); } });
+              fn: () => { if (st.hls === hls && playbackAllowed(u)) { hls.currentLevel = x.i; st.qualPinned = x.i; refreshQual(); } } });
           });
         return items;
       }
       // Einzeldateien in mehreren Qualitäten (Facebook, Seite A …)
-      const files = st.sources.filter((u) => !PLAYLIST_RE.test(u) && st.srcRes[u]);
+      const files = st.sources.filter((u) => !PLAYLIST_RE.test(u) && st.srcRes[u] && playbackAllowed(u));
       if (files.length > 1 && st.mode === 'own') {
         files.slice().sort((a, b) => st.srcRes[b] - st.srcRes[a]).forEach((u) => items.push({
           label: st.srcRes[u] + 'p', sub: u === st.cur ? 'läuft gerade' : '', cur: u === st.cur, fn: () => switchSource(u),
@@ -87,6 +89,7 @@
       if (sp && sp.textContent !== lab) sp.textContent = lab;
     }
     function switchSource(u) {
+      if (vp !== st || !playbackAllowed(u)) return;
       const t = vid.currentTime;
       st.expectDur = isFinite(vid.duration) && vid.duration > 0 ? vid.duration : 0;   // muss gleich lang bleiben
       st.prevCur = st.cur;

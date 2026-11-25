@@ -17,14 +17,22 @@
       framed: IN_FRAME, rfs: false, fsWait: null,   // eingebettetes Fenster: Hauptseite übernimmt Vollbild/Drehen
     };
     vp = st;
-    // Gemeinsamer Quellenbestand (P1): Kontext des Originalvideos; die Wiedergabe behält genau die bisherige Reihenfolge
-    // (Projektion), dazu je Eintrag die Kennung der Quelle. Download-Angebote kommen in 180 aus dem Bestand, nicht aus st.cur.
+    const playbackCtx = () => mediaRegistry.contextFor(orig);
+    // Gemeinsamer Quellenbestand: Kontext des Originals und Kennungen der zulässigen Wiedergabekandidaten.
     st.media = { orig: null, own: null };
     try {
-      st.media.orig = mediaRegistry.contextFor(orig);
+      st.media.orig = playbackCtx();
       const pr = mediaRegistry.selectPlayback(st.media.orig, st.sources);
       st.sources = pr.sources; st.srcIds = pr.ids;
     } catch (e) { st.media.orig = null; }
+    // Spät erkannte MPDs bleiben für die gespeicherte Auswahl gesperrt, auch nach Cacheverdrängung.
+    const blockedPlayback = new Set();
+    st.noteDashPlayback = (key) => {
+      if (st.sources.some((u) => dashUrlKey(u) === key)) blockedPlayback.add(key);
+      if (key === dashUrlKey(st.fbPrev)) st.fbPrev = '';
+      if (st.cancelDashPreview) st.cancelDashPreview(key);
+    };
+    const playbackAllowed = (u) => !blockedPlayback.has(dashUrlKey(u)) && mediaRegistry.playbackAllowed(playbackCtx(), u);
     // Zeitmessung fürs Öffnen (Diagnose): ab dem Antippen des Knopfs
     st.openStat = openTimes = { t0: tapAt && performance.now() - tapAt < 4000 ? tapAt : performance.now(), how: '' };
     // Tonverstärkung vorbereiten, solange der Tipp auf "Player" noch "frisch" ist (sonst startet der Ton stumm)

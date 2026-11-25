@@ -378,7 +378,12 @@
         } catch (e) { info.dashFp = { error: 'fp' }; uq = { error: 'fp' }; }
         try { info.dashIdx = dashSegmentIndex(parsed, base, uq); } catch (e) { info.dashIdx = null; }
         info.dashHits = []; info.dashInit = 0;
-        [reqUrl, finalUrl].forEach((x) => { const k = x ? dashUrlKey(new URL(x, location.href).href) : ''; if (k) { dashInfo.delete(k); dashInfo.set(k, info); } });
+        [reqUrl, finalUrl].forEach((x) => {
+          const k = x ? dashUrlKey(new URL(x, location.href).href) : '';
+          if (!k) return;
+          if (vp && vp.noteDashPlayback) vp.noteDashPlayback(k);
+          dashInfo.delete(k); dashInfo.set(k, info);
+        });
         while (dashInfo.size > 40) dashInfo.delete(dashInfo.keys().next().value);
         // schon geladene Stücke (Kadri startet in Fenstern oft erst nach den ersten Abrufen) nachträglich zuordnen
         if (info.dashIdx) recentRes.forEach((x) => dashHit(info, x.k, x.t, x.s));   // (mit Anfragebeginn bzw. null = unbekannt)

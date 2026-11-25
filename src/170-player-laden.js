@@ -114,9 +114,11 @@
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     let metadataSeekPending = false;
     function tryNext() {
+      if (vp !== st) return;
       metadataSeekPending = true;
       clearTimeout(st.loadTimer);
       if (st.hls) { try { st.hls.destroy(); } catch (e) {} st.hls = null; }
+      while (st.idx < st.sources.length && !playbackAllowed(st.sources[st.idx])) st.idx++;
       if (st.idx >= st.sources.length) { useCapture(); return; }
       const u = st.sources[st.idx++];
       st.cur = u;
@@ -126,6 +128,7 @@
       if (!st.bridge) spin.classList.add('on');   // (nahtloser Start: das Bild läuft ja schon – kein Ladekreis)
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
+      if (!playbackAllowed(u)) { tryNext(); return; }
       if (PLAYLIST_RE.test(u)) {
         // Kadri lädt hls.js erst jetzt nach (spart auf jeder Seite ~620 KB) – danach dieselbe Quelle noch einmal
         if (typeof Hls === 'undefined' && IS_KADRI && typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.loadHls && !st.hlsTried) {
@@ -146,6 +149,7 @@
             refreshQual();
           });
           hls.on(Hls.Events.LEVEL_SWITCHED, () => refreshQual());
+          if (!playbackAllowed(u)) { tryNext(); return; }
           hls.loadSource(u);
           hls.attachMedia(vid);
           return;

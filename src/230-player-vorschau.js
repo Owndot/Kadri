@@ -30,6 +30,9 @@
       prev.classList.remove('img', 'live');
       try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
     }
+    st.cancelDashPreview = (key) => {
+      if (key === dashUrlKey(pvs.key) || key === dashUrlKey(pvs.src)) prevReset();
+    };
     st.cleanup.push(prevReset);
     st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
@@ -37,7 +40,7 @@
       if (st.mode !== 'own') return key;
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
-      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
+      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144 && playbackAllowed(u)).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
     // Gespiegelt (Facebook in Kadri): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
@@ -69,14 +72,15 @@
     }
     function prevLoad() {
       const key = st.mode === 'own' ? st.cur : fbPrevSrc();
-      if (!key) { prev.classList.add('noimg'); st.prevWhy = st.mode === 'own' ? 'keine Quelle' : 'nur Zeit (gespiegelt, keine passende Datei)'; return false; }   // gespiegelt ohne passende Datei: keine eigene Quelle → nur die Zeit
+      if (!playbackAllowed(key)) { if (pvs.src) prevReset(); prev.classList.add('noimg'); st.prevWhy = st.mode === 'own' ? 'keine Quelle' : 'nur Zeit (gespiegelt, keine passende Datei)'; return false; }
       if (pvs.key === key) return !prev.classList.contains('noimg');
       prev.classList.remove('noimg');
       // gespiegelt und ein anderes Video (Facebook spielt schon das nächste Reel)? Gemerkte Bilder gehören zum alten
       if (st.mode !== 'own' && pvs.key && assetOf(pvs.key) !== assetOf(key)) { thumbs.clear(); bucket = 0; }
       prevReset();
-      pvs.key = key;
       const u = previewSrc(key);
+      if (!playbackAllowed(u)) { prev.classList.add('noimg'); return false; }
+      pvs.key = key;
       pvs.src = u;
       if (st.hls && typeof Hls !== 'undefined') {
         const hp = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 2, maxMaxBufferLength: 4, backBufferLength: 0 });
@@ -219,7 +223,7 @@
           st.prevWhy = isFinite(md) ? 'nur Zeit (Datei ' + Math.round(pv.duration) + ' s, Video ' + Math.round(md) + ' s – anderes Video)' : 'nur Zeit (Länge des Videos unbekannt)';
           (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return;
         }
-      } else if (pvs.src !== st.cur && off) {
+      } else if (pvs.src !== st.cur && off && playbackAllowed(st.cur)) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -248,15 +252,19 @@
     // Ladefehler: war es eine kleinere Qualität, die laufende Quelle nehmen (einmal); sonst nur die Zeit
     // einmal neu laden (gleiche Quelle) – Server stockt beim ersten Mal manchmal, wenn der Player gerade selbst lädt
     function pvReload() {
-      if (pvs.reloaded || !pvs.key || !pvs.src || pvs.hls) return false;
+      if (pvs.reloaded || !playbackAllowed(pvs.key) || !playbackAllowed(pvs.src) || pvs.hls) return false;
       pvs.reloaded = true;
       const k = pvs.key, s = pvs.src;
-      setTimeout(() => { if (pvs.key !== k) return; try { pv.removeAttribute('src'); pv.load(); } catch (e) {} pvs.loadAt = Date.now(); pv.src = s; }, 800);
+      setTimeout(() => {
+        if (vp !== st || pvs.key !== k || pvs.src !== s || !playbackAllowed(k) || !playbackAllowed(s)) return;
+        try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
+        pvs.loadAt = Date.now(); pv.src = s;
+      }, 800);
       return true;
     }
     pv.addEventListener('error', () => {
       if (!pvs.key) return;   // (Quelle wurde absichtlich entfernt)
-      if (st.mode === 'own' && pvs.src && st.cur && pvs.src !== st.cur && !st.hls) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
+      if (st.mode === 'own' && pvs.src && pvs.src !== st.cur && !st.hls && playbackAllowed(st.cur)) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
       if (pvReload()) return;
       prev.classList.add('noimg');
       st.prevWhy = 'nur Zeit (Ladefehler ' + ((pv.error && pv.error.code) || '?') + ')';

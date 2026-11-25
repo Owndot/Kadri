@@ -139,11 +139,16 @@
       subs.add(x);
       return () => subs.delete(x);
     }
-    // Wiedergabe: dieselbe Reihenfolge wie bisher (legacyOrdering), dazu die Kennung jedes Eintrags. Die Auswahl der
-    // Wiedergabe ändert sich dadurch nicht.
+    function playbackAllowed(ctx, u) {
+      if (!u || mediaIsDashManifest(u)) return false;
+      const p = playerOf(ctx);
+      const s = p && p.sources.get(p.byUrl.get(u));
+      return !s || s.kind !== 'dash' || s.role !== 'manifest';
+    }
+    // Zulässige Wiedergabekandidaten in der bisherigen Reihenfolge, mit der Kennung jedes Eintrags.
     function selectPlayback(ctx, legacyOrdering) {
       const p = playerOf(ctx);
-      const list = (legacyOrdering || []).slice();
+      const list = (legacyOrdering || []).filter((u) => playbackAllowed(ctx, u));
       return { sources: list, ids: list.map((u) => (p && p.byUrl.get(u)) || '') };
     }
     // Ausgewählte Quelle in eine Transferangabe auflösen – nur aktuell, gebunden und auswählbar
@@ -187,7 +192,7 @@
     // Ist diese genaue Adresse für den Player bekannt? (nur Kennung, keine Adresse heraus)
     function idOf(ctx, url) { const p = playerOf(ctx); return (p && p.byUrl.get(url)) || ''; }
     const stats = () => ({ players: live.length, sources: total });
-    return { contextFor, observe, snapshot, invalidate, subscribe, selectPlayback, resolveSelection, resolveStream, resolveDash, idOf, stats };
+    return { contextFor, observe, snapshot, invalidate, subscribe, playbackAllowed, selectPlayback, resolveSelection, resolveStream, resolveDash, idOf, stats };
   }
   const mediaRegistry = createMediaRegistry();
   // ---------- Adapter: vorhandene Erkennung liefert Beobachtungen (keine neue Site-Logik) ----------
