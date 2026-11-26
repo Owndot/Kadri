@@ -1,13 +1,19 @@
-  function watchStall(o) {
+  // may: Übergabeentscheidung aus handBack, vor jedem Seek und Play erneut geprüft (origStartGuard)
+  function watchStall(o, may) {
     let last = o.currentTime, still = 0, n = 0;
     const iv = setInterval(() => {
       n++;
       const c = o.currentTime;
-      if (c > last + 0.2 || !o.isConnected) { clearInterval(iv); return; }   // läuft (oder Video weg)
+      // läuft, Video weg oder Entscheidung überholt (Quelle, Klassifikation, Element, Dokument, Epoche, neuer Player)
+      if (c > last + 0.2 || !o.isConnected || !may()) { clearInterval(iv); return; }
       still++;
       if (still === 3) {
         // kleiner Sprung + Play: bringt hängende Web-Player meist wieder in Gang
-        try { o.currentTime = c + 0.05; const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
+        try {
+          o.currentTime = c + 0.05;
+          if (!may()) { clearInterval(iv); return; }
+          const pr = o.play(); if (pr && pr.catch) pr.catch(() => {});
+        } catch (e) {}
       }
       if (still >= 7 || n > 12) clearInterval(iv);
       last = c;
@@ -82,13 +88,34 @@
   }
 
   // ----- Übergabe an die Seite -----
+  // Ein von Kadri ausgelöster Start des Seitenvideos gilt nur, solange die Übergabe für genau dieses Medium besteht:
+  // dieselbe, nicht zurückgenommene Übergabe ohne neuen Player, dasselbe Element im gültigen Dokument, dieselbe Quelle
+  // und Medien-Epoche, eine zulässige Adresse ohne bekannte MPD-Identität und ohne abgelehnte HLS-Variante.
+  // Jeder Aufruf prüft den heutigen Stand erneut; eine überholte Entscheidung wird nie wieder gültig.
+  let handedLast = null;
+  function origStartGuard(st) {
+    const o = st.orig, url = srcOf(o);
+    let same = null;
+    try { same = mediaOutputContext(o, () => st.handed && handedLast === st && (!vp || vp === st)); } catch (e) { return () => false; }
+    let valid = true;
+    return () => {
+      if (!valid) return false;
+      try {
+        valid = same() && srcOf(o) === url &&
+          (!url || (mediaRegistry.playbackAllowed(mediaRegistry.contextFor(o), url) && !hlsOrigStartBlocked(st, url)));
+      } catch (e) { valid = false; }
+      return valid;
+    };
+  }
   // Das Video der Seite springt an deine Stelle und läuft (mit Ton) weiter. Bis es dort ein Bild hat, liegt dein
   // letztes Bild genau darüber – sonst sähe man kurz den Anfang des Videos und dann einen Sprung.
   // Bei der Zurück-Geste passiert das schon in dem Moment, in dem sie erkannt wird (nicht erst nach der Prüfung).
   function handBack(st) {
     if (st.handed) return;
     st.handed = true;
+    handedLast = st;
     const o = st.orig;
+    const may = origStartGuard(st);
     let target = -1, atEnd = !!st.endHold;
     // Deine Stelle ZUERST merken – wird hls.js beendet, springt das eigene Video auf 0 zurück.
     // Gleiche Länge prüfen, damit nicht z. B. eine Werbung oder ein anderes Video verstellt wird.
@@ -107,10 +134,9 @@
     }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     const resume = () => {
-      const url = srcOf(o);
-      if (url && (!mediaSourceAllowed(url) || hlsOrigStartBlocked(st, url))) return;
+      if (!may()) return;
       try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
-      watchStall(o);
+      watchStall(o, may);
     };
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
     if (atEnd || st.closePaused) { try { o.pause(); } catch (e) {} }   // (nach einem Download: angehalten lassen)
