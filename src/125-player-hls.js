@@ -109,13 +109,16 @@
     if (typeof text !== 'string' || !/^\uFEFF?#EXTM3U/.test(text)) { rec.failed = true; return; }
     run.text = true;
     noteMediaType(master, 'hls'); if (base) noteMediaType(base, 'hls');
-    if (/^#EXT(?:INF|-X-TARGETDURATION):/m.test(text)) return;   // Medienplaylist: verweist auf keine weiteren Playlists
+    // Medienplaylist: Stücke, Init und Schlüssel sind keine Playlists (wie beim Playlist-Guard); als weitere Playlist
+    // verweist dort nur RENDITION-REPORT. Dynamische Angaben (Variablen, Content Steering) gelten in beiden Arten.
+    const media = /^#EXT(?:INF|-X-TARGETDURATION):/m.test(text);
     for (const raw of text.split(/\r\n|\r|\n/)) {
       const line = raw.trim();
       if (!line) continue;
+      if (line.indexOf('{$') >= 0 || /^#EXT-X-(?:CONTENT-STEERING|DEFINE)\b/.test(line)) rec.incomplete = true;
+      if (media && !/^#EXT-X-RENDITION-REPORT:/.test(line)) continue;
       const refs = [];
       if (line[0] === '#') {
-        if (/^#EXT-X-(?:CONTENT-STEERING|DEFINE)\b/.test(line)) rec.incomplete = true;
         HLS_URI_ATTR.lastIndex = 0;
         for (let m = HLS_URI_ATTR.exec(line); m; m = HLS_URI_ATTR.exec(line)) refs.push(m[1]);
       } else refs.push(line);
