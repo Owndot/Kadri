@@ -67,7 +67,9 @@
   // Vollständig heißt: jede URI-Zeile und jedes URI-Attribut des tatsächlich empfangenen Mastertexts (auch I-Frame-,
   // Session- und Mediengruppen, die hls.js nicht als Level führt) sowie die Level-/Alias-/Spuradressen von hls.js.
   // Eine neue Analyse derselben Hauptliste setzt pending und überholt die vorige; Rückmeldungen eines alten Laufs
-  // zählen nicht. Freigabe nur bei complete ohne pending/failed/denied und wenn jede erfasste Adresse heute zulässig
+  // zählen nicht. Innerhalb derselben Playerinstanz und Hauptlistenadresse ist das Wissen monoton: erfasste Adressen,
+  // denied und incomplete werden nie zurückgenommen. Eine andere Adresse (auch nur andere Query) oder ein neuer Player
+  // beginnt mit eigenem Eintrag. Freigabe nur bei complete ohne pending/failed/denied und wenn jede erfasste Adresse heute zulässig
   // ist. Fehlender Eintrag, laufende oder gescheiterte Analyse: keine Freigabe – unbekannt ist nicht erlaubt.
   // Budget: höchstens 512 eindeutige Adressen (Herkunft, Pfad, Query) je Hauptliste und 8 Hauptlisten je Player.
   // Duplikate zählen nicht; die 513. eindeutige Adresse wird nicht gespeichert, sondern macht den Eintrag unvollständig.
@@ -86,9 +88,10 @@
   function hlsMasterBegin(st, master) {
     const rec = hlsMasterRec(st, master, true);
     if (!rec) return null;
+    // Erneute Analyse: pending, failed und complete gelten je Lauf. Adressen werden nur vereinigt (gemeinsames
+    // Budget), denied und incomplete bleiben – eine kürzere oder ältere Liste nimmt kein früheres Wissen zurück.
     const run = {};
-    rec.run = run; rec.pending = true;
-    rec.urls = []; rec.keys = new Set();   // Adressen dieses Laufs; incomplete und denied bleiben bestehen
+    rec.run = run; rec.pending = true; rec.failed = false; rec.complete = false;
     return run;
   }
   function hlsMasterAdd(rec, u) {
