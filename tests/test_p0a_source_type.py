@@ -232,18 +232,24 @@ def run(page, net):
           ok and s['plays'] == 1 and s['hlsMade'] == 0, dict(s, decoded=ok))
 
     # ---------- Pflichtfall 8: Redirect, behauptete Rolle, Epoche, alter Callback ----------
+    # Umleitung: endungslose Einstiegsadresse auf eine echte Serverdatei (Playwright-Routen greifen für umgeleitete
+    # Abrufe nicht). Beide Kinder des Ziels sind als MPD bekannt; der bewachte hls.js-Pfad muss benutzt werden.
     net.reset()
-    net.serve['/gen/redir-target'] = (MASTER_TEXT, HLS_CT)
-    setup(page, B + 'redir?to=/gen/redir-target')
-    mark_kids(page, net)
+    low, high = B + 'hls2/b/index.m3u8', B + 'hls2/a/index.m3u8'
+    setup(page, B + 'redir?to=/hls2/master.m3u8')
+    for u in (low, high):
+        assert page.evaluate('mark', u)
+        net.mpd.add(u)
     since = len(net.requests)
     page.evaluate('k.openBrowserPlayer(v)')
     page.wait_for_timeout(3000)
+    made = page.evaluate('log.hlsMade')
     page.evaluate('() => { log.plays = 0; k.state() && k.closePlayer(); }')
     page.wait_for_timeout(1500)
     s = snap(page)
-    kids = net.count(KID_A, since) + net.count(KID_B, since)
-    check('Redirect auf endungslosen Master: keine MPD-Kind-Requests, kein Originalstart', kids == 0 and s['plays'] == 0, dict(s, mpdKids=kids))
+    kids = net.count(low, since) + net.count(high, since)
+    check('Redirect einer endungslosen Adresse auf einen Master: hls.js-Pfad, keine MPD-Kind-Requests, kein Originalstart',
+          made >= 1 and kids == 0 and s['plays'] == 0, dict(s, mpdKids=kids))
 
     net.reset()
     net.serve['/gen/claimed'] = (CLIP, 'video/mp4')
