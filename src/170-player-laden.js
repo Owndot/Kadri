@@ -130,7 +130,18 @@
       st.loadTimer = setTimeout(tryNext, 9000);   // lädt nicht? nächste Quelle
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (!playbackAllowed(u)) { tryNext(); return; }
-      if (PLAYLIST_RE.test(u)) {
+      // Ladeweg nach belegtem Typ, nicht nach Schreibweise (src/040 mediaTypeOf): HLS nur über den bewachten hls.js-Loader.
+      // Ohne Beleg zuerst die eigene Typprobe; direkte Wiedergabe nur als belegte oder per Endung benannte Datei.
+      const type = mediaTypeOf(u);
+      if (type === 'dash') { tryNext(); return; }
+      if (type !== 'hls' && type !== 'file' && !PLAYLIST_RE.test(u) && !(st.probed && st.probed.has(u))) {
+        (st.probed || (st.probed = new Set())).add(u);
+        st.idx--;
+        const again = () => { if (vp === st && st.cur === u && st.mode === 'own') tryNext(); };
+        mediaProbe(u).then(again, again);
+        return;
+      }
+      if (type === 'hls' || PLAYLIST_RE.test(u)) {
         // Kadri lädt hls.js erst jetzt nach (spart auf jeder Seite ~620 KB) – danach dieselbe Quelle noch einmal
         if (typeof Hls === 'undefined' && IS_KADRI && typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS.loadHls && !st.hlsTried) {
           st.hlsTried = true; st.idx--;
@@ -184,6 +195,7 @@
         tryNext();
         return;
       }
+      if (type !== 'file' && type !== 'claimed-file') { tryNext(); return; }   // Typ unbelegt (z. B. endungslos): nicht nativ
       vid.src = u;
       vid.play().catch(() => {});
     }

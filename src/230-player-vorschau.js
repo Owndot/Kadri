@@ -40,7 +40,9 @@
       if (st.mode !== 'own') return key;
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
-      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144 && playbackAllowed(u)).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
+      // (kleinere Datei nur mit Dateibeleg – nativ geladen wie die eigene Kopie, src/170)
+      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144 && playbackAllowed(u) &&
+        ['file', 'claimed-file'].indexOf(mediaTypeOf(u)) >= 0).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
     // Gespiegelt (Facebook in Kadri): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt

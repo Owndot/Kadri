@@ -350,6 +350,72 @@
     const key = mediaIdentityKey(u);
     return mediaSourceIdentities.has(key) || dashInfo.has(key);
   }
+  // ---------- Medientyp einer exakten Adresse (Herkunft, Pfad, Query) nach Belegen ----------
+  // hls: gelesener Playlisttext (#EXTM3U) dieser Adresse, ihres Weiterleitungsziels oder als Unterliste genannt,
+  //      Content-Type-Meldung des Hintergrunds, Kadris hls.js-Masteranalyse, eigene Probe.
+  // file: nur Kadris eigene Probe der ersten Bytes (ISO-BMFF- oder EBML-Kopf).
+  // HLS-/DASH-Belege wirken ausschließlich einschränkend und gelten deshalb auch, wenn die Seite sie gemeldet hat.
+  // Eine direkte Wiedergabe als Datei stützt sich nie auf Dateiendung oder Behauptungen der Seite allein.
+  const MEDIA_TYPE_RANK = { file: 1, hls: 2, dash: 3 };
+  const mediaTypeSeen = new Map();
+  function noteMediaType(u, type) {
+    if (typeof u !== 'string' || u.length > MEDIA_IDENTITY_URL_LIMIT || !MEDIA_TYPE_RANK[type]) return;
+    const key = mediaIdentityKey(u);
+    if (!key) return;
+    const old = mediaTypeSeen.get(key);
+    if (old && MEDIA_TYPE_RANK[old] >= MEDIA_TYPE_RANK[type]) return;   // einschränkender Beleg bleibt bestehen
+    mediaTypeSeen.delete(key); mediaTypeSeen.set(key, type);
+    if (mediaTypeSeen.size > 1024) mediaTypeSeen.delete(mediaTypeSeen.keys().next().value);
+  }
+  // 'dash' | 'hls' | 'file' (eigene Probe) | 'claimed-file' (nur Dateiendung) | '' (Typ unbekannt)
+  function mediaTypeOf(u) {
+    if (typeof u !== 'string' || !u) return '';
+    if (mediaIsDashManifest(u)) return 'dash';
+    const kind = mediaKindOf(u, '');
+    if (kind === 'dash') return 'dash';
+    const seen = u.length <= MEDIA_IDENTITY_URL_LIMIT ? mediaTypeSeen.get(mediaIdentityKey(u)) : '';
+    if (seen === 'dash' || seen === 'hls' || kind === 'hls') return seen === 'dash' ? 'dash' : 'hls';
+    if (seen === 'file') return 'file';
+    return kind === 'mp4' || kind === 'unsupported' ? 'claimed-file' : '';
+  }
+  // Eigene Typprobe: genau ein Abruf der ersten 4096 Bytes (Range), Cookies nur derselben Herkunft, ungehaktes fetch.
+  // Ergebnis je exakter Adresse zwischengespeichert; nicht lesbare Antworten (z. B. ohne CORS) ergeben ''.
+  const mediaProbes = new Map();
+  function mediaProbeType(b) {
+    const head = String.fromCharCode.apply(null, Array.from(b.subarray(0, 600))).replace(/^(\uFEFF|\xEF\xBB\xBF)/, '').trimStart();
+    if (head.startsWith('#EXTM3U')) return 'hls';
+    if (DASH_ROOT_RE.test(head)) return 'dash';
+    const box = b.length >= 8 ? String.fromCharCode(b[4], b[5], b[6], b[7]) : '';
+    if (/^(ftyp|styp|moov|moof|mdat|free|skip|sidx|wide)$/.test(box)) return 'file';
+    if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'file';
+    return '';
+  }
+  function mediaProbe(u) {
+    const key = typeof u === 'string' && u.length <= MEDIA_IDENTITY_URL_LIMIT && mediaUrlOk(u.split('#')[0]) ? mediaIdentityKey(u) : '';
+    if (!key) return Promise.resolve('');
+    if (mediaProbes.has(key)) return mediaProbes.get(key);
+    const run = async () => {
+      const f = rawFetch || (typeof fetch === 'function' ? fetch : null);
+      if (!f) return '';
+      const res = await f(u.split('#')[0], { headers: { Range: 'bytes=0-4095' }, credentials: 'same-origin', redirect: 'follow' });
+      if (!res || !(res.ok || res.status === 206) || !res.body || !res.body.getReader) return '';
+      const rd = res.body.getReader();
+      let buf = new Uint8Array(0);
+      while (buf.length < 4096) {
+        const { done, value } = await rd.read();
+        if (done || !value) break;
+        const n = new Uint8Array(buf.length + value.length); n.set(buf); n.set(value, buf.length); buf = n;
+      }
+      try { rd.cancel(); } catch (e) {}
+      const type = mediaProbeType(buf.subarray(0, 4096));
+      if (type) { noteMediaType(u, type); if (res.url) noteMediaType(res.url, type); }
+      return type;
+    };
+    const p = run().catch(() => '');
+    mediaProbes.set(key, p);
+    if (mediaProbes.size > 256) mediaProbes.delete(mediaProbes.keys().next().value);
+    return p;
+  }
   function admitMediaIdentity(key) {
     if (!key || key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) ||
         mediaSourceIdentities.has(key) || dashInfo.has(key)) return false;
@@ -394,6 +460,7 @@
       const part = (a, role) => { if (!a) return; const k = urlKey(a); if (plParts.get(k) === 'init') return; plParts.delete(k); plParts.set(k, role); if (plParts.size > 4000) plParts.delete(plParts.keys().next().value); };
       const head = text.slice(0, 600).trimStart();
       if (head.startsWith('#EXTM3U')) {
+        noteMediaType(reqUrl, 'hls'); if (finalUrl) noteMediaType(finalUrl, 'hls');
         const lines = text.split(/\r?\n/);
         let sum = 0, segs = 0, kidNext = false;
         for (let i = 0; i < lines.length; i++) {
@@ -402,11 +469,11 @@
           if (l[0] === '#') {
             if (l.startsWith('#EXTINF:')) { sum += parseFloat(l.slice(8)) || 0; segs++; }
             else if (l.startsWith('#EXT-X-STREAM-INF')) kidNext = true;
-            else if (l.startsWith('#EXT-X-MEDIA:') || l.startsWith('#EXT-X-I-FRAME-STREAM-INF')) { const m = /URI="([^"]+)"/.exec(l); if (m) { info.kids.add(urlKey(abs(m[1]))); part(abs(m[1]), 'media-playlist'); } }
+            else if (l.startsWith('#EXT-X-MEDIA:') || l.startsWith('#EXT-X-I-FRAME-STREAM-INF')) { const m = /URI="([^"]+)"/.exec(l); if (m) { info.kids.add(urlKey(abs(m[1]))); part(abs(m[1]), 'media-playlist'); noteMediaType(abs(m[1]), 'hls'); } }
             else if (l.startsWith('#EXT-X-MAP:')) { const m = /URI="([^"]+)"/.exec(l); if (m) { addDir(abs(m[1])); part(abs(m[1]), 'init'); } }
             continue;
           }
-          if (kidNext) { info.kids.add(urlKey(abs(l))); part(abs(l), 'media-playlist'); kidNext = false; }
+          if (kidNext) { info.kids.add(urlKey(abs(l))); part(abs(l), 'media-playlist'); noteMediaType(abs(l), 'hls'); kidNext = false; }
           else { addDir(abs(l)); part(abs(l), 'segment'); }
         }
         if (segs) { info.live = text.indexOf('#EXT-X-ENDLIST') < 0; if (!info.live) info.dur = sum; }
@@ -486,6 +553,7 @@
   if (IS_KADRI && typeof KADRI_HOOKS !== 'undefined') {
     KADRI_HOOKS.onSrc = (u, k) => {
       if (typeof u !== 'string' || !/^https?:/i.test(u) || SEGMENT_RE.test(u)) return;
+      noteMediaType(u, k === 'mpd' ? 'dash' : 'hls');   // Content-Type laut Browser, auch für die Adresse ohne Kennzeichen
       if (!PLAYLIST_RE.test(u)) u += k === 'mpd' ? '#kadri.mpd' : '#kadri.m3u8';
       addSource(u);
     };

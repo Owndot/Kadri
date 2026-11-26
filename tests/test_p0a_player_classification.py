@@ -97,11 +97,13 @@ def test_player(page):
 
     page.goto(B)
     setup(page)
-    outcome = page.evaluate('''() => {
+    outcome = page.evaluate('''async () => {
         const mp4 = url('/clip.mp4'), mpd = url('/probe.m3u8'), hls = url('/hls/master.m3u8');
         k.resolveAs([mp4, mpd, hls]);
         k.openBrowserPlayer(v);
         const st = k.state();
+        // Direkte Dateiwiedergabe folgt der Typprobe (src/170): erst den tatsächlichen MP4-Ladeaufruf abwarten
+        for (let i = 0; i < 100 && !calls.video.includes(mp4); i++) await new Promise(r => setTimeout(r, 50));
         const stored = st.sources.includes(mpd) && st.cur === mp4;
         mark('/probe.m3u8');
         evictSummary();
@@ -114,13 +116,14 @@ def test_player(page):
 
     page.goto(B)
     setup(page)
-    outcome = page.evaluate('''() => {
+    outcome = page.evaluate('''async () => {
         const mpd = url('/network.m3u8'), mp4 = url('/clip.mp4');
         k.seeUrl(mpd);
         k.seeUrl(mp4);
         mark('/network.m3u8');
         const list = k.playerSources(v);
         k.openBrowserPlayer(v);
+        for (let i = 0; i < 100 && !calls.video.includes(mp4); i++) await new Promise(r => setTimeout(r, 50));
         return {control: list.includes(mp4) && calls.video.includes(mp4),
             blocked: !list.includes(mpd) && !calls.hls.includes(mpd) && !calls.video.includes(mpd)};
     }''')

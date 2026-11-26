@@ -108,6 +108,7 @@
     if (!rec || rec.run !== run || !rec.pending) return;
     if (typeof text !== 'string' || !/^\uFEFF?#EXTM3U/.test(text)) { rec.failed = true; return; }
     run.text = true;
+    noteMediaType(master, 'hls'); if (base) noteMediaType(base, 'hls');
     if (/^#EXT(?:INF|-X-TARGETDURATION):/m.test(text)) return;   // Medienplaylist: verweist auf keine weiteren Playlists
     for (const raw of text.split(/\r\n|\r|\n/)) {
       const line = raw.trim();
@@ -142,11 +143,15 @@
     const rec = hlsMasterRec(st, master, true);
     if (rec) rec.denied = true;   // ohne Platz für einen Eintrag bleibt die Hauptliste unbekannt: keine Freigabe
   }
-  // Ist die Adresse eine HLS-Hauptliste, darf Kadri das native Original nur mit positiver Masterentscheidung starten.
+  // Darf Kadri das native Original mit dieser Adresse starten? Typ nach Belegen (src/040 mediaTypeOf), nicht nach
+  // Schreibweise: HLS (auch endungslos, .m3u, irreführendes .mp4) nur mit positiver Masterentscheidung; DASH nie;
+  // eine Datei mit eigener Probe oder – wie bisher – mit Dateiendung ohne Gegenbeleg; unbekannter Typ: nicht.
   function hlsNativeStartAllowed(st, url) {
-    if (!url) return true;   // keine prüfbare Adresse (MediaSource/Blob der Seite): keine HLS-Entscheidung
+    if (!url) return true;   // keine prüfbare Adresse (MediaSource/Blob der Seite): keine Typentscheidung möglich
     const rec = st.hlsMasters ? st.hlsMasters.get(dashUrlKey(url)) : null;
-    if (!rec && mediaKindOf(url, '') !== 'hls') return true;   // keine Hauptliste: Quellenprüfung allein entscheidet
+    const type = mediaTypeOf(url);
+    if (type === 'dash') return false;
+    if (!rec && type !== 'hls') return type === 'file' || type === 'claimed-file';
     if (st.noNativeHlsStart || !rec) return false;
     return rec.complete && !rec.pending && !rec.failed && !rec.denied && !rec.incomplete &&
       rec.urls.every((u) => mediaSourceAllowed(u));
