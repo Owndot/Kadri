@@ -134,7 +134,9 @@
         if (isFinite(vd) && (st.vid.ended || t >= vd - 1)) { atEnd = true; target = Math.max(0, (isFinite(od) ? od : vd) - 0.3); }
       }
     } catch (e) {}
-    if (target >= 0 && Math.abs((o.currentTime || 0) - target) > 0.4) {
+    // Positionsabgleich ist ein Eingriff am Original wie Play: nur mit aktuell gültiger Übergabeentscheidung. Ohne sie
+    // bleibt das Original unverändert (kein Overlay, kein Seek); Ton und Pause folgen wie bisher.
+    if (target >= 0 && Math.abs((o.currentTime || 0) - target) > 0.4 && may()) {
       coverOver(o, st.vid);
       try { o.currentTime = target; } catch (e) {}
     }
