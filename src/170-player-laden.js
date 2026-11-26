@@ -154,11 +154,17 @@
               return true;
             }) });
           st.hls = hls;
-          hls.on(Hls.Events.ERROR, (ev, data) => { if (activeHls() && data && data.fatal) tryNext(); });
+          // Masteranalyse für einen späteren nativen Originalstart: beginnt vor dem ersten Abruf (src/125)
+          const masterRun = hlsMasterBegin(st, u);
+          hls.on(Hls.Events.ERROR, (ev, data) => {
+            if (!activeHls() || !data || !data.fatal) return;
+            hlsMasterFailed(st, u, masterRun);
+            tryNext();
+          });
           hls.on(Hls.Events.MANIFEST_PARSED, (ev, data) => {
             if (!activeHls()) return;
-            const master = noteHlsMaster(st, u, data);
-            if (master.urls.some((x) => !allowed(x))) master.denied = true;
+            const master = hlsMasterParsed(st, u, masterRun, data);
+            if (master && master.urls.some((x) => !allowed(x))) master.denied = true;
             if (!pruneHlsLevels(hls, allowed)) { queueMicrotask(() => { if (activeHls()) tryNext(); }); return; }
             hls.startLevel = hls.levels.length - 1;
             hls.startLoad(startPosition);
@@ -229,8 +235,8 @@
       bridgeDrop();
       dropPoster();
       const originalUrl = srcOf(orig);
-      // Ein angehaltenes Original startet Kadri nur, wenn dessen Adresse und alle bekannten HLS-Varianten zulässig sind.
-      if (orig.paused && originalUrl && (!playbackAllowed(originalUrl) || hlsOrigStartBlocked(st, originalUrl))) {
+      // Ein angehaltenes Original startet Kadri nur mit positiver Quellenentscheidung (src/260 origSourceAllowed).
+      if (orig.paused && originalUrl && !origSourceAllowed(st, originalUrl, playbackAllowed)) {
         st.closePaused = true;
         toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen');
         closePlayer();

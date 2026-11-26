@@ -93,6 +93,12 @@
   // und Medien-Epoche, eine zulässige Adresse ohne bekannte MPD-Identität und ohne abgelehnte HLS-Variante.
   // Jeder Aufruf prüft den heutigen Stand erneut; eine überholte Entscheidung wird nie wieder gültig.
   let handedLast = null;
+  // Darf Kadri dieses Original mit dieser Adresse selbst starten oder seine Position ändern? Die Adresse muss
+  // zulässig sein (allowed: Registry bzw. Playerveto) und für eine HLS-Hauptliste eine vollständige, gültige
+  // Masterentscheidung haben (src/125 hlsNativeStartAllowed). Eine fehlende Entscheidung ist keine Freigabe.
+  function origSourceAllowed(st, url, allowed) {
+    return !url || (allowed(url) && hlsNativeStartAllowed(st, url));
+  }
   function origStartGuard(st) {
     const o = st.orig, url = srcOf(o);
     let same = null;
@@ -102,7 +108,7 @@
       if (!valid) return false;
       try {
         valid = same() && srcOf(o) === url &&
-          (!url || (mediaRegistry.playbackAllowed(mediaRegistry.contextFor(o), url) && !hlsOrigStartBlocked(st, url)));
+          origSourceAllowed(st, url, (u) => mediaRegistry.playbackAllowed(mediaRegistry.contextFor(o), u));
       } catch (e) { valid = false; }
       return valid;
     };

@@ -45,30 +45,61 @@
     hls.startLoad(media.currentTime || -1);
     return true;
   }
-  // Variantenentscheidung des eigenen Players für genau diese Hauptliste. Ein natives Seitenvideo mit derselben
-  // Hauptliste lädt die Varianten ohne Kadris Prüfung. Eine einmal abgelehnte Variante sperrt deshalb jeden von Kadri
-  // ausgelösten Start dieses Originals, auch nach Capture-Rückfall oder Rückgabe. Gebunden an die Playerinstanz und
-  // die exakte Hauptlistenadresse: eine andere Quelle desselben Elements wird neu bewertet.
-  function noteHlsMaster(st, master, data) {
-    const urls = new Set();
-    const add = (u) => { if (typeof u === 'string' && u && urls.size < 512) urls.add(u); };
-    ((data && data.levels) || []).forEach((l) => { add(l.uri); (Array.isArray(l.url) ? l.url : [l.url]).forEach(add); });
-    ((data && data.audioTracks) || []).concat((data && data.subtitleTracks) || []).forEach((t) => add(t.url));
-    const rec = { urls: Array.from(urls), denied: false };
+  // ---------- Natives HLS-Original: Start durch Kadri nur mit vollständiger, gültiger Masterentscheidung ----------
+  // Ein natives Seitenvideo lädt die Varianten seiner Hauptliste ohne Kadris Prüfung. Je Playerinstanz und exakter
+  // Hauptlistenadresse (Herkunft, Pfad, Query) gilt deshalb ein kleiner, nachvollziehbarer Zustand:
+  //   (kein Eintrag) Analyse nicht begonnen            pending   Analyse läuft (ab loadSource)
+  //   complete       Hauptliste vollständig gelesen    failed    Abruf/Parsen fehlgeschlagen oder abgebrochen
+  //   denied         eine Adresse dieser Hauptliste wurde abgelehnt (bleibt bestehen)
+  // Eine neue Analyse derselben Hauptliste setzt pending und überholt die vorige; Rückmeldungen eines alten Laufs
+  // zählen nicht. Freigabe nur bei complete ohne pending/failed/denied und wenn jede erfasste Adresse heute zulässig
+  // ist. Fehlender Eintrag, laufende oder gescheiterte Analyse: keine Freigabe – unbekannt ist nicht erlaubt.
+  const HLS_MASTER_RECS = 8;
+  function hlsMasterRec(st, master, create) {
+    const key = dashUrlKey(master);
+    if (!key) return null;
     if (!st.hlsMasters) st.hlsMasters = new Map();
-    st.hlsMasters.set(dashUrlKey(master), rec);
+    let rec = st.hlsMasters.get(key) || null;
+    if (!rec && create && st.hlsMasters.size < HLS_MASTER_RECS) {
+      rec = { urls: [], pending: false, complete: false, failed: false, denied: false, run: null };
+      st.hlsMasters.set(key, rec);
+    }
     return rec;
   }
-  function noteHlsDenial(st, master) {
-    const rec = st.hlsMasters && st.hlsMasters.get(dashUrlKey(master));
-    if (rec) rec.denied = true;
-    else noteHlsMaster(st, master, null).denied = true;
+  function hlsMasterBegin(st, master) {
+    const rec = hlsMasterRec(st, master, true);
+    if (!rec) return null;
+    const run = {};
+    rec.run = run; rec.pending = true;
+    return run;
   }
-  // Darf Kadri das Seitenvideo mit dieser Adresse selbst starten? Prüft den heutigen Klassifikationsstand jeder
-  // bekannten Variante erneut und behält eine frühere Ablehnung.
-  function hlsOrigStartBlocked(st, url) {
-    if (!url) return false;
-    if (st.noNativeHlsStart && PLAYLIST_RE.test(url)) return true;
-    const rec = st.hlsMasters && st.hlsMasters.get(dashUrlKey(url));
-    return !!rec && (rec.denied || rec.urls.some((u) => !mediaSourceAllowed(u)));
+  function hlsLevelUrls(data) {
+    const urls = [];
+    const add = (u) => { if (typeof u === 'string' && u && urls.indexOf(u) < 0 && urls.length < 512) urls.push(u); };
+    ((data && data.levels) || []).forEach((l) => { add(l.uri); (Array.isArray(l.url) ? l.url : [l.url]).forEach(add); });
+    ((data && data.audioTracks) || []).concat((data && data.subtitleTracks) || []).forEach((t) => add(t.url));
+    return urls;
+  }
+  function hlsMasterParsed(st, master, run, data) {
+    const rec = hlsMasterRec(st, master, false);
+    if (!rec || rec.run !== run || !rec.pending) return rec;
+    rec.urls = hlsLevelUrls(data);
+    rec.pending = false; rec.failed = false; rec.complete = true;
+    return rec;
+  }
+  function hlsMasterFailed(st, master, run) {
+    const rec = hlsMasterRec(st, master, false);
+    if (rec && rec.run === run && rec.pending) { rec.pending = false; rec.failed = true; }
+  }
+  function noteHlsDenial(st, master) {
+    const rec = hlsMasterRec(st, master, true);
+    if (rec) rec.denied = true;   // ohne Platz für einen Eintrag bleibt die Hauptliste unbekannt: keine Freigabe
+  }
+  // Ist die Adresse eine HLS-Hauptliste, darf Kadri das native Original nur mit positiver Masterentscheidung starten.
+  function hlsNativeStartAllowed(st, url) {
+    if (!url) return true;   // keine prüfbare Adresse (MediaSource/Blob der Seite): keine HLS-Entscheidung
+    const rec = st.hlsMasters ? st.hlsMasters.get(dashUrlKey(url)) : null;
+    if (!rec && mediaKindOf(url, '') !== 'hls') return true;   // keine Hauptliste: Quellenprüfung allein entscheidet
+    if (st.noNativeHlsStart || !rec) return false;
+    return rec.complete && !rec.pending && !rec.failed && !rec.denied && rec.urls.every((u) => mediaSourceAllowed(u));
   }
