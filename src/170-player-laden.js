@@ -144,6 +144,8 @@
           const activeHls = () => vp === st && st.hls === hls && st.cur === u;
           const allowed = (url) => activeHls() && playbackAllowed(u) && playbackAllowed(url);
           const startPosition = st.startTime > 1 ? st.startTime : -1;
+          // Masteranalyse für einen späteren nativen Originalstart: beginnt vor dem ersten Abruf (src/125)
+          const masterRun = hlsMasterBegin(st, u);
           const hls = new Hls({ enableWorker: false, subtitleDisplay: false, autoStartLoad: false, startPosition,
             pLoader: guardedHlsLoader(allowed, (context) => {
               if (!activeHls()) return true;
@@ -152,10 +154,10 @@
               st.qualPinned = null;
               refreshQual();
               return true;
+            }, (response, context) => {
+              if (activeHls()) hlsMasterText(st, u, masterRun, (response && response.url) || context.url, response && response.data);
             }) });
           st.hls = hls;
-          // Masteranalyse für einen späteren nativen Originalstart: beginnt vor dem ersten Abruf (src/125)
-          const masterRun = hlsMasterBegin(st, u);
           hls.on(Hls.Events.ERROR, (ev, data) => {
             if (!activeHls() || !data || !data.fatal) return;
             hlsMasterFailed(st, u, masterRun);
