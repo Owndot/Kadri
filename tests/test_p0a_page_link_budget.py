@@ -17,6 +17,7 @@ SOURCE = SOURCE[:SOURCE.rindex('})();')] + '''
     sharePost: () => onDownload(v, true),
     sharePage: () => root.querySelector('[aria-label="Link teilen"], [aria-label="Share link"]').click(),
     fromFrame: () => { active = v; return fuiFrameAct('share'); },
+    confirm: () => root?.querySelector('[role=menuitem]')?.click(),
     relay: (r, frame) => {
       const g = {key: '1:fixture', src: {f: 1, d: 'fixture'}, n: 'a'.repeat(32)};
       fuiTop.regs.set(g.key, g);
@@ -139,7 +140,10 @@ def cases(page):
       await flush();
       return {...calls, relays: relayCalls};
     }''', reply)
-    check('Beitragslink aus iframe erreicht einmal die Ausgabe', result == dict(shares=[link], copies=[], relays=1), (reply, result))
+    # Die Ausgabe gehört zum Prüfer des Ursprungsframes: oben null Aufrufe, im Frame genau einer nach Bestätigung.
+    local = frame.evaluate('''async () => { k.confirm(); k.confirm(); await flush(); return calls; }''')
+    check('Beitragslink aus iframe erreicht einmal die Ausgabe', result == dict(shares=[], copies=[], relays=1) and
+          local == dict(shares=[link], copies=[]) and reply.get('ext') is None, (reply, result, local))
 
     for mode in ('ersetzt', 'navigiert', 'später Clipboard-Fallback'):
         page.goto(B)
@@ -163,8 +167,34 @@ def cases(page):
           await flush();
           return calls;
         }''', [mode, reply])
-        expected = [link] if mode == 'später Clipboard-Fallback' else []
-        check('Alter Frame: ' + mode, result == dict(shares=expected, copies=[]), result)
+        check('Alter Frame: ' + mode, result == dict(shares=[], copies=[]), result)
+
+    # Share im Ursprungsframe begonnen, Frame danach ersetzt: kein später Clipboard-Fallback im alten Dokument
+    page.goto(B)
+    setup(page)
+    page.evaluate("document.body.append(Object.assign(document.createElement('iframe'), {src:'/direct.html'}))")
+    child = page.frames[1]
+    child.wait_for_load_state()
+    setup(child)
+    local = child.evaluate('''async () => {
+      let fail;
+      window.shareReply = new Promise((_, r) => { fail = r; });
+      k.fromFrame();
+      k.confirm();
+      await flush();
+      window.parent.document.querySelector('iframe').__fail = fail;
+      return calls;
+    }''')
+    page.evaluate('''async () => {
+      const f = document.querySelector('iframe'), fail = f.__fail, w = f.contentWindow;
+      f.replaceWith(f.cloneNode(false));
+      fail(new Error('Share-Ziel nicht verfügbar'));
+      await new Promise(r => setTimeout(r, 50));
+      window.oldCalls = w.calls;
+    }''')
+    old = page.evaluate('({shares: oldCalls.shares, copies: oldCalls.copies, top: calls})')
+    check('Alter Frame: später Clipboard-Fallback', old['shares'] == [link] and old['copies'] == [] and
+          old['top'] == dict(shares=[], copies=[]), (local, old))
 
 
 try:

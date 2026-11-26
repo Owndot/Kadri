@@ -186,7 +186,7 @@
     const current = mediaOutputContext(v, () => active === v);
     const fileAllowed = d && mediaOutputFor(d, current, v);
     const linkAllowed = link && mediaOutputFor(link, current, v);
-    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', ext: { k: 'ytdlnis', u: link },
+    if (link) items.push({ label: 'Mit YTDLnis', sub: 'Link an YTDLnis', frameConfirm: true,
       allowed: linkAllowed, fn: () => toYtdlnis(link, linkAllowed) });
     if (d && sameOrigin(d) && !IS_ANDROID_UA()) {
       items.push({ label: 'Im Browser herunterladen', sub: 'Download-Manager des Browsers · bleibt auf dieser Seite', allowed: fileAllowed, fn: () => {
@@ -201,8 +201,7 @@
         frameConfirm: true, allowed: fileAllowed, fn: () => pageDlOpenTab(d, fileAllowed) });
     }
     const shareAllowed = link ? pageLinkOutputFor(link, current, v) : fileAllowed;
-    items.push({ label: 'Teilen …', sub: 'an eine andere App', ext: link ? { k: 'share-page', u: link } : null,
-      frameConfirm: !link, allowed: shareAllowed,
+    items.push({ label: 'Teilen …', sub: 'an eine andere App', frameConfirm: true, allowed: shareAllowed,
       fn: () => link ? sharePageLink(link, shareAllowed) : shareUrl(d, shareAllowed) });
     return items;
   }

@@ -188,7 +188,9 @@
     'Vollständige Diagnose kopiert – enthält Adressen, nur bewusst weitergeben': 'Full diagnostics copied – contains addresses, share deliberately only',
     // Knöpfe & Bedienung
     'Im Videoplayer öffnen': 'Open in video player', 'Herunterladen (z. B. mit YTDLnis)': 'Download (e.g. with YTDLnis)',
-    'Video speichern': 'Save video', 'Speichern': 'Save', 'Mit YTDLnis': 'With YTDLnis', 'Link an YTDLnis': 'Link to YTDLnis', 'Link teilen': 'Share link',
+    'Video speichern': 'Save video', 'Speichern': 'Save', 'Im Video-Fenster bestätigen': 'Confirm in the video frame',
+    'Bitte im Video-Fenster bestätigen': 'Please confirm in the video frame',
+    'Nichts geteilt oder geöffnet – bitte direkt im Video-Fenster bestätigen': 'Nothing shared or opened – please confirm directly in the video frame', 'Mit YTDLnis': 'With YTDLnis', 'Link an YTDLnis': 'Link to YTDLnis', 'Link teilen': 'Share link',
     'Teilen-Menü': 'Share menu', 'Helfer-App · direkt aufs Handy': 'Helper app · straight to the phone',
     'Helfer-App lädt – du kannst die Seite verlassen; Fortschritt in der Benachrichtigung': 'Helper app is downloading – you can leave the page; progress in the notification',
     'Helfer-App nicht gekoppelt – in den Kadri-Einstellungen „Helfer koppeln“': 'Helper app not paired – Kadri settings, “Pair helper”',

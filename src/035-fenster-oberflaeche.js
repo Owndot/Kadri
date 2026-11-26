@@ -14,8 +14,9 @@
   //  - Schutz vor Werbung: nur ein Video, das Kadri im Fenster selbst als laufend, hörbar und groß genug erkennt, nur ein
   //    sichtbar großes Fenster, genau ein Knopf (das Hauptfenster entscheidet), und eine Auswahl erscheint hier nur
   //    nach einem Tipp auf diesen Knopf (bzw. einen Eintrag) – nie von selbst.
-  //  - Seitenlinks und anonymisierte Diagnose kann das Hauptfenster übernehmen. Medienadressen, die einen frischen
-  //    Tipp brauchen, werden im Ursprungsfenster bestätigt, damit die Quellenprüfung dort bis zur Ausgabe gilt.
+  //  - Die anonymisierte Diagnose kann das Hauptfenster übernehmen. Jede Adresse (Seiten-, Beitragslink oder Medium),
+  //    die einen frischen Tipp braucht, wird im Ursprungsfenster bestätigt und dort ausgegeben: Nur dessen Prüfer kennt
+  //    spätere MPD-Erkennungen des Dokuments und gilt so bis zum letzten Teilen-, Kopier- oder Intent-Aufruf.
   //  - Fehlt etwas (Userscript, Firefox, keine Zuordnung, Vollbild im Fenster): Knopf und Auswahl wie bisher im Fenster.
   const FUI_ON = typeof KADRI_FRAMEUI === 'object' && !!KADRI_FRAMEUI && typeof KADRI_FRAMEUI.send === 'function';
   const FUI_GEO = '__kadriFg1';
@@ -128,9 +129,19 @@
     if (a === 'diag') { let t = ''; try { t = diagAnon(); } catch (e) { t = 'Kadri – anonymisierte Diagnose: Fehler ' + ((e && e.name) || ''); } return { ok: true, ext: { k: 'copy', t: t } }; }
     if (a === 'share') {
       const u = postUrlFor(v);
-      return pageLinkAllowed(u, v) ? { ok: true, ext: { k: 'share-page', u: u } } : { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
+      if (!pageLinkAllowed(u, v)) return { ok: false, toast: 'Kein Link zu diesem Video gefunden – Beitrag öffnen und nochmal versuchen' };
+      const allowed = pageLinkOutputFor(u, mediaOutputContext(v), v);
+      return fuiFrameConfirm({ label: 'Link teilen', sub: 'an eine andere App', allowed: allowed, fn: () => sharePageLink(u, allowed) });
     }
     return { ok: false };
+  }
+  // Ausgabe einer Adresse nur nach einem zweiten, echten Tipp hier im Ursprungsfenster: Prüfung, Teilen und ein
+  // späterer Kopier-Fallback laufen mit dem Prüfer dieses Dokuments. Das Hauptfenster erhält keine Adresse.
+  const FUI_CONFIRM = 'Im Video-Fenster bestätigen';
+  function fuiFrameConfirm(it) {
+    if (it.allowed && !it.allowed()) return { ok: false };
+    pageDlMenu(FUI_CONFIRM, [it], true);
+    return { ok: true, toast: 'Bitte im Video-Fenster bestätigen' };
   }
   // Tipp auf einen Eintrag oben: genau einmal je Auswahl, nur die aktuelle Auswahl
   function fuiFramePick(seq, i) {
@@ -141,14 +152,7 @@
     fui.menu = null;
     fui.relayUntil = Date.now() + 60000;
     if (it.allowed && !it.allowed()) return { ok: false };
-    if (it.frameConfirm) {
-      pageDlMenu('Speichern', [it], true);
-      return { ok: true };
-    }
-    if (it.ext) {
-      const allowed = it.ext.k === 'share-page' ? pageLinkAllowed : mediaSourceAllowed;
-      return it.ext.u && !allowed(it.ext.u) ? { ok: false } : { ok: true, ext: it.ext };
-    }
+    if (it.frameConfirm) return fuiFrameConfirm(it);
     try { it.fn(); } catch (e) {}
     return { ok: true };
   }
@@ -264,25 +268,10 @@
     hidePill();
   }
   // Tipp auf den Knopf hier oben → Aktion im Ursprungsfenster
-  function fuiTopOutputContext(g) {
-    const frame = fuiTop.geo.get(g.n)?.f;
-    const doc = frame?.contentDocument, href = doc?.URL;
-    const src = frame?.getAttribute('src'), srcdoc = frame?.getAttribute('srcdoc');
-    let loaded = false;
-    const changed = () => { loaded = true; };
-    frame?.addEventListener('load', changed);
-    return {
-      current: () => !loaded && !!frame?.isConnected && fuiTop.regs.get(g.key) === g &&
-        frame.getAttribute('src') === src && frame.getAttribute('srcdoc') === srcdoc &&
-        frame.contentDocument === doc && doc?.URL === href,
-      dispose: () => frame?.removeEventListener('load', changed),
-    };
-  }
   function fuiTopAct(a) {
     const g = fuiTop.cur;
     if (!g || (a === 'share' && g.sharePending)) return;
-    const output = a === 'share' ? fuiTopOutputContext(g) : null;
-    if (output) g.sharePending = true;
+    if (a === 'share') g.sharePending = true;
     const now = Date.now();
     fuiTop.recent = { g: g, t: now };
     const rid = fuiNewRid();
@@ -291,8 +280,8 @@
     fuiLog(rid, 'top:act', a);
     return fuiTopSend('act', g, { a: a, rid: rid }).then((r) => {
       fuiLog(rid, 'top:act-reply', fuiTraceRes(r));
-      return fuiTopResult(g, r, a, output?.current);
-    }).finally(() => { if (output) { output.dispose(); g.sharePending = false; } });
+      return fuiTopResult(g, r, a);
+    }).finally(() => { if (a === 'share') g.sharePending = false; });
   }
   function fuiTopPick(g, seq, i) {
     const now = Date.now();
@@ -301,16 +290,15 @@
     fuiTop.credit = { g: g, t: now, rid: rid };   // ein Eintrag darf genau eine Folge-Auswahl öffnen (z. B. Qualität des Streams)
     fuiTop.lastRid = rid;
     fuiLog(rid, 'top:pick', 'seq=' + seq + ' i=' + i);
-    const output = fuiTopOutputContext(g);
     fuiTopSend('pick', g, { seq: seq, i: i, rid: rid }).then((r) => {
       fuiLog(rid, 'top:pick-reply', fuiTraceRes(r));
-      return fuiTopResult(g, r, 'pick', output.current);
-    }).finally(output.dispose);
+      return fuiTopResult(g, r, 'pick');
+    });
     return rid;   // (Kennung des Warteblatts, src/105)
   }
   const fuiTraceRes = (r) => (!r ? 'keine-antwort' : (r.ok === true ? 'ok' : 'nicht-ok') + (r.gone ? '+weg' : '') + (r.toast ? '+hinweis' : '') + (r.ext ? '+' + r.ext.k : ''));
   // what: 'pick' (Eintrag der Auswahl) oder die Aktion des Knopfs ('dl', 'player', 'diag', 'share')
-  function fuiTopResult(g, r, what, current) {
+  function fuiTopResult(g, r, what) {
     if (!r) {
       toast('Video im eingebetteten Fenster nicht mehr erreichbar');
       fuiTop.regs.delete(g.key);
@@ -326,17 +314,14 @@
         : r.gone ? 'Video im eingebetteten Fenster gerade nicht bereit – nichts gestartet. Bitte erneut tippen, sobald der Knopf wieder erscheint'
           : 'Aktion im eingebetteten Fenster nicht ausgeführt – bitte erneut tippen');
     }
-    if (r.ok === true && r.ext) return fuiTopExt(r.ext, current);
+    if (r.ok === true && r.ext) return fuiTopExt(r.ext);
   }
-  // Aktionen, die einen frischen Tipp brauchen: hier ausführen (der Tipp war hier)
-  function fuiTopExt(x, current) {
+  // Aus einem Fenster übernimmt das Hauptfenster nur den anonymisierten Diagnosetext. Eine Adresse gibt es nie aus:
+  // Ein hier neu gebildeter Prüfer kennt spätere MPD-Erkennungen des Ursprungsdokuments nicht (fuiFrameConfirm).
+  function fuiTopExt(x) {
     if (!x || typeof x !== 'object') return;
-    const u = typeof x.u === 'string' && /^https?:\/\//i.test(x.u) ? x.u : '';
-    if (x.k === 'ytdlnis' && u) toYtdlnis(u);
-    else if (x.k === 'open' && u) pageDlOpenTab(u);
-    else if (x.k === 'share' && u) shareUrl(u);
-    else if (x.k === 'share-page' && u && current?.()) return sharePageLink(u, pageLinkOutputFor(u, current));
-    else if (x.k === 'copy' && typeof x.t === 'string') copyText(x.t, 'Anonymisierte Diagnose des Video-Fensters kopiert');
+    if (x.k === 'copy' && typeof x.t === 'string') copyText(x.t, 'Anonymisierte Diagnose des Video-Fensters kopiert');
+    else toast('Nichts geteilt oder geöffnet – bitte direkt im Video-Fenster bestätigen');
   }
   function fuiTopMsg(m) {
     if (!m || !m.src || !Number.isInteger(m.src.f) || m.src.f <= 0 || typeof m.src.d !== 'string' || !m.src.d || !FUI_N.test(m.n || '')) return { ok: false };

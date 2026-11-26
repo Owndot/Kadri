@@ -49,7 +49,9 @@
     const src = v.src, playing = v.currentSrc, object = v.srcObject;
     const ctx = mediaRegistry.contextFor(v);
     return () => {
-      if ((current && !current()) || !v.isConnected || v.src !== src || v.srcObject !== object ||
+      // Ein entferntes oder ersetztes Fenster behält isConnected im eigenen, abgelösten Dokument (defaultView null)
+      if ((current && !current()) || !v.isConnected || (v.ownerDocument && v.ownerDocument.defaultView === null) ||
+          v.src !== src || v.srcObject !== object ||
           (playing && v.currentSrc !== playing)) return false;
       const now = mediaRegistry.contextFor(v);
       return now.documentKey === ctx.documentKey && now.playerId === ctx.playerId && now.mediaEpoch === ctx.mediaEpoch;
@@ -61,7 +63,8 @@
     const selection = { keys: new Set(), blocked: false };
     if (typeof watchDashOutput === 'function') watchDashOutput(selection);
     const allowed = (target = origin) => {
-      if (!origin || !target || selection.blocked || location.href.split('#')[0] !== page || (current && !current())) return false;
+      if (!origin || !target || selection.blocked || document.defaultView === null || location.href.split('#')[0] !== page ||
+          (current && !current())) return false;
       selection.keys.add(dashUrlKey(target));
       const ctx = v && mediaRegistry.contextFor(v);
       if (pageLinkCheck) selection.blocked = target !== origin || !pageLinkCheck(origin);

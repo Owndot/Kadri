@@ -100,10 +100,17 @@ const items = [{ label: 'Mit Helper herunterladen', sub: 'MP4', fn() {} }, { lab
     w.T.fuiTopPick(g, 1, 0); await tick(); await tick();
     check('Eintrag, Antwort {ok:true}: kein Fehlerhinweis', w.toasts.length === 0, w.toasts);
   }
-  {
-    const { w, g } = top({ ok: true, ext: { k: 'share', u: 'https://cdn.example/v.mp4' } });
-    w.T.fuiTopPick(g, 1, 1); await tick(); await tick();
-    check('Eintrag, Antwort {ok:true, ext}: Aktion hier ausgeführt, kein Fehlerhinweis', w.toasts.length === 0 && w.ext.length === 1 && w.ext[0][0] === 'share', [w.toasts, w.ext]);
+  // P0-A: Adressen gibt das Hauptfenster nie aus, auch nicht bei {ok:true}. Nur der Prüfer des Ursprungsdokuments
+  // kennt dessen spätere MPD-Erkennungen; die Ausgabe folgt dort nach einer Bestätigung (src/035 fuiFrameConfirm).
+  for (const x of [{ k: 'share', u: 'https://cdn.example/v.mp4' }, { k: 'share-page', u: 'https://site.example/watch?v=1' },
+    { k: 'open', u: 'https://cdn.example/v.mp4' }, { k: 'ytdlnis', u: 'https://site.example/watch/1' }]) {
+    for (const how of ['pick', 'act']) {
+      const { w, g } = top({ ok: true, ext: x });
+      if (how === 'pick') w.T.fuiTopPick(g, 1, 1); else w.T.fuiTopAct('share');
+      await tick(); await tick();
+      check((how === 'pick' ? 'Eintrag' : 'Knopf') + ', Antwort {ok:true, ext:' + x.k + '}: keine Ausgabe im Hauptfenster, Hinweis auf Bestätigung im Fenster',
+        w.ext.length === 0 && w.toasts.length === 1 && /im Video-Fenster bestätigen/.test(w.toasts[0]), [w.toasts, w.ext]);
+    }
   }
   {
     const { w } = top(null);
