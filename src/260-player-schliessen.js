@@ -108,7 +108,7 @@
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
     const resume = () => {
       const url = srcOf(o);
-      if (url && (!mediaSourceAllowed(url) || (st.noNativeHlsStart && PLAYLIST_RE.test(url)))) return;
+      if (url && (!mediaSourceAllowed(url) || hlsOrigStartBlocked(st, url))) return;
       try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       watchStall(o);
     };

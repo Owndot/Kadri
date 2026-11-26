@@ -45,3 +45,30 @@
     hls.startLoad(media.currentTime || -1);
     return true;
   }
+  // Variantenentscheidung des eigenen Players für genau diese Hauptliste. Ein natives Seitenvideo mit derselben
+  // Hauptliste lädt die Varianten ohne Kadris Prüfung. Eine einmal abgelehnte Variante sperrt deshalb jeden von Kadri
+  // ausgelösten Start dieses Originals, auch nach Capture-Rückfall oder Rückgabe. Gebunden an die Playerinstanz und
+  // die exakte Hauptlistenadresse: eine andere Quelle desselben Elements wird neu bewertet.
+  function noteHlsMaster(st, master, data) {
+    const urls = new Set();
+    const add = (u) => { if (typeof u === 'string' && u && urls.size < 512) urls.add(u); };
+    ((data && data.levels) || []).forEach((l) => { add(l.uri); (Array.isArray(l.url) ? l.url : [l.url]).forEach(add); });
+    ((data && data.audioTracks) || []).concat((data && data.subtitleTracks) || []).forEach((t) => add(t.url));
+    const rec = { urls: Array.from(urls), denied: false };
+    if (!st.hlsMasters) st.hlsMasters = new Map();
+    st.hlsMasters.set(dashUrlKey(master), rec);
+    return rec;
+  }
+  function noteHlsDenial(st, master) {
+    const rec = st.hlsMasters && st.hlsMasters.get(dashUrlKey(master));
+    if (rec) rec.denied = true;
+    else noteHlsMaster(st, master, null).denied = true;
+  }
+  // Darf Kadri das Seitenvideo mit dieser Adresse selbst starten? Prüft den heutigen Klassifikationsstand jeder
+  // bekannten Variante erneut und behält eine frühere Ablehnung.
+  function hlsOrigStartBlocked(st, url) {
+    if (!url) return false;
+    if (st.noNativeHlsStart && PLAYLIST_RE.test(url)) return true;
+    const rec = st.hlsMasters && st.hlsMasters.get(dashUrlKey(url));
+    return !!rec && (rec.denied || rec.urls.some((u) => !mediaSourceAllowed(u)));
+  }

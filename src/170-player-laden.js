@@ -147,6 +147,7 @@
           const hls = new Hls({ enableWorker: false, subtitleDisplay: false, autoStartLoad: false, startPosition,
             pLoader: guardedHlsLoader(allowed, (context) => {
               if (!activeHls()) return true;
+              noteHlsDenial(st, u);
               if (!recoverHlsLevel(hls, context, allowed, vid)) return false;
               st.qualPinned = null;
               refreshQual();
@@ -154,8 +155,10 @@
             }) });
           st.hls = hls;
           hls.on(Hls.Events.ERROR, (ev, data) => { if (activeHls() && data && data.fatal) tryNext(); });
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          hls.on(Hls.Events.MANIFEST_PARSED, (ev, data) => {
             if (!activeHls()) return;
+            const master = noteHlsMaster(st, u, data);
+            if (master.urls.some((x) => !allowed(x))) master.denied = true;
             if (!pruneHlsLevels(hls, allowed)) { queueMicrotask(() => { if (activeHls()) tryNext(); }); return; }
             hls.startLevel = hls.levels.length - 1;
             hls.startLoad(startPosition);
@@ -226,8 +229,8 @@
       bridgeDrop();
       dropPoster();
       const originalUrl = srcOf(orig);
-      if (orig.paused && originalUrl && (!playbackAllowed(originalUrl) ||
-          (st.noNativeHlsStart && PLAYLIST_RE.test(originalUrl)))) {
+      // Ein angehaltenes Original startet Kadri nur, wenn dessen Adresse und alle bekannten HLS-Varianten zulässig sind.
+      if (orig.paused && originalUrl && (!playbackAllowed(originalUrl) || hlsOrigStartBlocked(st, originalUrl))) {
         st.closePaused = true;
         toast('Dieses Video lässt sich hier nicht im eigenen Player zeigen');
         closePlayer();
