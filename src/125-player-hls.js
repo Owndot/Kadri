@@ -74,7 +74,11 @@
   // Budget: höchstens 512 eindeutige Adressen (Herkunft, Pfad, Query) je Hauptliste und 8 Hauptlisten je Player.
   // Duplikate zählen nicht; die 513. eindeutige Adresse wird nicht gespeichert, sondern macht den Eintrag unvollständig.
   const HLS_MASTER_RECS = 8, HLS_MASTER_URLS = 512;
+  // Form und Länge vor jeder Aufnahme: vollständige Eingabe samt Fragment höchstens MEDIA_LIMITS.urlLen Zeichen,
+  // http(s) ohne Zugangsdaten (mediaUrlOk); das Fragment fällt erst danach aus dem Schlüssel.
+  const hlsUrlOk = (u) => typeof u === 'string' && u.length <= MEDIA_LIMITS.urlLen && mediaUrlOk(u.split('#')[0]);
   function hlsMasterRec(st, master, create) {
+    if (!hlsUrlOk(master)) return null;   // keine Aufnahme, also keine Freigabe für diese Hauptliste
     const key = dashUrlKey(master);
     if (!key) return null;
     if (!st.hlsMasters) st.hlsMasters = new Map();
@@ -95,8 +99,8 @@
     return run;
   }
   function hlsMasterAdd(rec, u) {
-    const key = typeof u === 'string' ? dashUrlKey(u) : '';
-    if (!key) { rec.incomplete = true; return; }   // nicht http(s): für Kadri nicht prüfbar
+    const key = hlsUrlOk(u) ? dashUrlKey(u) : '';
+    if (!key) { rec.incomplete = true; return; }   // überlang, nicht http(s) oder mit Zugangsdaten: nicht gespeichert
     if (rec.keys.has(key)) return;
     if (rec.keys.size >= HLS_MASTER_URLS) { rec.incomplete = true; return; }
     rec.keys.add(key); rec.urls.push(u);
