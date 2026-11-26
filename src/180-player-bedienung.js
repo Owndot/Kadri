@@ -616,15 +616,15 @@
       sharePageLink(local, localAllowed, title);
     });
     on(bExt, () => {
-      const t = M().currentTime;
       let released = false;
       const current = playerOutputContext(() => vp === st || (released && !vp));
       const go = (target, source = mediaOutputFor(target, null, orig)) => {
         const allowed = (u) => current() && source(u);
         if (!target || !allowed(target)) return;
         released = true;
+        // Die Position des Originals gleicht allein die bewachte Rückgabe ab (handBack, src/260). Die Erlaubnis für
+        // die externe Zieladresse ist keine Erlaubnis, das Original zu verstellen.
         closePlayer();
-        try { orig.currentTime = t; } catch (e) {}
         openExternal(target, orig, CONFIG.player, null, null, allowed);
       };
       const u = st.cur || (resolve(orig) || {}).best;
