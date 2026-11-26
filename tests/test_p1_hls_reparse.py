@@ -21,6 +21,8 @@ SOURCE = SOURCE[:SOURCE.rindex('})();')] + '''
   window.k = {
     openBrowserPlayer, closePlayer, dashSummaryOf, mediaIsDashManifest, notePlaylist, CONFIG,
     state: () => vp,
+    // Ablehnung über denselben Produkteinstieg wie der Playlist-Guard (src/170 -> noteHlsDenial)
+    deny: () => noteHlsDenial(vp, vp.cur),
   };
 })();
 '''
@@ -141,6 +143,27 @@ def run(page, net):
     page.evaluate('reparse()')
     page.wait_for_function('decoded() && k.state().hls.levels.length === 1')
     finish(page, net, url, None, 'Unvollständige Erfassung bleibt nach vollständigem kurzem Parse unvollständig')
+
+    # Mutationssensitiv: dauerhaftes denied ohne gespeicherte MPD-Adresse und ohne Überlauf (kleiner Master, nur A)
+    small = master([A])
+    net.reset([small, small], small)
+    setup(page, url)
+    page.evaluate('k.openBrowserPlayer(v)')
+    page.wait_for_function('decoded()')
+    page.evaluate('k.deny()')
+    page.evaluate('reparse()')
+    page.wait_for_function('decoded() && k.state().hls.levels.length === 1')
+    finish(page, net, url, None, 'Registrierte Ablehnung bleibt nach zweitem zulässigem Lauf derselben Hauptliste wirksam')
+
+    # Mutationssensitiv: dauerhaftes incomplete durch DEFINE (ohne Überlauf), zweiter Lauf statisch und vollständig
+    dyn = small.replace('#EXT-X-VERSION:7\n', '#EXT-X-VERSION:7\n#EXT-X-DEFINE:NAME="x",VALUE="1"\n')
+    net.reset([dyn, small], small)
+    setup(page, url)
+    page.evaluate('k.openBrowserPlayer(v)')
+    page.wait_for_function('decoded()')
+    page.evaluate('reparse()')
+    page.wait_for_function('decoded() && k.state().hls.levels.length === 1')
+    finish(page, net, url, None, 'Unvollständigkeit durch DEFINE bleibt nach zweitem statischem Lauf bestehen')
 
     # Erneute Analyse nach ausstehender Antwort: neuer vollständiger Lauf gibt frei (Positivkontrolle)
     net.reset(['hold', full], full)
