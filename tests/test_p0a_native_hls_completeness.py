@@ -302,11 +302,17 @@ def budget_cases(page, net):
               label='513 Varianten ohne bekannte MPD: unvollständig erfasst, kein nativer Originalstart')
     vs = [var(i) for i in range(512)]
     audio = B + 'hls3/aen/index.m3u8?a=513'
-    big(page, net, 'audio', master(vs, head=['#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="x",NAME="en",DEFAULT=NO,AUTOSELECT=NO,URI="%s"' % audio]), audio,
-        label='512 Varianten plus Audio-Playlist als MPD: kein nativer Originalstart')
     sub = B + 'hls3/sde/index.m3u8?s=513'
-    big(page, net, 'sub', master(vs, head=['#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="de",DEFAULT=NO,AUTOSELECT=NO,URI="%s"' % sub]), sub,
-        label='512 Varianten plus Untertitel-Playlist als MPD: kein nativer Originalstart')
+    media = {'Audio': '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="x",NAME="en",DEFAULT=NO,AUTOSELECT=NO,URI="%s"' % audio,
+             'Untertitel': '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="s",NAME="de",DEFAULT=NO,AUTOSELECT=NO,URI="%s"' % sub}
+    for name, line in media.items():
+        target = audio if name == 'Audio' else sub
+        # vor den Varianten: die Spuradresse ist erfasst, die 513. Adresse ist eine Variante
+        big(page, net, name + 'vorn', master(vs, head=[line]), target,
+            label='%s-Playlist vor 512 Varianten als MPD: kein nativer Originalstart' % name)
+        # hinter den Varianten: die Spuradresse ist die 513. Adresse jenseits des Limits
+        big(page, net, name + 'hinten', master(vs, tail=[line]), target,
+            label='%s-Playlist als 513. Adresse hinter dem Limit als MPD: kein nativer Originalstart' % name)
     alias = var(9999, 'alias')
     big(page, net, 'alias', master(vs) + (INF % 150000) + '\n' + alias + '\n', alias,
         label='Aliasadresse nach dem Limit als MPD: kein nativer Originalstart')
