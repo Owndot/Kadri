@@ -63,7 +63,7 @@ Gemessen mit `tests/test_p0a_auth_type_probe_ext.py`: echte Erweiterung, Service
 | E8 privates Ziel von öffentlicher Seite | 0 Typproben | kein Start |
 | E9 http-Seite → https-Quelle | 0 Typproben | kein Start |
 | E9 https-Seite → https-Quelle derselben Site | 1 Typprobe mit Cookie | dekodiert |
-| E10 Range ignoriert (200, 32 MiB) | 1 Typprobe, vom Empfänger abgebrochen; **gesendet 6,8 MB** (lokale Socketpuffer) | Hintergrund liest 4096 Bytes |
+| E10 Range ignoriert (200, 32 MiB) | 1 Typprobe, vom Empfänger abgebrochen; **gesendet 6,3–6,8 MB** in zwei Läufen (lokale Socketpuffer) | Hintergrund liest 4096 Bytes |
 | E11 401 / 500 / Verbindungsabbruch / 12,5 s | je 1 Versuch (Abbruch: 2 Serverabrufe, Chromium wiederholt den GET selbst) | kein Start, nach Neuladen kein weiterer Versuch |
 | E12 Einmaladresse (nur der erste Abruf gelingt) | Original verbraucht sie, Typprobe 403 | kein Start, kein weiterer Versuch |
 | E13 Schließen / zweiter Tipp / Navigation während der Probe | genau 1 Typprobe | kein später Start; zweiter Tipp startet mit dem Beleg |
@@ -103,13 +103,28 @@ E1 Login (Port, im Player dekodiert, Helper kontrolliert fehlgeschlagen, Wiederg
 
 ## 7. Regressionen am Endstand
 
-REGRESSION
+Gelaufen am Kopf `85aac7b` mit einer frischen ungepackten Testfassung (`write(dir,'chrome',true)`, kein ZIP, kein `dist/`), dem Desktop-Harness des Helpers aus `6e553fc` und Chrome for Testing 158.0.8127.36 unter Xvfb.
+
+**Chromium-Komponenten: 30 Programme, 593/593.** Das sind die 29 Programme der Vorrunde mit 572/572 und neu `test_p0a_auth_type_probe.py` mit 21/21. Darin enthalten: alle P0-A-Gegenproben (nocors_type 16, type_eviction 13, type_overflow 7, preview_alternative 5, hls_variant_guard 13, manifest_identity 13, source_type 26, native_hls_completeness 30), die P1-/P2-Prüfer und die DASH-Prüfer (10, 61, 122, 30, 23, 12, 32, 18).
+
+**Node: 32/32 Programme mit Exitcode 0.** Das sind 27 `tests/*_check.js`, darunter neu `type_probe_bridge_check.js` mit 37/37 sowie `guard_check.js` und `ff_net_check.js` mit Pfadargument, dazu fünf Kanalprogramme. DASH-Dispatcher 104/104, Vertraulichkeit PASS (1330 Dateien).
+
+**Erweiterung/Helper:**
+
+| Prüfer | Ergebnis |
+|---|---|
+| `test_mp4.py` (unverändert) | **143/143** |
+| `test_p0a_auth_type_probe_ext.py` (neu) | 33/33 |
+| `test_p0a_nocors_extension.py` | 2/2 |
+| basic / HLS / frame_ui / direct_dl / dash_bind / helper | 7/7, 24/24, 61/61, 87/87, 28/28, 18/18 |
+| `test_dash_msg.py` | **20/23** – dieselben drei Fälle wie zuvor (offener Altbefund, kein PASS) |
+| `test_dash_dl.py` | **Abbruch** mit demselben SyntaxError im Prüfer vor den Assertions (offener Altbefund, kein PASS) |
 
 ## 8. Verbleibende Grenzen und Risiken
 
 1. **Einmal-/signierte Adressen:** Die Typprobe ist ein zusätzlicher Abruf mit Sitzung. Eine Einmaladresse kann dadurch verbraucht werden, im Messfall verbrauchte sie bereits das Original. Mehr als ein angemeldeter Versuch je Adresse in 10 Minuten findet nicht statt. Nach einem Neustart des Service Workers ist das Gedächtnis leer.
 2. **Angemeldete Abrufe im Login-Ablauf:** Es sind jetzt zwei – die Typprobe (4096 Bytes) und der bestehende `prefetchExt`-Abruf (2 Bytes, „In App öffnen“). Auf `a7ac09d` war es einer. Die Zusammenlegung ist nicht umgesetzt; sie würde die bestehende externe Übergabe ändern.
-3. **Range ignoriert:** Der Server kann bis zum Abbruch deutlich mehr senden als 4096 Bytes, lokal 6,8 MB. Eine Netzgrenze wird nicht behauptet.
+3. **Range ignoriert:** Der Server kann bis zum Abbruch deutlich mehr senden als 4096 Bytes, lokal 6,3–6,8 MB. Eine Netzgrenze wird nicht behauptet.
 4. **Weiterleitungen:** Angemeldete Quellen, die weiterleiten (auch innerhalb der Site, z. B. `/get_file` → CDN), bekommen keinen Beleg (Funktionsverlust, fail-closed).
 5. **Andere Sites:** Andere Sites, Firefox und das Userscript bleiben beim Funktionsverlust.
 6. **Getarntes HLS mit Sitzung:** hls.js lädt ohne Cookies (403) und scheitert kontrolliert. `commitOwnLoad` hat das Original dabei angehalten, und Kadri setzt es nicht fort, weil das ein nativer HLS-Start ohne vollständige Masterentscheidung wäre.
