@@ -97,7 +97,7 @@ const strip = () => (rules.get(80) || { condition: {} }).condition.excludedReque
     ['BOM + #EXTM3U', 200, enc('﻿#EXTM3U\n'), 'hls'], ['MPD', 206, enc('<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011">'), 'dash'],
     ['HTML', 200, enc('<!doctype html><html>'), 'unknown'], ['403', 403, FTYP, 'unknown'], ['500', 500, FTYP, 'unknown'], ['404', 404, FTYP, 'unknown']]) {
     respond = answer(status, head);
-    msgs = await req(tab('https://www.example.com/'), probe('https://cdn.example.com/t.mp4'));
+    msgs = await req(tab('https://www.example.com/'), probe('https://cdn.example.com/t.mp4?case=' + encodeURIComponent(label + status)));
     ok('Klassifikation %s (HTTP %d) → %s'.replace('%s', label).replace('%d', status).replace('%s', want), msgs.length === 1 && msgs[0].t === 'type' && msgs[0].type === want, msgs);
   }
 
@@ -162,6 +162,24 @@ const strip = () => (rules.get(80) || { condition: {} }).condition.excludedReque
   await new Promise((r) => setTimeout(r, 100));
   ok('Zeitgrenze 10 s: abgebrochen (%d ms), Regeln zurückgesetzt'.replace('%d', elapsed),
     msgs.length === 1 && msgs[0].t === 'error' && msgs[0].timeout === true && elapsed < 11500 && temp().length === 0 && strip().length === 0, { msgs, strip: strip() });
+
+  // ---------- Gedächtnis: höchstens ein angemeldeter Versuch je Adresse ----------
+  for (const [label, resp, url] of [['nach Erfolg (file)', answer(206, FTYP), 'https://cdn.example.com/once-ok.mp4'],
+    ['nach 403', answer(403, FTYP), 'https://cdn.example.com/once-403.mp4'], ['nach Fehler', answer(0, FTYP, { throws: true }), 'https://cdn.example.com/once-err.mp4']]) {
+    respond = resp;
+    n0 = calls.length;
+    const first = await req(tab('https://www.example.com/'), probe(url));
+    await new Promise((r) => setTimeout(r, 50));
+    respond = answer(206, enc('#EXTM3U\n'));
+    const again = await req(tab('https://other.example.com/'), probe(url + '#t=1'));
+    const want = first[0].t === 'type' ? first[0].type : 'unknown';
+    ok('Gedächtnis %s: zweiter Versuch (anderes Dokument, Fragment) ohne Abruf, gleiches Ergebnis'.replace('%s', label),
+      calls.length === n0 + 1 && again.length === 1 && again[0].t === 'type' && again[0].type === want, { fetched: calls.length - n0, first, again });
+  }
+  respond = answer(206, FTYP);
+  n0 = calls.length;
+  await req(tab('https://www.other.net/'), probe('https://cdn.example.com/once-ok.mp4'));
+  ok('Gedächtnis ersetzt nicht die Site-Prüfung: fremdes Dokument erhält keinen Abruf und keinen gemerkten Typ', calls.length === n0, {});
 
   // ---------- Normale Aufrufer unverändert ----------
   respond = (u, o, cc) => Promise.resolve({ status: 200, statusText: 'OK', url: u, headers: new Map([['content-type', 'text/plain']]), text: async () => 'ok' });

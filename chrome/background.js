@@ -226,6 +226,20 @@ function b64(u8) {
 //  - Antwort an das Inhaltsskript nur { t: 'type', type: 'file' | 'hls' | 'dash' | 'unknown' } – keine Köpfe, Bytes,
 //    Adressen oder Cookies
 const TYPE_PROBE_BYTES = 4096, TYPE_PROBE_TIMEOUT_MS = 10000;
+// Höchstens ein angemeldeter Versuch je Adresse (ohne Fragment) in 10 Minuten – auch nach 401/403, Fehler oder
+// Zeitüberschreitung und über Neuladen und Tabs hinweg (256 Einträge, nur im Speicher dieses Service Workers; nach
+// dessen Neustart beginnt das Gedächtnis leer). Abgelehnte Anfragen (fremde Site, Schema …) werden nicht gemerkt.
+const TYPE_PROBE_TTL_MS = 600000, typeProbeSeen = new Map();
+function typeProbeRemember(key, type) {
+  typeProbeSeen.delete(key); typeProbeSeen.set(key, { type, at: Date.now() });
+  if (typeProbeSeen.size > 256) typeProbeSeen.delete(typeProbeSeen.keys().next().value);
+}
+function typeProbeKnown(key) {
+  const hit = typeProbeSeen.get(key);
+  if (!hit) return '';
+  if (Date.now() - hit.at > TYPE_PROBE_TTL_MS) { typeProbeSeen.delete(key); return ''; }
+  return hit.type;
+}
 const typeProbeRequest = (m) => ({ t: 'req', purpose: 'media-type-probe', url: typeof m.url === 'string' ? m.url : '', method: 'GET',
   headers: { Range: 'bytes=0-' + (TYPE_PROBE_BYTES - 1) }, timeout: TYPE_PROBE_TIMEOUT_MS, responseType: '' });
 // → Grund, wenn keine angemeldete Typprobe stattfinden darf; sonst ''. (Nach guard: m.anonymous/m.site gesetzt.)
@@ -284,6 +298,9 @@ api.runtime.onConnect.addListener((port) => {
     const from = (port.sender && (port.sender.url || (port.sender.tab && port.sender.tab.url))) || '';
     const no = guard(m, from) || (probe ? typeProbeRefusal(m, port.sender, from) : '');
     if (no) { post(probe ? { t: 'type', type: 'unknown' } : { t: 'error', timeout: false, msg: 'nicht erlaubt: ' + no }); return; }
+    const probeKey = probe ? noHash(m.url) : '';
+    if (probe && typeProbeKnown(probeKey)) { post({ t: 'type', type: typeProbeKnown(probeKey) }); return; }
+    if (probe) typeProbeRemember(probeKey, 'unknown');   // ab jetzt gilt der Versuch als unternommen
     const headers = Object.assign({}, m.headers || {});
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
@@ -322,7 +339,7 @@ api.runtime.onConnect.addListener((port) => {
       await resetHeaders();   // fetch resolved at final headers, before consuming the response body
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
-      if (probe) { post({ t: 'type', type: await typeProbeRead(res, ac) }); return; }
+      if (probe) { const type = await typeProbeRead(res, ac); typeProbeRemember(probeKey, type); post({ t: 'type', type }); return; }
       const hdr = [];
       res.headers.forEach((v, k) => hdr.push(k + ': ' + v));
       const head = { status: res.status, statusText: res.statusText, finalUrl: res.url || m.url, headers: hdr.join('\r\n'), type: res.headers.get('content-type') || '' };
