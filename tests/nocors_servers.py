@@ -4,14 +4,16 @@ Seite: http://127.0.0.1:PAGE/   Medien: http://localhost:MEDIA/ (andere Site). J
 Pfad samt Query, Range, Sec-Fetch-Dest/-Mode und Origin protokolliert.
 
 Medienpfade (Query-Optionen: cors=1 setzt Access-Control-Allow-Origin, delay=ms verzögert, status=n antwortet so,
-delay1=ms verzögert nur den ersten Abruf der Adresse, once=1 macht die Adresse nach dem ersten Abruf ungültig):
+delay1=ms verzögert nur den ersten Abruf der Adresse, fail1=n beantwortet nur den ersten Abruf mit Status n,
+norange=1 ignoriert Range (200, ganze Datei), once=1 macht die Adresse nach dem ersten Abruf ungültig):
   /m/<name>[...]   HLS-Hauptliste, Kinder absolut auf diesem Server (siehe MASTERS)
   /f/<name>        echte MP4 (tests/web/clip.mp4, Range 206)
   /d/<name>        MPD-Text (tests/web/dash/gate/g02-number-duration.mpd)
   /v/a/..., /v/b/... abspielbare Medienplaylists und Stücke (tests/web/hls2/a|b), immer mit CORS
   /r/<n>?to=URL    302 auf URL (ohne to: Ziel aus REDIRS[<n>], für überlange Ziele hinter kurzer Adresse)
   /x/<name>        MPD-Text mit CORS und application/dash+xml (Kinder, die die Seite selbst liest)
-Seitenpfade: /nocors.html?src=URL&mark=URL,URL  Testseite mit <video src> und Abruf der mark-Adressen durch die Seite
+Seitenpfade: /nocors.html?src=URL&mark=URL,URL[&play=1]  Testseite mit <video src> (play=1: hörbar, autoplay) und Abruf
+  der mark-Adressen durch die Seite
 """
 import html, http.server, json, threading, time, urllib.parse
 from pathlib import Path
@@ -80,6 +82,10 @@ class Media(http.server.BaseHTTPRequestHandler):
             SEEN[self.path] = SEEN.get(self.path, 0) + 1
             if SEEN[self.path] > 1:
                 return self.send(403, 'verbraucht', 'text/plain', cors)
+        if q.get('fail1'):
+            FIRST['f:' + self.path] = FIRST.get('f:' + self.path, 0) + 1
+            if FIRST['f:' + self.path] == 1:
+                return self.send(int(q['fail1']), 'fehler', 'text/plain', cors)
         if q.get('status'):
             return self.send(int(q['status']), 'fehler', 'text/plain', cors)
         p = u.path
@@ -98,7 +104,7 @@ class Media(http.server.BaseHTTPRequestHandler):
         if p.startswith('/d/'):
             return self.send(200, MPD, 'application/dash+xml', cors)
         if p.startswith('/f/'):
-            rng = self.headers.get('Range', '')
+            rng = '' if q.get('norange') == '1' else self.headers.get('Range', '')
             if rng.startswith('bytes='):
                 a, _, b = rng[6:].partition('-')
                 a = int(a or 0)
@@ -126,11 +132,12 @@ class Page(http.server.SimpleHTTPRequestHandler):
             q = dict(urllib.parse.parse_qsl(u.query))
             marks = [m for m in q.get('mark', '').split(',') if m]
             body = ('<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>nocors</title>'
-                    '<body style="margin:0"><video id=v muted playsinline preload=none style="width:100%%;height:225px;background:#000" '
+                    '<body style="margin:0"><video id=v %s playsinline style="width:100%%;height:225px;background:#000" '
                     'src="%s"></video><script>window.plays = 0; window.seeks = 0;'
                     'v.addEventListener("play", () => plays++); v.addEventListener("seeking", () => seeks++);'
                     'window.marked = false; Promise.all(%s.map(u => fetch(u).then(r => r.text()))).then(() => { marked = true; });'
-                    '</script></body>') % (html.escape(q.get('src', ''), quote=True), json.dumps(marks))
+                    '</script></body>') % ('autoplay loop preload=auto' if q.get('play') == '1' else 'muted preload=none',
+                                           html.escape(q.get('src', ''), quote=True), json.dumps(marks))
             b = body.encode('utf-8')
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
