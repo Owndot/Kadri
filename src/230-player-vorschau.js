@@ -36,13 +36,15 @@
     st.cleanup.push(prevReset);
     st.cleanup.push(() => { thumbs.clear(); bucket = 0; });
     // Kleinste Qualität desselben Videos (lädt viel schneller); Streams nutzen ohnehin die kleinste Stufe
+    // Natives Laden in die Vorschau: dieselbe Entscheidung wie beim Hauptplayer (src/170) – zulässige Adresse mit eigenem
+    // Dateibeleg; unmittelbar vor jeder Zuweisung neu geprüft. Sonst nur Zeit bzw. die bewachte hls.js-Vorschau.
+    const prevDirectOk = (u) => !!u && playbackAllowed(u) && mediaTypeOf(u) === 'file';
     function previewSrc(key) {
       if (st.mode !== 'own') return key;
       if (st.hls) return st.cur;
       const curRes = st.srcRes[st.cur] || 0;
-      // (kleinere Datei nur mit Dateibeleg – nativ geladen wie die eigene Kopie, src/170)
-      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144 && playbackAllowed(u) &&
-        ['file', 'claimed-file'].indexOf(mediaTypeOf(u)) >= 0).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
+      // (kleinere Datei nur mit eigenem Dateibeleg – eine Endung genügt nicht)
+      const low = st.sources.filter((u) => (st.srcRes[u] || 0) >= 144 && prevDirectOk(u)).sort((x, y) => st.srcRes[x] - st.srcRes[y])[0];
       return low && curRes && st.srcRes[low] < curRes ? low : st.cur;
     }
     // Gespiegelt (Facebook in Kadri): Facebook zeigt das Video schärfer als die fertige MP4 – deshalb spiegelt
@@ -102,6 +104,7 @@
         hp.loadSource(u);
         hp.attachMedia(pv);
       } else {
+        if (!prevDirectOk(u)) { prevReset(); pvs.key = key; prev.classList.add('noimg'); st.prevWhy = 'nur Zeit (Quelle ohne Dateibeleg)'; return false; }
         pv.src = u;
         pvs.loadAt = Date.now();
       }
@@ -235,7 +238,7 @@
           st.prevWhy = isFinite(md) ? 'nur Zeit (Datei ' + Math.round(pv.duration) + ' s, Video ' + Math.round(md) + ' s – anderes Video)' : 'nur Zeit (Länge des Videos unbekannt)';
           (st.fbBad || (st.fbBad = [])).push(pvs.src); const k = pvs.key; prevReset(); pvs.key = k; prev.classList.add('noimg'); prev.classList.remove('img'); return;
         }
-      } else if (pvs.src !== st.cur && off && playbackAllowed(st.cur)) {
+      } else if (pvs.src !== st.cur && off && prevDirectOk(st.cur)) {
         const key = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = key; return;
       }
       bucketFor();
@@ -264,11 +267,11 @@
     // Ladefehler: war es eine kleinere Qualität, die laufende Quelle nehmen (einmal); sonst nur die Zeit
     // einmal neu laden (gleiche Quelle) – Server stockt beim ersten Mal manchmal, wenn der Player gerade selbst lädt
     function pvReload() {
-      if (pvs.reloaded || !playbackAllowed(pvs.key) || !playbackAllowed(pvs.src) || pvs.hls) return false;
+      if (pvs.reloaded || !playbackAllowed(pvs.key) || !prevDirectOk(pvs.src) || pvs.hls) return false;
       pvs.reloaded = true;
       const k = pvs.key, s = pvs.src;
       setTimeout(() => {
-        if (vp !== st || pvs.key !== k || pvs.src !== s || !playbackAllowed(k) || !playbackAllowed(s)) return;
+        if (vp !== st || pvs.key !== k || pvs.src !== s || !playbackAllowed(k) || !prevDirectOk(s)) return;
         try { pv.removeAttribute('src'); pv.load(); } catch (e) {}
         pvs.loadAt = Date.now(); pv.src = s;
       }, 800);
@@ -276,7 +279,7 @@
     }
     pv.addEventListener('error', () => {
       if (!pvs.key) return;   // (Quelle wurde absichtlich entfernt)
-      if (st.mode === 'own' && pvs.src && pvs.src !== st.cur && !st.hls && playbackAllowed(st.cur)) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
+      if (st.mode === 'own' && pvs.src && pvs.src !== st.cur && !st.hls && prevDirectOk(st.cur)) { const k = pvs.key; pvs.src = st.cur; pv.src = st.cur; pvs.key = k; return; }
       if (pvReload()) return;
       prev.classList.add('noimg');
       st.prevWhy = 'nur Zeit (Ladefehler ' + ((pv.error && pv.error.code) || '?') + ')';
