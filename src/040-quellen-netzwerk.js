@@ -367,7 +367,8 @@
     mediaTypeSeen.delete(key); mediaTypeSeen.set(key, type);
     if (mediaTypeSeen.size > 1024) mediaTypeSeen.delete(mediaTypeSeen.keys().next().value);
   }
-  // 'dash' | 'hls' | 'file' (eigene Probe) | 'claimed-file' (nur Dateiendung) | '' (Typ unbekannt)
+  // 'dash' | 'hls' | 'file' (eigene Probe) | 'claimed-file' (nur Dateiendung) | '' (Typ unbekannt).
+  // Nur 'file' ist ein positiver Dateibeleg; 'claimed-file' ist eine Behauptung der Adresse und gibt nichts frei.
   function mediaTypeOf(u) {
     if (typeof u !== 'string' || !u) return '';
     if (mediaIsDashManifest(u)) return 'dash';

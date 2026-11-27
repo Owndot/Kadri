@@ -103,14 +103,15 @@
     const o = st.orig, url = srcOf(o);
     let same = null;
     try { same = mediaOutputContext(o, () => st.handed && handedLast === st && (!vp || vp === st)); } catch (e) { return () => false; }
+    // Kontextverlust (Übergabe, Element, Dokument, Epoche, Adresse) bleibt endgültig. Die Quellenentscheidung wird bei
+    // jeder Abfrage neu getroffen: ihre negativen Belege sind dauerhaft, positiv wird sie nur durch einen neuen Beleg.
     let valid = true;
     return () => {
       if (!valid) return false;
       try {
-        valid = same() && srcOf(o) === url &&
-          origSourceAllowed(st, url, (u) => mediaRegistry.playbackAllowed(mediaRegistry.contextFor(o), u));
-      } catch (e) { valid = false; }
-      return valid;
+        if (!(same() && srcOf(o) === url)) { valid = false; return false; }
+        return origSourceAllowed(st, url, (u) => mediaRegistry.playbackAllowed(mediaRegistry.contextFor(o), u));
+      } catch (e) { valid = false; return false; }
     };
   }
   // Das Video der Seite springt an deine Stelle und läuft (mit Ton) weiter. Bis es dort ein Bild hat, liegt dein
@@ -141,10 +142,16 @@
       try { o.currentTime = target; } catch (e) {}
     }
     try { if (typeof st.origMuted === 'boolean') o.muted = st.origMuted; } catch (e) {}   // ursprünglichen Ton zurückgeben
-    const resume = () => {
-      if (!may()) return;
+    const start = () => {
       try { const pr = o.play(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) {}
       watchStall(o, may);
+    };
+    const resume = () => {
+      if (may()) { start(); return; }
+      // Typ nur behauptet (Endung) oder unbekannt: eigene Probe, danach dieselbe Übergabe erneut prüfen
+      const url = srcOf(o), type = url ? mediaTypeOf(url) : 'none';
+      if (type !== 'claimed-file' && type !== '') return;
+      mediaProbe(url).then(() => { if (CONFIG.resumeAfterClose && may()) start(); }, () => {});
     };
     // Video auf der Seite weiterlaufen lassen (Instagram & Co. haben oft keinen Play-Knopf)
     if (atEnd || st.closePaused) { try { o.pause(); } catch (e) {} }   // (nach einem Download: angehalten lassen)

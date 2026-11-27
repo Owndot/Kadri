@@ -354,6 +354,7 @@
     const onOrigPlay = () => {
       if (vp !== st || st.handed) return;   // schon an die Seite übergeben (Zurück-Geste): die Seite darf spielen
       // eigener Player: Original bleibt still · gespiegelt und am Ende angehalten: die Seite darf nicht von selbst neu starten
+      if (st.holdOrig) return;   // (Ladeweg noch nicht entschieden: das laufende Original bleibt unberührt)
       if ((st.mode === 'own' && !st.bridge) || (st.mode === 'capture' && st.endHold)) { try { orig.pause(); } catch (e) {} }
     };
     orig.addEventListener('play', onOrigPlay);
@@ -378,7 +379,9 @@
     // (alle Seiten: läuft das Video, zeigt der Player gleich sein laufendes Bild – nahtloser Start, siehe startBridge)
     if (st.sources.length) {
       showPoster();
-      if (!startBridge()) { st.openStat.how = GECKO ? 'Standbild (Firefox)' : orig.paused ? 'Standbild (Video stand)' : 'Standbild'; try { orig.muted = true; orig.pause(); } catch (e) {} }
+      // Ohne Brücke: ein laufendes Original erst anhalten, wenn ein eigener Ladeweg feststeht (src/170 commitOwnLoad).
+      // Verwirft Kadri alle Quellen (kein Typbeleg), bleibt es so, wie die Seite es abspielt.
+      if (!startBridge()) { st.openStat.how = GECKO ? 'Standbild (Firefox)' : orig.paused ? 'Standbild (Video stand)' : 'Standbild'; if (!orig.paused) st.holdOrig = true; }
       tryNext();
     }
     else useCapture();

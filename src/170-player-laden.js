@@ -111,6 +111,12 @@
       try { b.ms.getTracks().forEach((tr) => tr.stop()); } catch (e) {}
     }
     st.cleanup.push(bridgeDrop);
+    // Eigener Ladeweg steht fest: ein bis dahin weiterlaufendes Original jetzt still und angehalten (src/250)
+    function commitOwnLoad() {
+      if (!st.holdOrig) return;
+      st.holdOrig = false;
+      try { orig.muted = true; orig.pause(); } catch (e) {}
+    }
     // ----- Laden: Quellen der Reihe nach, zuletzt Bild vom Original übernehmen -----
     let metadataSeekPending = false;
     function tryNext() {
@@ -131,7 +137,8 @@
       try { vid.srcObject = null; vid.removeAttribute('src'); } catch (e) {}
       if (!playbackAllowed(u)) { tryNext(); return; }
       // Ladeweg nach belegtem Typ, nicht nach Schreibweise (src/040 mediaTypeOf): HLS nur über den bewachten hls.js-Loader.
-      // Ohne Beleg zuerst die eigene Typprobe; direkte Wiedergabe nur als belegte oder per Endung benannte Datei.
+      // Ohne Beleg zuerst die eigene Typprobe; direkte native Wiedergabe nur mit eigenem Dateibeleg ('file'). Eine
+      // Dateiendung ('claimed-file') ist kein Beleg – ohne lesbare Probe wird die Quelle nicht nativ geladen.
       const type = mediaTypeOf(u);
       if (type === 'dash') { tryNext(); return; }
       if (type !== 'hls' && type !== 'file' && !PLAYLIST_RE.test(u) && !(st.probed && st.probed.has(u))) {
@@ -186,6 +193,7 @@
           });
           hls.on(Hls.Events.LEVEL_SWITCHED, () => refreshQual());
           if (!playbackAllowed(u)) { tryNext(); return; }
+          commitOwnLoad();
           hls.loadSource(u);
           hls.attachMedia(vid);
           return;
@@ -195,7 +203,8 @@
         tryNext();
         return;
       }
-      if (type !== 'file' && type !== 'claimed-file') { tryNext(); return; }   // Typ unbelegt (z. B. endungslos): nicht nativ
+      if (type !== 'file') { tryNext(); return; }   // kein eigener Dateibeleg (auch .mp4 ohne lesbare Probe): nicht nativ
+      commitOwnLoad();
       vid.src = u;
       vid.play().catch(() => {});
     }
@@ -256,6 +265,7 @@
         closePlayer();
         return;
       }
+      st.holdOrig = false;
       if (!st.openStat.swap) st.openStat.how = 'gespiegelt';
       let ms = null;
       try { ms = orig.captureStream ? orig.captureStream() : (orig.mozCaptureStream ? orig.mozCaptureStream() : null); } catch (e) {}

@@ -150,15 +150,15 @@
     const rec = hlsMasterRec(st, master, true);
     if (rec) rec.denied = true;   // ohne Platz für einen Eintrag bleibt die Hauptliste unbekannt: keine Freigabe
   }
-  // Darf Kadri das native Original mit dieser Adresse starten? Typ nach Belegen (src/040 mediaTypeOf), nicht nach
-  // Schreibweise: HLS (auch endungslos, .m3u, irreführendes .mp4) nur mit positiver Masterentscheidung; DASH nie;
-  // eine Datei mit eigener Probe oder – wie bisher – mit Dateiendung ohne Gegenbeleg; unbekannter Typ: nicht.
+  // Darf Kadri das native Original mit dieser Adresse starten oder verstellen? Typ nach Belegen (src/040 mediaTypeOf):
+  // HLS (auch endungslos, .m3u, irreführendes .mp4) nur mit positiver Masterentscheidung; DASH nie; eine Datei nur mit
+  // eigenem lesbarem Dateibeleg. Dateiendung, Seitenangaben, unlesbare oder ausstehende Probe: nicht.
   function hlsNativeStartAllowed(st, url) {
     if (!url) return true;   // keine prüfbare Adresse (MediaSource/Blob der Seite): keine Typentscheidung möglich
     const rec = st.hlsMasters ? st.hlsMasters.get(dashUrlKey(url)) : null;
     const type = mediaTypeOf(url);
     if (type === 'dash') return false;
-    if (!rec && type !== 'hls') return type === 'file' || type === 'claimed-file';
+    if (!rec && type !== 'hls') return type === 'file';
     if (st.noNativeHlsStart || !rec) return false;
     return rec.complete && !rec.pending && !rec.failed && !rec.denied && !rec.incomplete &&
       rec.urls.every((u) => mediaSourceAllowed(u));
