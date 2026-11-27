@@ -214,6 +214,59 @@ function b64(u8) {
   return btoa(s);
 }
 
+// ---------- Angemeldete Typprobe (Zweck media-type-probe, src/040 mediaAuthProbe) ----------
+// Eng begrenzter Zweck derselben Brücke, mit denselben Schutzregeln (guard, netGuard, headerGate, credSites/Regel 80):
+//  - fester Vertrag: genau ein GET mit Range 0-4095, ohne Körper, ohne Referer, cache no-store, Zeitgrenze 10 s;
+//    Methode, Köpfe, Daten, anonymous, site, responseType und timeout des Absenders werden verworfen
+//  - nur aus einem Tab dieser Erweiterung (Absender vom Browser gesetzt), nur gleiches Schema und dieselbe Site wie das
+//    Dokument des Absenders (PSL über guard: m.anonymous); sonst KEINE Anfrage (auch keine anonyme)
+//  - keine Weiterleitung (redirect: 'error'): kein Folgeschritt erreicht eine andere Site, ein anderes Schema oder Port
+//  - höchstens 4096 Bytes werden gelesen, danach Leser und Abruf abgebrochen (bei ignorierter Range kann der Server
+//    trotzdem mehr gesendet haben); kein Vollpuffer
+//  - Antwort an das Inhaltsskript nur { t: 'type', type: 'file' | 'hls' | 'dash' | 'unknown' } – keine Köpfe, Bytes,
+//    Adressen oder Cookies
+const TYPE_PROBE_BYTES = 4096, TYPE_PROBE_TIMEOUT_MS = 10000;
+const typeProbeRequest = (m) => ({ t: 'req', purpose: 'media-type-probe', url: typeof m.url === 'string' ? m.url : '', method: 'GET',
+  headers: { Range: 'bytes=0-' + (TYPE_PROBE_BYTES - 1) }, timeout: TYPE_PROBE_TIMEOUT_MS, responseType: '' });
+// → Grund, wenn keine angemeldete Typprobe stattfinden darf; sonst ''. (Nach guard: m.anonymous/m.site gesetzt.)
+function typeProbeRefusal(m, sender, from) {
+  if (!sender || sender.id !== api.runtime.id || !sender.tab) return 'kein Dokument';
+  let a, b;
+  try { a = new URL(from); b = new URL(m.url); } catch (e) { return 'ungültige Adresse'; }
+  if (a.protocol !== b.protocol || (b.protocol !== 'https:' && b.protocol !== 'http:')) return 'anderes Schema';
+  if (b.username || b.password) return 'Zugangsdaten';
+  if (m.anonymous || !m.site || baseDomain(a.hostname) !== baseDomain(b.hostname)) return 'andere Site';
+  return '';
+}
+function typeProbeClassify(b) {
+  const head = String.fromCharCode.apply(null, Array.from(b.subarray(0, 600))).replace(/^(\uFEFF|\xEF\xBB\xBF)/, '').trimStart();
+  if (head.startsWith('#EXTM3U')) return 'hls';
+  if (/<(?:[A-Za-z_][\w.-]{0,31}:)?MPD[\s>]/.test(head)) return 'dash';
+  const box = b.length >= 8 ? String.fromCharCode(b[4], b[5], b[6], b[7]) : '';
+  if (/^(ftyp|styp|moov|moof|mdat|free|skip|sidx|wide)$/.test(box)) return 'file';
+  if (b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'file';
+  return 'unknown';
+}
+async function typeProbeRead(res, ac) {
+  let rd = null;
+  try {
+    if (!(res.status === 200 || res.status === 206) || !res.body || !res.body.getReader) return 'unknown';
+    rd = res.body.getReader();
+    const buf = new Uint8Array(TYPE_PROBE_BYTES);
+    let n = 0;
+    while (n < TYPE_PROBE_BYTES) {
+      const { done, value } = await rd.read();
+      if (done || !value) break;
+      const k = Math.min(value.length, TYPE_PROBE_BYTES - n);
+      buf.set(value.subarray(0, k), n); n += k;
+    }
+    return typeProbeClassify(buf.subarray(0, n));
+  } catch (e) { return 'unknown'; } finally {
+    try { if (rd) { const c = rd.cancel(); if (c && c.catch) c.catch(() => {}); } } catch (e) {}
+    try { ac.abort(); } catch (e) {}
+  }
+}
+
 // ---------- 1. Anfragen ----------
 api.runtime.onConnect.addListener((port) => {
   if (port.name !== 'kadri-xhr') return;
@@ -226,8 +279,11 @@ api.runtime.onConnect.addListener((port) => {
     if (m.t === 'abort') { ac.abort(); return; }
     if (m.t !== 'req' || started) return;
     started = true;
-    const no = guard(m, (port.sender && (port.sender.url || (port.sender.tab && port.sender.tab.url))) || '');
-    if (no) { post({ t: 'error', timeout: false, msg: 'nicht erlaubt: ' + no }); return; }
+    const probe = m.purpose === 'media-type-probe';
+    if (probe) m = typeProbeRequest(m);   // fester Vertrag, nichts vom Absender übernehmen
+    const from = (port.sender && (port.sender.url || (port.sender.tab && port.sender.tab.url))) || '';
+    const no = guard(m, from) || (probe ? typeProbeRefusal(m, port.sender, from) : '');
+    if (no) { post(probe ? { t: 'type', type: 'unknown' } : { t: 'error', timeout: false, msg: 'nicht erlaubt: ' + no }); return; }
     const headers = Object.assign({}, m.headers || {});
     let ref = '';
     Object.keys(headers).forEach((k) => { if (k.toLowerCase() === 'referer') { ref = String(headers[k] || ''); delete headers[k]; } });
@@ -248,7 +304,7 @@ api.runtime.onConnect.addListener((port) => {
     try {
       if (m.timeout > 0) tm = setTimeout(() => { timedOut = true; ac.abort(); }, m.timeout);
       phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, QUEUE_TIMEOUT_MS);
-      try { release = await headerGate.acquire(ac.signal, m.purpose === 'player-resolve'); }
+      try { release = await headerGate.acquire(ac.signal, m.purpose === 'player-resolve' || probe); }
       finally { clearTimeout(phaseTimer); }
       phaseTimer = setTimeout(() => { timedOut = true; ac.abort(); }, HEADER_TIMEOUT_MS);
       if (ac.signal.aborted) throw new Error('abgebrochen');
@@ -260,12 +316,13 @@ api.runtime.onConnect.addListener((port) => {
       if (ref && /^https?:/i.test(ref)) { rule = await refererRule(m.url, ref); if (mediaReferrer(m.url, ref) && !rule) throw new Error('Referrer protection unavailable'); }
       const res = await fetch(m.url, {
         method: m.method || 'GET', headers, body: m.dataB64 ? fromB64(m.dataB64) : m.data == null ? undefined : m.data,
-        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
+        credentials: m.anonymous ? 'omit' : 'include', signal: ac.signal, redirect: probe ? 'error' : 'follow', cache: 'no-store', referrerPolicy: 'no-referrer',
       });
       clearTimeout(phaseTimer); // body lifetime is governed only by the caller's timeout
       await resetHeaders();   // fetch resolved at final headers, before consuming the response body
       // Weiterleitung ins eigene Netz (öffentliche Adresse → Router …)? Antwort nicht herausgeben
       try { const fu = new URL(res.url || m.url); if (privateHost(fu.hostname) && fu.hostname !== new URL(m.url).hostname) { try { ac.abort(); } catch (e) {} post({ t: 'error', timeout: false, msg: 'nicht erlaubt: Weiterleitung ins eigene Netz' }); return; } } catch (e) {}
+      if (probe) { post({ t: 'type', type: await typeProbeRead(res, ac) }); return; }
       const hdr = [];
       res.headers.forEach((v, k) => hdr.push(k + ': ' + v));
       const head = { status: res.status, statusText: res.statusText, finalUrl: res.url || m.url, headers: hdr.join('\r\n'), type: res.headers.get('content-type') || '' };
