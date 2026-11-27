@@ -4,14 +4,16 @@ Seite: http://127.0.0.1:PAGE/   Medien: http://localhost:MEDIA/ (andere Site). J
 Pfad samt Query, Range, Sec-Fetch-Dest/-Mode und Origin protokolliert.
 
 Medienpfade (Query-Optionen: cors=1 setzt Access-Control-Allow-Origin, delay=ms verzögert, status=n antwortet so,
-once=1 macht die Adresse nach dem ersten Abruf ungültig):
+delay1=ms verzögert nur den ersten Abruf der Adresse, once=1 macht die Adresse nach dem ersten Abruf ungültig):
   /m/<name>[...]   HLS-Hauptliste, Kinder absolut auf diesem Server (siehe MASTERS)
   /f/<name>        echte MP4 (tests/web/clip.mp4, Range 206)
   /d/<name>        MPD-Text (tests/web/dash/gate/g02-number-duration.mpd)
   /v/a/..., /v/b/... abspielbare Medienplaylists und Stücke (tests/web/hls2/a|b), immer mit CORS
-  /r/<n>?to=URL    302 auf URL
+  /r/<n>?to=URL    302 auf URL (ohne to: Ziel aus REDIRS[<n>], für überlange Ziele hinter kurzer Adresse)
+  /x/<name>        MPD-Text mit CORS und application/dash+xml (Kinder, die die Seite selbst liest)
+Seitenpfade: /nocors.html?src=URL&mark=URL,URL  Testseite mit <video src> und Abruf der mark-Adressen durch die Seite
 """
-import http.server, threading, time, urllib.parse
+import html, http.server, json, threading, time, urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +29,9 @@ KID_B = MEDIA + 'v/b/index.m3u8?src=gen'
 
 LOG = []          # (Pfad samt Query, Range, Dest, Mode, Origin)
 SEEN = {}         # once-Zähler
+FIRST = {}        # delay1-Zähler
 MASTERS = {}      # Name -> Liste absoluter Kindadressen (Standard: KID_A, KID_B)
+REDIRS = {}       # Name -> Weiterleitungsziel (für /r/<Name> ohne to)
 
 
 def master_text(name):
@@ -68,6 +72,10 @@ class Media(http.server.BaseHTTPRequestHandler):
         cors = q.get('cors') == '1'
         if q.get('delay'):
             time.sleep(int(q['delay']) / 1000)
+        if q.get('delay1'):
+            FIRST[self.path] = FIRST.get(self.path, 0) + 1
+            if FIRST[self.path] == 1:
+                time.sleep(int(q['delay1']) / 1000)
         if q.get('once') == '1':
             SEEN[self.path] = SEEN.get(self.path, 0) + 1
             if SEEN[self.path] > 1:
@@ -77,7 +85,7 @@ class Media(http.server.BaseHTTPRequestHandler):
         p = u.path
         if p.startswith('/r/'):
             self.send_response(302)
-            self.send_header('Location', q.get('to', '/'))
+            self.send_header('Location', q.get('to') or REDIRS.get(p[3:], '/'))
             self.send_header('Content-Length', '0')
             if cors:
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -85,6 +93,8 @@ class Media(http.server.BaseHTTPRequestHandler):
             return
         if p.startswith('/m/'):
             return self.send(200, master_text(p[3:]), 'application/vnd.apple.mpegurl', cors)
+        if p.startswith('/x/'):
+            return self.send(200, MPD, 'application/dash+xml', True)
         if p.startswith('/d/'):
             return self.send(200, MPD, 'application/dash+xml', cors)
         if p.startswith('/f/'):
@@ -112,6 +122,23 @@ class Page(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         u = urllib.parse.urlsplit(self.path)
+        if u.path == '/nocors.html':   # Testseite: fremdherkunftiges Video, die Seite liest ihre eigenen Listen (page.js)
+            q = dict(urllib.parse.parse_qsl(u.query))
+            marks = [m for m in q.get('mark', '').split(',') if m]
+            body = ('<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>nocors</title>'
+                    '<body style="margin:0"><video id=v muted playsinline preload=none style="width:100%%;height:225px;background:#000" '
+                    'src="%s"></video><script>window.plays = 0; window.seeks = 0;'
+                    'v.addEventListener("play", () => plays++); v.addEventListener("seeking", () => seeks++);'
+                    'window.marked = false; Promise.all(%s.map(u => fetch(u).then(r => r.text()))).then(() => { marked = true; });'
+                    '</script></body>') % (html.escape(q.get('src', ''), quote=True), json.dumps(marks))
+            b = body.encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(b)))
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(b)
+            return
         if u.path.startswith('/r/'):   # gleiche Herkunft wie die Seite -> 302 (z. B. auf die fremde Medien-Site)
             LOG.append(('page:' + self.path, self.headers.get('Range', ''), self.headers.get('Sec-Fetch-Dest', ''),
                         self.headers.get('Sec-Fetch-Mode', ''), self.headers.get('Origin', '')))

@@ -75,8 +75,9 @@
   // Duplikate zählen nicht; die 513. eindeutige Adresse wird nicht gespeichert, sondern macht den Eintrag unvollständig.
   const HLS_MASTER_RECS = 8, HLS_MASTER_URLS = 512;
   // Form und Länge vor jeder Aufnahme: vollständige Eingabe samt Fragment höchstens MEDIA_LIMITS.urlLen Zeichen,
-  // http(s) ohne Zugangsdaten (mediaUrlOk); das Fragment fällt erst danach aus dem Schlüssel.
-  const hlsUrlOk = (u) => typeof u === 'string' && u.length <= MEDIA_LIMITS.urlLen && mediaUrlOk(u.split('#')[0]);
+  // http(s) ohne Zugangsdaten (mediaUrlOk); das Fragment fällt erst danach aus dem Schlüssel. Dieselbe Entscheidung
+  // wie für positive Typbelege und die Probe (src/040 mediaEvidenceKey).
+  const hlsUrlOk = (u) => typeof u === 'string' && u.length <= MEDIA_LIMITS.urlLen && !!mediaEvidenceKey(u);
   function hlsMasterRec(st, master, create) {
     if (!hlsUrlOk(master)) return null;   // keine Aufnahme, also keine Freigabe für diese Hauptliste
     const key = dashUrlKey(master);
@@ -113,6 +114,9 @@
     if (typeof text !== 'string' || !/^\uFEFF?#EXTM3U/.test(text)) { rec.failed = true; return; }
     run.text = true;
     noteMediaType(master, 'hls'); if (base) noteMediaType(base, 'hls');
+    // Weitergeleitete Endadresse: Teil derselben Entscheidung (Länge, Form, Zulässigkeit) – ist sie nicht erfassbar,
+    // fehlt ihr Typbeleg, und der Datensatz ist unvollständig (keine native Freigabe).
+    if (base && dashUrlKey(base) !== dashUrlKey(master)) hlsMasterAdd(rec, base);
     // Medienplaylist: Stücke, Init und Schlüssel sind keine Playlists (wie beim Playlist-Guard); als weitere Playlist
     // verweist dort nur RENDITION-REPORT. Dynamische Angaben (Variablen, Content Steering) gelten in beiden Arten.
     const media = /^#EXT(?:INF|-X-TARGETDURATION):/m.test(text);

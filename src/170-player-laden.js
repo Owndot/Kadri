@@ -142,9 +142,16 @@
       const type = mediaTypeOf(u);
       if (type === 'dash') { tryNext(); return; }
       if (type !== 'hls' && type !== 'file' && !PLAYLIST_RE.test(u) && !(st.probed && st.probed.has(u))) {
+        // Während der Probe gibt es noch keine Typentscheidung: der Ladetimer ruht (sonst begänne er vor dem Ergebnis
+        // die nächste Quelle). Die Probe selbst ist zeitbegrenzt (src/040). Ihr Ergebnis gilt nur für genau diesen
+        // Ladeschritt: derselbe Player, dieselbe Revision, dieselbe Quelle, eigener Modus – sonst verfällt es
+        // (Schließen, Quellenwechsel, Navigation). Unlesbar, Fehler oder Zeitüberschreitung: kein nativer Start.
         (st.probed || (st.probed = new Set())).add(u);
         st.idx--;
-        const again = () => { if (vp === st && st.cur === u && st.mode === 'own') tryNext(); };
+        clearTimeout(st.loadTimer);
+        st.loadTimer = 0;
+        const rev = st.sourceRevision;
+        const again = () => { if (vp === st && st.sourceRevision === rev && st.cur === u && st.mode === 'own') tryNext(); };
         mediaProbe(u).then(again, again);
         return;
       }

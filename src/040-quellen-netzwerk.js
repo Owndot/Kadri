@@ -327,6 +327,23 @@
   function mediaIdentityKey(u) {
     try { return u ? dashUrlKey(new URL(u, location.href).href) : ''; } catch (e) { return ''; }
   }
+  // Einheitliche Längen- und Formentscheidung für Typbelege (P1): Positive Belege, Probe und jede darauf gestützte
+  // Freigabe verlangen die vollständige Eingabe samt Fragment (auch nach Auflösung relativ zur Seite) höchstens
+  // MEDIA_IDENTITY_URL_LIMIT Zeichen und http(s) ohne Zugangsdaten (mediaUrlOk) – wie die HLS-Masteraufnahme (src/125).
+  // Erst danach entsteht der Schlüssel ohne Fragment. Restriktive Belege (hls, dash) gelten dagegen für den Schlüssel,
+  // sobald dieser die Grenze einhält – ein langes Fragment lässt einen Beleg also nie verloren gehen. Überlange
+  // Schlüssel erhalten nie einen positiven Beleg, werden nie geprüft und damit nie von Kadri gestartet.
+  function mediaEvidenceKey(u) {
+    if (typeof u !== 'string' || !u || u.length > MEDIA_IDENTITY_URL_LIMIT) return '';
+    let abs = '';
+    try { abs = new URL(u, location.href).href; } catch (e) { return ''; }
+    if (abs.length > MEDIA_IDENTITY_URL_LIMIT || !mediaUrlOk(abs.split('#')[0])) return '';
+    return dashUrlKey(abs);
+  }
+  function restrictiveEvidenceKey(u) {
+    const key = typeof u === 'string' ? mediaIdentityKey(u) : '';
+    return key && key.length <= MEDIA_IDENTITY_URL_LIMIT ? key : '';
+  }
   function rememberMpdIdentity(key) {
     admittedMediaIdentities.delete(key);
     if (key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) || mediaSourceIdentities.has(key)) return;
@@ -370,8 +387,8 @@
     return restrictiveFilter && overflowMpdBits(key).every((bit) => restrictiveFilter[bit >> 3] & (1 << (bit & 7))) ? 'hls' : '';
   }
   function noteMediaType(u, type) {
-    if (typeof u !== 'string' || u.length > MEDIA_IDENTITY_URL_LIMIT || !MEDIA_TYPE_RANK[type]) return;
-    const key = mediaIdentityKey(u);
+    if (!MEDIA_TYPE_RANK[type]) return;
+    const key = type === 'file' ? mediaEvidenceKey(u) : restrictiveEvidenceKey(u);
     if (!key) return;
     if (type === 'file') {
       if (restrictiveTypeOf(key)) return;   // ein restriktiver Beleg bleibt bestehen
@@ -398,18 +415,27 @@
     if (mediaIsDashManifest(u)) return 'dash';
     const kind = mediaKindOf(u, '');
     if (kind === 'dash') return 'dash';
-    const key = u.length <= MEDIA_IDENTITY_URL_LIMIT ? mediaIdentityKey(u) : '';
-    const restrictive = key ? restrictiveTypeOf(key) : '';
+    const rkey = restrictiveEvidenceKey(u);
+    const restrictive = rkey ? restrictiveTypeOf(rkey) : '';
     if (restrictive) return restrictive;
     if (kind === 'hls') return 'hls';
+    const key = mediaEvidenceKey(u);
     if (key && fileTypes.has(key)) return 'file';
     return kind === 'mp4' || kind === 'unsupported' ? 'claimed-file' : '';
   }
   // Eigene Typprobe: genau ein Abruf der ersten 4096 Bytes (Range), Cookies nur derselben Herkunft, ungehaktes fetch.
   // Ergebnis je exakter Adresse zwischengespeichert (256) und bei jedem Treffer erneut als Beleg angewandt; ein nicht
-  // lesbares oder fehlgeschlagenes Ergebnis ('') gilt nur 30 s. Unbelegt bleibt unbelegt: '' gibt nie etwas frei.
+  // lesbares oder fehlgeschlagenes Ergebnis ('') gilt nur 30 s. Unbelegt bleibt unbelegt: '' gibt nie etwas frei, auch
+  // nicht nach Ablauf – dann wird höchstens erneut geprüft.
+  // Zeitgrenze (P1): Antwort samt den ersten Bytes binnen PROBE_TIMEOUT_MS, sonst Abbruch (AbortController) und ''.
+  // Wirkungen der Probe (P2, nicht vermeidbar ohne Verzicht auf die Probe): Sie ist ein zusätzlicher GET an die Quelle.
+  // Eine Einmaladresse kann dadurch verbraucht sein; ignoriert der Server Range, beginnt er die ganze Datei zu senden –
+  // das Abbrechen nach 4096 Bytes beendet das Lesen, verhindert aber nicht, dass bereits gesendete Daten übertragen
+  // werden. Ein vorübergehender Fehler (z. B. 503) gilt 30 s als unbelegt; nach Verdrängung aus dem Cache (257. Adresse)
+  // wird dieselbe Adresse erneut geprüft.
   const mediaProbes = new Map();   // Schlüssel -> { p: Promise, type, at }
   const PROBE_MISS_MS = 30000;
+  const PROBE_TIMEOUT_MS = 10000;
   function mediaProbeType(b) {
     const head = String.fromCharCode.apply(null, Array.from(b.subarray(0, 600))).replace(/^(\uFEFF|\xEF\xBB\xBF)/, '').trimStart();
     if (head.startsWith('#EXTM3U')) return 'hls';
@@ -420,17 +446,18 @@
     return '';
   }
   function mediaProbe(u) {
-    const key = typeof u === 'string' && u.length <= MEDIA_IDENTITY_URL_LIMIT && mediaUrlOk(u.split('#')[0]) ? mediaIdentityKey(u) : '';
+    const key = mediaEvidenceKey(u);
     if (!key) return Promise.resolve('');
     const hit = mediaProbes.get(key);
     if (hit && (hit.type === undefined || hit.type || Date.now() - hit.at < PROBE_MISS_MS)) {
       if (hit.type) noteMediaType(u, hit.type);   // bekannter Befund wirkt bei jedem Treffer erneut
       return hit.p;
     }
+    const ac = typeof AbortController === 'function' ? new AbortController() : null;
     const run = async () => {
       const f = rawFetch || (typeof fetch === 'function' ? fetch : null);
       if (!f) return '';
-      const res = await f(u.split('#')[0], { headers: { Range: 'bytes=0-4095' }, credentials: 'same-origin', redirect: 'follow' });
+      const res = await f(key, { headers: { Range: 'bytes=0-4095' }, credentials: 'same-origin', redirect: 'follow', signal: ac ? ac.signal : undefined });
       if (!res || !(res.ok || res.status === 206) || !res.body || !res.body.getReader) return '';
       const rd = res.body.getReader();
       let buf = new Uint8Array(0);
@@ -440,12 +467,18 @@
         const n = new Uint8Array(buf.length + value.length); n.set(buf); n.set(value, buf.length); buf = n;
       }
       try { rd.cancel(); } catch (e) {}
+      if (timedOut) return '';
       const type = mediaProbeType(buf.subarray(0, 4096));
       if (type) { noteMediaType(u, type); if (res.url) noteMediaType(res.url, type); }
       return type;
     };
+    let timedOut = false, limit = 0;
+    const expire = new Promise((resolve) => {
+      limit = setTimeout(() => { timedOut = true; try { if (ac) ac.abort(); } catch (e) {} resolve(''); }, PROBE_TIMEOUT_MS);
+    });
     const entry = { p: null, type: undefined, at: 0 };
-    entry.p = run().catch(() => '').then((type) => { entry.type = type; entry.at = Date.now(); return type; });
+    entry.p = Promise.race([run().catch(() => ''), expire])
+      .then((type) => { clearTimeout(limit); entry.type = timedOut ? '' : type; entry.at = Date.now(); return entry.type; });
     mediaProbes.delete(key); mediaProbes.set(key, entry);
     if (mediaProbes.size > 256) mediaProbes.delete(mediaProbes.keys().next().value);
     return entry.p;
