@@ -356,16 +356,40 @@
   // file: nur Kadris eigene Probe der ersten Bytes (ISO-BMFF- oder EBML-Kopf).
   // HLS-/DASH-Belege wirken ausschließlich einschränkend und gelten deshalb auch, wenn die Seite sie gemeldet hat.
   // Eine direkte Wiedergabe als Datei stützt sich nie auf Dateiendung oder Behauptungen der Seite allein.
+  // Restriktive Belege (hls, dash) werden nie verdrängt: bis 2048 Schlüssel exakt, darüber in einem festen Bitfilter
+  // (8 KiB, drei Positionen aus SHA-256 wie bei MPD-Identitäten). Ein Filtertreffer gilt als hls; Kollisionen machen eine
+  // Adresse nur vorsichtiger, auch wenn die Seite viele Belege erzeugt. dash wird zusätzlich harte MPD-Identität.
+  // Positive Dateibelege (nur eigene Probe) sind getrennt begrenzt; ihr Verlust bedeutet „unbelegt“, nie Freigabe.
   const MEDIA_TYPE_RANK = { file: 1, hls: 2, dash: 3 };
-  const mediaTypeSeen = new Map();
+  const restrictiveTypes = new Map();   // Schlüssel -> 'hls' | 'dash'
+  let restrictiveFilter = null;
+  const fileTypes = new Set();
+  function restrictiveTypeOf(key) {
+    const t = restrictiveTypes.get(key);
+    if (t) return t;
+    return restrictiveFilter && overflowMpdBits(key).every((bit) => restrictiveFilter[bit >> 3] & (1 << (bit & 7))) ? 'hls' : '';
+  }
   function noteMediaType(u, type) {
     if (typeof u !== 'string' || u.length > MEDIA_IDENTITY_URL_LIMIT || !MEDIA_TYPE_RANK[type]) return;
     const key = mediaIdentityKey(u);
     if (!key) return;
-    const old = mediaTypeSeen.get(key);
-    if (old && MEDIA_TYPE_RANK[old] >= MEDIA_TYPE_RANK[type]) return;   // einschränkender Beleg bleibt bestehen
-    mediaTypeSeen.delete(key); mediaTypeSeen.set(key, type);
-    if (mediaTypeSeen.size > 1024) mediaTypeSeen.delete(mediaTypeSeen.keys().next().value);
+    if (type === 'file') {
+      if (restrictiveTypeOf(key)) return;   // ein restriktiver Beleg bleibt bestehen
+      fileTypes.delete(key); fileTypes.add(key);
+      if (fileTypes.size > 1024) fileTypes.delete(fileTypes.values().next().value);
+      return;
+    }
+    fileTypes.delete(key);
+    if (type === 'dash') {   // wie ein gelesenes MPD: harte Identität, aktive Player und gehaltene Ausgaben erfahren es
+      rememberMpdIdentity(key);
+      if (vp && vp.noteDashPlayback) vp.noteDashPlayback(key);
+      noteDashOutput(key);
+    }
+    const old = restrictiveTypes.get(key);
+    if (old === 'dash' || old === type) return;
+    if (old || restrictiveTypes.size < 2048) { restrictiveTypes.set(key, type); return; }
+    restrictiveFilter ||= new Uint8Array(8192);
+    for (const bit of overflowMpdBits(key)) restrictiveFilter[bit >> 3] |= 1 << (bit & 7);
   }
   // 'dash' | 'hls' | 'file' (eigene Probe) | 'claimed-file' (nur Dateiendung) | '' (Typ unbekannt).
   // Nur 'file' ist ein positiver Dateibeleg; 'claimed-file' ist eine Behauptung der Adresse und gibt nichts frei.
@@ -374,14 +398,18 @@
     if (mediaIsDashManifest(u)) return 'dash';
     const kind = mediaKindOf(u, '');
     if (kind === 'dash') return 'dash';
-    const seen = u.length <= MEDIA_IDENTITY_URL_LIMIT ? mediaTypeSeen.get(mediaIdentityKey(u)) : '';
-    if (seen === 'dash' || seen === 'hls' || kind === 'hls') return seen === 'dash' ? 'dash' : 'hls';
-    if (seen === 'file') return 'file';
+    const key = u.length <= MEDIA_IDENTITY_URL_LIMIT ? mediaIdentityKey(u) : '';
+    const restrictive = key ? restrictiveTypeOf(key) : '';
+    if (restrictive) return restrictive;
+    if (kind === 'hls') return 'hls';
+    if (key && fileTypes.has(key)) return 'file';
     return kind === 'mp4' || kind === 'unsupported' ? 'claimed-file' : '';
   }
   // Eigene Typprobe: genau ein Abruf der ersten 4096 Bytes (Range), Cookies nur derselben Herkunft, ungehaktes fetch.
-  // Ergebnis je exakter Adresse zwischengespeichert; nicht lesbare Antworten (z. B. ohne CORS) ergeben ''.
-  const mediaProbes = new Map();
+  // Ergebnis je exakter Adresse zwischengespeichert (256) und bei jedem Treffer erneut als Beleg angewandt; ein nicht
+  // lesbares oder fehlgeschlagenes Ergebnis ('') gilt nur 30 s. Unbelegt bleibt unbelegt: '' gibt nie etwas frei.
+  const mediaProbes = new Map();   // Schlüssel -> { p: Promise, type, at }
+  const PROBE_MISS_MS = 30000;
   function mediaProbeType(b) {
     const head = String.fromCharCode.apply(null, Array.from(b.subarray(0, 600))).replace(/^(\uFEFF|\xEF\xBB\xBF)/, '').trimStart();
     if (head.startsWith('#EXTM3U')) return 'hls';
@@ -394,7 +422,11 @@
   function mediaProbe(u) {
     const key = typeof u === 'string' && u.length <= MEDIA_IDENTITY_URL_LIMIT && mediaUrlOk(u.split('#')[0]) ? mediaIdentityKey(u) : '';
     if (!key) return Promise.resolve('');
-    if (mediaProbes.has(key)) return mediaProbes.get(key);
+    const hit = mediaProbes.get(key);
+    if (hit && (hit.type === undefined || hit.type || Date.now() - hit.at < PROBE_MISS_MS)) {
+      if (hit.type) noteMediaType(u, hit.type);   // bekannter Befund wirkt bei jedem Treffer erneut
+      return hit.p;
+    }
     const run = async () => {
       const f = rawFetch || (typeof fetch === 'function' ? fetch : null);
       if (!f) return '';
@@ -412,10 +444,11 @@
       if (type) { noteMediaType(u, type); if (res.url) noteMediaType(res.url, type); }
       return type;
     };
-    const p = run().catch(() => '');
-    mediaProbes.set(key, p);
+    const entry = { p: null, type: undefined, at: 0 };
+    entry.p = run().catch(() => '').then((type) => { entry.type = type; entry.at = Date.now(); return type; });
+    mediaProbes.delete(key); mediaProbes.set(key, entry);
     if (mediaProbes.size > 256) mediaProbes.delete(mediaProbes.keys().next().value);
-    return p;
+    return entry.p;
   }
   function admitMediaIdentity(key) {
     if (!key || key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) ||
