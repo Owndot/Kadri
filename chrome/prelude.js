@@ -148,7 +148,21 @@
       }
       return hlsP;
     };
-    const KADRI_HOOKS = { onSrc: null, loadHls: loadHls };
+    // Angemeldete Typprobe (src/040 mediaAuthProbe): eigener Port, fester Zweck; der Hintergrund prüft Absender, Site,
+    // Schema und Bytegrenze selbst und antwortet nur mit dem Typ. Ergebnis 'file' | 'hls' | 'dash' | '' (alles andere).
+    const typeProbe = (url) => new Promise((resolve) => {
+      let port = null, done = false, timer = 0;
+      const fin = (t) => { if (done) return; done = true; clearTimeout(timer); try { port && port.disconnect(); } catch (e) {} resolve(t); };
+      timer = setTimeout(() => fin(''), 12000);
+      try { port = api.runtime.connect({ name: 'kadri-xhr' }); } catch (e) { fin(''); return; }
+      port.onMessage.addListener((m) => {
+        if (m && m.t === 'type') fin(m.type === 'file' || m.type === 'hls' || m.type === 'dash' ? m.type : '');
+        else if (m && m.t === 'error') fin('');
+      });
+      port.onDisconnect.addListener(() => fin(''));
+      try { port.postMessage({ t: 'req', purpose: 'media-type-probe', url: String(url || '') }); } catch (e) { fin(''); }
+    });
+    const KADRI_HOOKS = { onSrc: null, loadHls: loadHls, typeProbe: typeProbe };
     try {
       api.runtime.onMessage.addListener((m) => {
         if (m && m.t === 'kadri-src' && typeof KADRI_HOOKS.onSrc === 'function') { try { KADRI_HOOKS.onSrc(m.u, m.k); } catch (e) {} }

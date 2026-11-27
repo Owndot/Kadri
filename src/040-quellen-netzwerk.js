@@ -483,6 +483,44 @@
     if (mediaProbes.size > 256) mediaProbes.delete(mediaProbes.keys().next().value);
     return entry.p;
   }
+  // ---------- Angemeldete Typprobe (nur Kadri-Erweiterung, Chrome) ----------
+  // Folgt nur auf eine leere eigene Probe (unlesbar, CORS, 401/403) für die Adresse, die das Original-Element nach einem
+  // Nutzer-Tipp tatsächlich lädt (src/170). Der Hintergrund liest mit der Sitzung der Seite höchstens 4096 Bytes – nur bei
+  // gleichem Schema und derselben Site wie dieses Dokument, ohne Weiterleitung – und meldet nur den Typ. Hier dieselbe
+  // Bewertung wie bei der eigenen Probe: 'file' nur bei erkanntem Dateikopf, 'hls'/'dash' bleiben einschränkend und
+  // verdrängen nie; ein Dateibeleg hebt keinen restriktiven Beleg auf (noteMediaType). Höchstens ein Versuch je Adresse
+  // und Dokument (auch nach 401/403/Zeitüberschreitung kein zweiter; Verdrängung erst nach 256 weiteren Adressen).
+  // Restrisiko: eine Einmal- oder signierte Adresse wird dadurch zusätzlich – mit Sitzung – abgerufen.
+  const authProbes = new Map();   // Schlüssel -> { p, type }
+  function authTypeProbeHook() {
+    return IS_KADRI && typeof KADRI_HOOKS !== 'undefined' && KADRI_HOOKS && typeof KADRI_HOOKS.typeProbe === 'function' ? KADRI_HOOKS.typeProbe : null;
+  }
+  function authProbeSameSite(key) {
+    try {
+      const u = new URL(key);
+      return u.protocol === location.protocol && baseDomain(u.hostname) === baseDomain(location.hostname);
+    } catch (e) { return false; }
+  }
+  function mediaAuthProbe(u) {
+    const key = mediaEvidenceKey(u), hook = authTypeProbeHook();
+    if (!key || !hook || !authProbeSameSite(key) || restrictiveTypeOf(key) || mediaIsDashManifest(u)) return Promise.resolve('');
+    const hit = authProbes.get(key);
+    if (hit) { if (hit.type) noteMediaType(u, hit.type); return hit.p; }
+    const entry = { p: null, type: undefined };
+    let limit = 0;
+    const expire = new Promise((resolve) => { limit = setTimeout(() => resolve(''), PROBE_TIMEOUT_MS + 3000); });
+    let asked;
+    try { asked = Promise.resolve(hook(key)); } catch (e) { asked = Promise.resolve(''); }
+    entry.p = Promise.race([asked.catch(() => ''), expire]).then((t) => {
+      clearTimeout(limit);
+      entry.type = t === 'file' || t === 'hls' || t === 'dash' ? t : '';
+      if (entry.type) noteMediaType(u, entry.type);
+      return entry.type;
+    });
+    authProbes.set(key, entry);
+    if (authProbes.size > 256) authProbes.delete(authProbes.keys().next().value);
+    return entry.p;
+  }
   function admitMediaIdentity(key) {
     if (!key || key.length > MEDIA_IDENTITY_URL_LIMIT || dashIdentityHasSuffix(key) ||
         mediaSourceIdentities.has(key) || dashInfo.has(key)) return false;

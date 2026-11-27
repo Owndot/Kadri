@@ -4,7 +4,7 @@ Seite: http://127.0.0.1:PAGE/   Medien: http://localhost:MEDIA/ (andere Site). J
 Pfad samt Query, Range, Sec-Fetch-Dest/-Mode und Origin protokolliert.
 
 Medienpfade (Query-Optionen: cors=1 setzt Access-Control-Allow-Origin, delay=ms verzögert, status=n antwortet so,
-delay1=ms verzögert nur den ersten Abruf der Adresse, fail1=n beantwortet nur den ersten Abruf mit Status n,
+delay1=ms verzögert nur den ersten Abruf der Adresse, delay2=ms alle außer dem ersten, fail1=n beantwortet nur den ersten Abruf mit Status n,
 norange=1 ignoriert Range (200, ganze Datei), once=1 macht die Adresse nach dem ersten Abruf ungültig):
   /m/<name>[...]   HLS-Hauptliste, Kinder absolut auf diesem Server (siehe MASTERS)
   /f/<name>        echte MP4 (tests/web/clip.mp4, Range 206)
@@ -74,6 +74,10 @@ class Media(http.server.BaseHTTPRequestHandler):
         cors = q.get('cors') == '1'
         if q.get('delay'):
             time.sleep(int(q['delay']) / 1000)
+        if q.get('delay2'):   # erst ab dem zweiten Abruf verzögert (z. B. schnelle Probe, langsame Masterantwort an hls.js)
+            FIRST['d2:' + self.path] = FIRST.get('d2:' + self.path, 0) + 1
+            if FIRST['d2:' + self.path] > 1:
+                time.sleep(int(q['delay2']) / 1000)
         if q.get('delay1'):
             FIRST[self.path] = FIRST.get(self.path, 0) + 1
             if FIRST[self.path] == 1:

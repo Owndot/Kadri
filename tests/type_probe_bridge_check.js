@@ -172,9 +172,9 @@ const strip = () => (rules.get(80) || { condition: {} }).condition.excludedReque
     await new Promise((r) => setTimeout(r, 50));
     respond = answer(206, enc('#EXTM3U\n'));
     const again = await req(tab('https://other.example.com/'), probe(url + '#t=1'));
-    const want = first[0].t === 'type' ? first[0].type : 'unknown';
+    const want = first[0] && first[0].t === 'type' ? first[0].type : 'unknown';
     ok('Gedächtnis %s: zweiter Versuch (anderes Dokument, Fragment) ohne Abruf, gleiches Ergebnis'.replace('%s', label),
-      calls.length === n0 + 1 && again.length === 1 && again[0].t === 'type' && again[0].type === want, { fetched: calls.length - n0, first, again });
+      calls.length === n0 + 1 && again.length === 1 && !!again[0] && again[0].t === 'type' && again[0].type === want, { fetched: calls.length - n0, first, again });
   }
   respond = answer(206, FTYP);
   n0 = calls.length;

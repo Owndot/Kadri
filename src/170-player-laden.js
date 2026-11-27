@@ -151,8 +151,15 @@
         clearTimeout(st.loadTimer);
         st.loadTimer = 0;
         const rev = st.sourceRevision;
-        const again = () => { if (vp === st && st.sourceRevision === rev && st.cur === u && st.mode === 'own') tryNext(); };
-        mediaProbe(u).then(again, again);
+        const current = () => vp === st && st.sourceRevision === rev && st.cur === u && st.mode === 'own';
+        const again = () => { if (current()) tryNext(); };
+        // Leere eigene Probe: angemeldete Typprobe nur für die Adresse, die das Original-Element selbst lädt (diese
+        // Wiedergabe nach dem Tipp), nie für weitere Kandidaten der Liste und nur, solange dieser Ladeschritt gilt.
+        const viaSession = (t) => {
+          const os = srcOf(orig);
+          return t || !current() || !os || dashUrlKey(os) !== dashUrlKey(u) ? t : mediaAuthProbe(u);
+        };
+        mediaProbe(u).then(viaSession, () => '').then(again, again);
         return;
       }
       if (type === 'hls' || PLAYLIST_RE.test(u)) {
